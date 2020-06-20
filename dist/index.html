@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		
+		<title>Payload</title>
+		
+		<!-- Favicon -->
+		<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+		<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+		<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+		<link rel="manifest" href="/site.webmanifest">
+		
+		<!-- Libraries -->
+		<link rel="stylesheet" href="lib/fontawesome/css/all.css"></link>
+		
+		<script src="lib/jquery-3.4.1.min.js"></script>
+		<script src="lib/jquery.knob.min.js"></script>
+	
+		<script src="lib/Box2D_v2.3.1_min.js"></script>
+		<script src="lib/helpers/embox2d-helpers.js"></script>
+		<script src="lib/helpers/embox2d-html5canvas-debugDraw.js"></script>
+		<script src="lib/delaunator.min.js"></script>
+		
+		<script src="lib/three.min.js"></script>
+		<script src="lib/controls/OrbitControls.js"></script>
+		
+		<script src="lib/Stats.min.js"></script>
+		
+		<!-- Stylesheet -->
+		<link rel="stylesheet" href="css/main.css"></link>
+		
+		<!-- Script -->
+		<script src="js/main.js"></script>
+		
+	</head>
+	
+	<body>
+		<div id="wrapper">
+		
+			<div id="title">
+				<menu id="main-menu"></menu>
+				<menu id="multiplayer-menu"></menu>
+				<menu id="settings-menu"></menu>
+			</div>
+			
+			<div id="game">
+				
+				<div id="viewport">
+					<div id="scene"></div>
+					<div id="hud">
+						<menu id="weapons"></menu>
+						<menu id="actions"></menu>
+					</div>
+				</div>
+				
+				<div id="ingame-menu"></div>
+				
+			</div>
+		
+		</div>
+	</body>
+</html>
