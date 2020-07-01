@@ -1,0 +1,74 @@
+$primary-color:		#fe0005;
+$primary-glow:		0px 0px 5px $primary-color;
+$transparent-black:	rgba(0,0,0,0.6);
+$hexagon-width: 	64px;
+
+@font-face
+{
+	font-family: earthorbiter;
+	src: url("../fonts/earthorbiterbold.ttf");
+}
+
+@font-face
+{
+	font-family: pixeled;
+	src: url("../fonts/pixeled.ttf");
+}
+
+*
+{
+	box-sizing: border-box;
+	font-family: earthorbiter;
+	color: $primary-color;
+	text-shadow: $primary-glow;
+}
+
+ul, li
+{
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+#viewport
+{
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100vw;
+	height: 100vh;
+	background: black;
+}
+
+#scene > canvas
+{
+	position: fixed;
+	top: 0;
+	left: 0;
+}
+
+canvas#debug-draw
+{
+	pointer-events: none;
+}
+
+dialog.modal
+{
+	position: fixed;
+	background: $transparent-black;
+	border: 1px solid $primary-color;
+	box-shadow: $primary-glow;
+	padding: 1em;
+}
+
+dialog.loading
+{
+	text-align: center;
+}
+
+menu#actions
+{
+	position: fixed;
+	bottom: 1em;
+	right: 1em;
+}

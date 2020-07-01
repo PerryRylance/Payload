@@ -2,8 +2,10 @@
 
 Payload.Planet = function(world, options)
 {
-	this.fixtureDestructionQueue = [];
-	this.fixturesByFaceIndex = [];
+	this._fixtureDestructionQueue = [];
+	this._fixturesByFaceIndex = [];
+	
+	this.options = options;
 	
 	// NB: Do this here because initMesh is called before Entity sets it
 	this.world = world;
@@ -146,6 +148,8 @@ Payload.Planet.prototype.initPhysics = function(options)
 	
 	this.b2Body		= this.world.b2World.CreateBody(this.b2BodyDef);
 	
+	Payload.Entity.prototype.initPhysics.call(this);
+	
 	function convertPoint(point, scale)
 	{
 		if(!scale)
@@ -192,7 +196,7 @@ Payload.Planet.prototype.initPhysics = function(options)
 		fixtureDef.set_shape(shape);
 		
 		var fixture = this.b2Body.CreateFixture(fixtureDef);
-		this.fixturesByFaceIndex[parseInt(i / 3)] = fixture;
+		this._fixturesByFaceIndex[parseInt(i / 3)] = fixture;
 	}
 }
 
@@ -222,6 +226,7 @@ Payload.Planet.prototype.initGraphics = function()
 		new THREE.CircleGeometry(this._radius, this._sides),
 		materials.damage
 	);
+	this.damage.position.set(0, 0, 10);
 	this.object3d.add(this.damage);
 	
 	this.geometry = new THREE.Geometry();
@@ -235,7 +240,7 @@ Payload.Planet.prototype.initGraphics = function()
 	for(var i = 0; i < this._indices.length; i += 3)
 	{
 		var faceIndex	= parseInt(i / 3);
-		var fixture		= this.fixturesByFaceIndex[faceIndex];
+		var fixture		= this._fixturesByFaceIndex[faceIndex];
 		
 		var face = new THREE.Face3(
 			this._indices[i],
@@ -265,7 +270,177 @@ Payload.Planet.prototype.initGraphics = function()
 		this.geometry.faceVertexUvs[0].push(faceUVs);
 	}
 	
-	this.object3d = new THREE.Mesh(this.geometry, materials.surface);
+	this.surface = new THREE.Mesh(this.geometry, materials.surface);
+	this.object3d.add(this.surface);
 	
-	delete this.fixturesByFaceIndex;
+	delete this._fixturesByFaceIndex;
+}
+
+Payload.Planet.prototype.getPointOnSurface = function(options)
+{
+	var radius = this._radius;
+	var position = this.position;
+	
+	if(!options)
+		options = {};
+	
+	if(!options.angle)
+		options.angle = Math.random() * 2 * Math.PI;
+	
+	if(options.additionalRadius)
+		radius += options.additionalRadius;
+	
+	return {
+		x: position.x + (Math.cos(options.angle) * radius),
+		y: position.y + (-Math.sin(options.angle) * radius)
+	};
+}
+
+Payload.Planet.prototype.applyGravity = function(entity)
+{
+	Payload.assert(entity.isAffectedByGravity);
+	
+	var radius	= this._radius;
+	var gravity	= radius * this._destructionGravityMultiplier;
+	
+	var center	= this.b2Body.GetWorldCenter();
+	var target	= entity.b2Body.GetWorldCenter();
+	
+	var delta	= new Box2D.b2Vec2(0, 0);
+	delta.op_add(target);
+	delta.op_sub(center);
+	delta.op_sub(this.b2CenterOfGravity);
+	
+	var distance = delta.Length();
+	
+	// Skip distance check distance < 3 * radius
+	
+	delta.Set(
+		-delta.get_x(),
+		-delta.get_y()
+	);
+	
+	var sum		= Math.abs(delta.get_x()) + Math.abs(delta.get_y());
+	delta.op_mul((1 / sum) * gravity / distance);
+	
+	entity.b2Body.ApplyForceToCenter(delta);
+}
+
+Payload.Planet.prototype.applyFixtureDamage = function(fixture)
+{
+	if(this._fixtureDestructionQueue.indexOf(fixture) > -1)
+		return;
+	
+	this._fixtureDestructionQueue.push(fixture);
+}
+
+Payload.Planet.prototype.handleMeshDestruction = function()
+{
+	var self = this;
+	var updateMesh = this._fixtureDestructionQueue.length > 0;
+	
+	while(this._fixtureDestructionQueue.length)
+	{
+		var fixture = this._fixtureDestructionQueue.pop();
+		
+		var index = this.geometry.faces.indexOf(fixture.face);
+		this.geometry.faces.splice(index, 1);
+		this.geometry.faceVertexUvs[0].splice(index, 1);
+		
+		this.b2Body.DestroyFixture(fixture);
+	}
+	
+	if(updateMesh)
+	{
+		// TODO: Calculate new mass based on remaining surface area
+		// TODO: Calculate new center of gravity based on triangles
+		
+		if(this.geometry.faces.length)
+		{
+			this.geometry.elementsNeedUpdate = true;
+			this.geometry.uvsNeedUpdate = true;
+		}
+		else
+		{
+			this.remove();
+			return;
+		}
+		
+		// Calculate new center of mass and area
+		var vertexIDsByKey = {};
+		var areaDestroyed = 0;
+		var initialArea = Math.PI * (this._radius * this._radius);
+		
+		function area(ia, ib, ic)
+		{
+			var va = self._vertices[ia];
+			var vb = self._vertices[ib];
+			var vc = self._vertices[ic];
+			
+			var x1 = va[0];
+			var x2 = vb[0];
+			var x3 = vc[0];
+			
+			var y1 = va[1];
+			var y2 = vb[1];
+			var y3 = vc[1];
+			
+			return Math.abs(0.5*(x1*(y2-y3)+x2*(y3-y1)+x3*(y1-y2)));
+		}
+		
+		for(var i = 0; i < this.geometry.faces.length; i++)
+		{
+			var face = this.geometry.faces[i];
+			
+			vertexIDsByKey[face.a] = true;
+			vertexIDsByKey[face.b] = true;
+			vertexIDsByKey[face.c] = true;
+			
+			areaDestroyed += area(face.a, face.b, face.c);
+		}
+		
+		var usedVertexIDs = Object.keys(vertexIDsByKey);
+		var centerOfMass = {x: 0, y: 0};
+		
+		usedVertexIDs.forEach(function(index) {
+			
+			var vertex = self._vertices[index];
+			
+			centerOfMass.x += vertex[0];
+			centerOfMass.y += vertex[1];
+			
+		});
+		
+		centerOfMass.x /= usedVertexIDs.length;
+		centerOfMass.y /= usedVertexIDs.length;
+		
+		this.b2CenterOfGravity = new Box2D.b2Vec2(
+			Payload.Units.g2p(centerOfMass.x),
+			Payload.Units.g2p(centerOfMass.y)
+		);
+		
+		if(areaDestroyed > 0)
+			this._destructionGravityMultiplier = areaDestroyed / initialArea;
+	}
+}
+
+Payload.Planet.prototype.handleGravity = function()
+{
+	for(var i = 0; i < this.world.entities.length; i++)
+	{
+		var entity = this.world.entities[i];
+		
+		if(!entity.isAffectedByGravity)
+			continue;
+			
+		this.applyGravity(entity);
+	}
+}
+
+Payload.Planet.prototype.update = function()
+{
+	this.handleMeshDestruction();
+	this.handleGravity();
+	
+	// Payload.Entity.prototype.update.apply(this, arguments);
 }

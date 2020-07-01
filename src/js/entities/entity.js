@@ -15,14 +15,29 @@ Payload.Entity = function(world, options)
 	
 	this.world = world;
 	
-	this.initPhysics();
-	this.initGraphics();
-	this.initAudio();
+	this.initPhysics(options);
+	this.initGraphics(options);
+	this.initAudio(options);
 	
 	this.setOptions(options);
 }
 
 Payload.extend(Payload.Entity, Payload.EventDispatcher);
+
+Object.defineProperty(Payload.Entity.prototype, "isAffectedByGravity", {
+	
+	"get": function()
+	{
+		if(!this.b2Body)
+			return false;
+		
+		if(this instanceof Payload.Planet)
+			return false;
+		
+		return true;
+	}
+	
+});
 
 Object.defineProperty(Payload.Entity.prototype, "position", {
 	
@@ -73,7 +88,8 @@ Object.defineProperty(Payload.Entity.prototype, "position", {
 
 Payload.Entity.prototype.initPhysics = function()
 {
-	
+	if(this.b2Body)
+		this.b2Body.entity = this;
 }
 
 Payload.Entity.prototype.initGraphics = function()
@@ -105,6 +121,10 @@ Payload.Entity.prototype.update = function()
 		var x			= position.get_x() * Payload.Units.PHYSICS_TO_GRAPHICS;
 		var y			= position.get_y() * Payload.Units.PHYSICS_TO_GRAPHICS;
 		
+		Payload.assert(!isNaN(x));
+		Payload.assert(!isNaN(y));
+		Payload.assert(!isNaN(angle));
+		
 		this.object3d.position.set(x, y, 0);
 		this.object3d.rotation.set(0, 0, angle);
 	}
@@ -112,7 +132,7 @@ Payload.Entity.prototype.update = function()
 
 Payload.Entity.prototype.onCollision = function(entity, localFixture, otherFixture)
 {
-	
+	this.trigger("collision");
 }
 
 Payload.Entity.prototype.remove = function()
@@ -131,4 +151,23 @@ Payload.Entity.prototype.remove = function()
 	
 	this.world.remove(this);
 	this.world = null;
+}
+
+Payload.Entity.prototype.launch = function(options)
+{
+	Payload.assert(options != null);
+	
+	if("x" in options && "y" in options)
+	{
+		
+	}
+	else if("degrees" in options && "power" in options)
+	{
+		
+	}
+}
+
+Payload.Entity.prototype.detonate = function()
+{
+	// Take option for EMP / explosion
 }

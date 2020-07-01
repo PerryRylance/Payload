@@ -5,11 +5,11 @@ Payload.Units = {
 	RATIO: 20,
 	
 	physicsToGraphics: function(x) {
-		return x * Payload.Units.GRAPHICS_TO_PHYSICS;
+		return x * Payload.Units.PHYSICS_TO_GRAPHICS;
 	},
 	
 	graphicsToPhysics: function(x) {
-		return x * Payload.Units.PHYSICS_TO_GRAPHICS;
+		return x * Payload.Units.GRAPHICS_TO_PHYSICS;
 	}
 	
 };

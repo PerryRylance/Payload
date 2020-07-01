@@ -37,15 +37,24 @@ Payload.extend(Payload.World, Payload.EventDispatcher);
 Payload.World.defaults = {
 	planet: {
 		count: {
-			minimum:	3,
-			maximum:	9
+			minimum:		3,
+			maximum:		9
 		},
 		radius: {
-			minimum:	50,
-			maximum:	1024
+			minimum:		50,
+			maximum:		1024
 		},
-		friction:		0.9,
-		restitution:	0.0
+		friction:			0.9,
+		restitution:		0.0
+	},
+	ship: {
+		radius:				20,
+		launchFullPower:	5000,
+		
+		density:			1,
+		friction:			0.9,
+		restitution:		0.15,
+		angularDamping:		0.3
 	}
 };
 
@@ -68,6 +77,9 @@ Payload.World.prototype.initPhysics = function()
 		
 		var entityA = bodyA.entity;
 		var entityB = bodyB.entity;
+		
+		Payload.assert(entityA != null, "No entity associated with body, did you forget to call Payload.Entity.initPhysics after initalising body?");
+		Payload.assert(entityB != null, "No entity associated with body, did you forget to call Payload.Entity.initPhysics after initalising body?");
 		
 		if(entityA && entityB)
 		{
@@ -140,8 +152,40 @@ Payload.World.prototype.initPlanets = function(options)
 Payload.World.prototype.initShips = function(options)
 {
 	// A single debug ship
-	// var ship = new Payload.Ship();
-	// this.add(ship);
+	
+	// TODO: Move this to a spawn / teleport function on the ship ideally. It'll need to be reused for teleport.
+	
+	// NB: Maximum of 64 attempts to place the ship. Placing a ship inside a planet causes very odd behaviour with Box2D
+	var position, entities;
+	var max				= 64;
+	
+	for(var attempt = 0; attempt < max; attempt++)
+	{
+		var index		= Math.floor( Math.random() * this.planets.length );
+		var planet		= this.planets[index];
+		
+		position		= planet.getPointOnSurface({
+			additionalRadius: options.ship.radius
+		});
+		
+		entities		= this.getEntitiesAtPosition(position);
+		
+		if(entities.length == 0)
+			break;
+	}
+	
+	if(attempt == max)
+		throw new Error("Maximum number of attempts to place ship hit");
+	
+	if(attempt > max * 0.8)
+		console.warn("High number of attempts to find spawn point for ship");
+	
+	var options			= $.extend({}, options.ship, {
+		position: position
+	});
+	
+	var ship		= new Payload.Ship(this, options);
+	this.add(ship);
 }
 
 Payload.World.prototype.add = function(entity)
@@ -150,6 +194,11 @@ Payload.World.prototype.add = function(entity)
 	
 	this.entities.push(entity);
 	entity.parent = this;
+	
+	if(entity instanceof Payload.Planet)
+		this.planets.push(entity);
+	else if(entity instanceof Payload.Ship)
+		this.ships.push(entity);
 	
 	if(entity.object3d)
 		this.scene.add(entity.object3d);
@@ -168,7 +217,77 @@ Payload.World.prototype.remove = function(entity)
 	this.entities.splice(index, 1);
 	this.entity.parent = null;
 	
+	if(entity instanceof Payload.Planet)
+	{
+		index = this.planets.indexOf(entity);
+		
+		Payload.assert(index != -1, "Not in planet list");
+		
+		this.planets.splice(index, 1);
+	}
+	else if(entity instanceof Payload.Ship)
+	{
+		index = this.planets.indexOf(entity);
+		
+		Payload.assert(index != -1, "Not in planet list");
+		
+		this.planets.splice(index, 1);
+	}
+	
 	this.entity.trigger("removed");
+}
+
+Payload.World.prototype.getEntitiesAtPosition = function(position, limit)
+{
+	Payload.assert("x" in position && "y" in position);
+	Payload.assert($.isNumeric(position.x) && $.isNumeric(position.y));
+	
+	if(arguments.length < 2)
+		limit = Infinity;
+	else
+		Payload.assert($.isNumeric(limit) && limit > 0, "Invalid limit");
+	
+	var entities = [];
+	var callback = new Box2D.JSQueryCallback();
+
+	callback.ReportFixture = function(fixturePtr) {
+		
+		var fixture = Box2D.wrapPointer( fixturePtr, Box2D.b2Fixture );
+		
+		if ( ! fixture.TestPoint( this.m_point ) )
+			return true;	// Not touching
+		
+		var body	= fixture.GetBody();
+		var entity	= body.entity;
+		
+		Payload.assert(entity != null, "No entity associated with body, did you forget to call Payload.Entity.initPhysics after initalising body?");
+		
+		if(entities.indexOf(entity) > -1)
+			return true;	// Already in list
+		
+		entities.push(entity);
+		
+		if(entities.length >= limit)
+			return false;
+		
+		return true;
+		
+	};
+	
+	var x = Payload.Units.g2p(position.x);
+	var y = Payload.Units.g2p(position.y);
+	
+	callback.m_fixture = null;
+	callback.m_point = new Box2D.b2Vec2(x, y);
+	
+	var aabb = new Box2D.b2AABB();
+	var d = 0.01;        
+	aabb.set_lowerBound(new Box2D.b2Vec2(x - d, y - d));
+	aabb.set_upperBound(new Box2D.b2Vec2(x + d, y + d));
+
+	this.b2World.QueryAABB( callback, aabb ); // the AABB is a tiny square around the current mouse position
+	
+	return entities;
 }
 
 Payload.World.prototype.step = function()
@@ -178,7 +297,10 @@ Payload.World.prototype.step = function()
 	if(window.stats)
 		window.stats.begin();
 	
+	var start	= new Date().getTime();
 	this.b2World.Step(1 / 30, 10, 10);
+	var end		= new Date().getTime();
+	var delta	= end - start;
 	
 	// Entities
 	for(var i = 0; i < this.entities.length; i++)
@@ -204,6 +326,9 @@ Payload.World.prototype.step = function()
 		
 		this.b2World.DrawDebugData();
 	}
+	
+	if(delta > 5000)
+		throw new Error("Physics engine stalled");
 	
 	requestAnimationFrame(function() {
 		self.step();

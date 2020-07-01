@@ -39,8 +39,6 @@
 		
 			<div id="title">
 				<menu id="main-menu"></menu>
-				<menu id="multiplayer-menu"></menu>
-				<menu id="settings-menu"></menu>
 			</div>
 			
 			<div id="game">
@@ -49,13 +47,54 @@
 					<div id="scene"></div>
 					<div id="hud">
 						<menu id="weapons"></menu>
-						<menu id="actions"></menu>
+						<menu id="actions" class="hexagonal">
+							
+							<ul>
+								<li>
+									<button type="button" id="fire" title="Fire">
+										<i class="fas fa-bomb"></i>
+									</button>
+								</li>
+								
+								<li>
+									<button type="button" id="launch" title="Launch ship">
+										<i class="fas fa-rocket"></i>
+									</button>
+								</li>
+								
+								<li>
+									<button type="button" id="re-center" title="Re-center on ship">
+										<i class="fas fa-eye"></i>
+									</button>
+								</li>
+								
+								<li>
+									<button type="button" id="skip-turn" title="Skip turn">
+										<i class="fas fa-share"></i>
+									</button>
+								</li>
+								
+								<li>
+									<button type="button" id="surrender" title="Surrender">
+										<i class="far fa-flag"></i>
+									</button>
+								</li>
+							</ul>
+							
+						</menu>
 					</div>
 				</div>
 				
-				<div id="ingame-menu"></div>
+				<dialog id="ingame-menu"></dialog>
 				
 			</div>
+			
+			<dialog class="modal loading">
+				<div translate="yes">
+					Loading...
+				</div>
+				<progress></progress>
+			</dialog>
 		
 		</div>
 	</body>

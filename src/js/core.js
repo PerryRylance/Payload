@@ -39,10 +39,15 @@ Payload.prototype.init = function()
 {
 	var self = this;
 	
+	$("dialog.loading").attr("open", "open");
+	
 	this.assets = new Payload.Assets();
 	this.assets.on("load", function(event) {
 		
+		$("dialog.loading").removeAttr("open");
+		
 		// Temp code, just start up a game here
+		
 		self.game = new Payload.Game();
 		
 	});

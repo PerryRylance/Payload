@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+	<head>
+	
+		<title>Payload - Weapon Editor</title>
+		
+		<script src="https://code.jquery.com/jquery-1.10.2.js"></script>
+		<script src="https://code.jquery.com/ui/1.11.4/jquery-ui.js"></script>
+
+		<link rel="stylesheet" href="lib/jquery.flowchart.min.css"/>
+		<script src="lib/jquery.flowchart.min.js"></script>
+		
+		<style>
+		
+		#flowchart
+		{
+			position: fixed;
+			top: 0px;
+			left: 0px;
+			width: 100vw;
+			height: 100vh;
+		}
+		
+		#operators ul
+		{
+			list-style: none;
+			padding: 0;
+			margin: 0;
+		}
+		
+		#operators ul > li
+		{
+			padding: 0;
+			margin: 0;
+		}
+		
+		</style>
+		
+	</head>
+	<body>
+	
+		<div id="flowchart"></div>
+		
+		<menu id="operators">
+			<ul>
+				<li>
+					<button>Fire</button>
+				</li>
+				<li>
+					<button>Projectile</button>
+				</li>
+				<li>
+					<button>Collision</button>
+				</li>
+				<li>
+					<button>Explode</button>
+				</li>
+			</ul>
+		</menu>
+		
+		<script>
+		
+		jQuery(function($) {
+			var data = {
+				operators: {
+					operator: {
+						top: 20,
+						left: 20,
+						properties: {
+							title: 'Fire',
+							outputs: {
+								output_1: {
+									label: 'Position & Velocity',
+								}
+							}
+						}
+					}
+				}
+			};
+
+			$("#flowchart").flowchart({data: data});
+		});
+		
+		</script>
+		
+	</body>
+</html>
