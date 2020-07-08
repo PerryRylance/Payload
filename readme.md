@@ -1,6 +1,6 @@
-# Warheads
+# Payload
 
-This game is a take on the classic space strategy game, inspired in particular by Warheads, powered by Box2D and THREE.js.
+This game is a take on the classic space artillery game, inspired in particular by Warheads, powered by Box2D and THREE.js.
 
 ## Requirements
 
@@ -11,6 +11,7 @@ This game is a take on the classic space strategy game, inspired in particular b
 
 - Open command line and navigate to the projects directory
 - Run `npm install`
+- Install Gulp, if you don't have it already installed globally: `npm install --global gulp-cli`
 
 ## Running
 

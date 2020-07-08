@@ -23,6 +23,7 @@
 		
 		<script src="lib/three.min.js"></script>
 		<script src="lib/controls/OrbitControls.js"></script>
+		<script src="lib/CameraControls.js"></script>
 		
 		<script src="lib/Stats.min.js"></script>
 		
@@ -46,7 +47,10 @@
 				<div id="viewport">
 					<div id="scene"></div>
 					<div id="hud">
-						<menu id="weapons"></menu>
+						<menu id="weapons">
+							<select class="weapon"></select>
+						</menu>
+						
 						<menu id="actions" class="hexagonal">
 							
 							<ul>

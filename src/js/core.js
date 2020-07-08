@@ -47,8 +47,13 @@ Payload.prototype.init = function()
 		$("dialog.loading").removeAttr("open");
 		
 		// Temp code, just start up a game here
+		self.player = new Payload.Player({
+			"name": "Pez"
+		});
 		
 		self.game = new Payload.Game();
+		self.game.addPlayer(self.player);
+		self.game.start();
 		
 	});
 	this.assets.load();

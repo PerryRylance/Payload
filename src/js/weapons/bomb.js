@@ -3,6 +3,9 @@
 Payload.Bomb = function(world)
 {
 	Payload.Weapon.apply(this, arguments);
+	
+	this.damage = 1;
+	this.radius = 10;
 }
 
 Payload.extend(Payload.Bomb, Payload.Weapon);

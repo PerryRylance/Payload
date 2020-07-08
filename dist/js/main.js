@@ -47,109 +47,17 @@ Payload.prototype.init = function()
 		$("dialog.loading").removeAttr("open");
 		
 		// Temp code, just start up a game here
+		self.player = new Payload.Player({
+			"name": "Pez"
+		});
 		
 		self.game = new Payload.Game();
+		self.game.addPlayer(self.player);
+		self.game.start();
 		
 	});
 	this.assets.load();
 }
-
-// requires: core.js
-
-/**
- * @module Payload.Game
- * Handles rules, turns, etc.
- */
-
-Payload.Game = function()
-{
-	this.world = new Payload.World();
-}
-
-// requires: core.js
-
-Payload.Interaction = function(camera, element)
-{
-	var self = this;
-	
-	this.camera		= camera;
-	this.element	= element;
-	
-	this.isDragging = false;
-	
-	element.addEventListener("mousedown", function(event) {
-		self.onMouseDown(event);
-	});
-	
-	element.addEventListener("mouseup", function(event) {
-		self.onMouseUp(event);
-	});
-	
-	element.addEventListener("mousemove", function(event) {
-		self.onMouseMove(event);
-	});
-	
-	element.addEventListener("mousewheel", function(event) {
-		self.onMouseWheel(event);
-	});
-}
-
-Payload.Interaction.prototype.onMouseDown = function(event)
-{
-	this.isDragging = true;
-}
-
-Payload.Interaction.prototype.onMouseUp = function(event)
-{
-	this.isDragging = false;
-}
-
-Payload.Interaction.prototype.onMouseMove = function(event)
-{
-	if(!this.isDragging)
-		return;
-	
-	this.camera.position.x -= event.movementX / this.camera.zoom;
-	this.camera.position.y -= event.movementY / this.camera.zoom;
-}
-
-Payload.Interaction.prototype.onMouseWheel = function(event)
-{	
-	var amount		= event.deltaY < 0 ? 1 : -1;
-	var factor		= this.camera.zoom * 0.1;
-	
-	// TODO: Center on mouse point, apply zoom, recenter on old camera center
-	
-	this.camera.zoom += amount * factor;
-	this.camera.updateProjectionMatrix();
-}
-window.addEventListener("load", function(event) {
-
-	window.payload = new Payload();
-	payload.init();
-	
-});
-// require: core.js
-
-Payload.Units = {
-	
-	RATIO: 20,
-	
-	physicsToGraphics: function(x) {
-		return x * Payload.Units.PHYSICS_TO_GRAPHICS;
-	},
-	
-	graphicsToPhysics: function(x) {
-		return x * Payload.Units.GRAPHICS_TO_PHYSICS;
-	}
-	
-};
-
-Payload.Units.GRAPHICS_TO_PHYSICS		= 1 / Payload.Units.RATIO;
-Payload.Units.PHYSICS_TO_GRAPHICS		= Payload.Units.RATIO;
-
-Payload.Units.p2g = Payload.Units.physicsToGraphics;
-Payload.Units.g2p = Payload.Units.graphicsToPhysics;
 
 // requires: core.js
 
@@ -363,6 +271,203 @@ Payload.EventDispatcher.prototype._triggerListeners = function(event)
 	}
 }
 
+// requires: events/event-dispatcher.js
+
+/**
+ * @module Payload.Game
+ * Handles rules, turns, etc.
+ */
+
+Payload.Game = function()
+{
+	var self			= this;
+		
+	Payload.EventDispatcher.call(this);
+	
+	this.players		= [];
+	this.currentPlayer	= null;
+	this.status			= Payload.Game.STATUS_LOBBY;
+	
+	this.weaponSelect = new Payload.WeaponSelect( $("select.weapon") );
+	
+	$("menu#actions button").on("click",  function(event) {
+		self.onActionButtonClicked(event);
+	});
+}
+
+Payload.extend(Payload.Game, Payload.EventDispatcher);
+
+Payload.Game.STATUS_LOBBY		= "lobby";
+Payload.Game.STATUS_PLAYING		= "playing";
+Payload.Game.STATUS_ENDED		= "ended";
+
+Payload.Game.prototype.onActionButtonClicked = function(event)
+{
+	var action = event.target.id;
+	
+	switch(action)
+	{
+		case "fire":
+			break;
+			
+		case "launch":
+			break;
+			
+		case "re-center":
+			break;
+			
+		case "skip-turn":
+			break;
+			
+		case "surrender":
+			break;
+		
+		default:
+			throw new Error("Unknown action");
+			break;
+	}
+}
+
+Payload.Game.prototype.addPlayer = function(player)
+{
+	this.players.push(player);
+	player.game = this;
+}
+
+Payload.Game.prototype.start = function()
+{
+	Payload.assert(this.players.length ? true : false);
+	
+	this.world = new Payload.World(this);
+	
+	var index = Math.floor(Math.random() * this.players.length);
+	this.startTurn(this.players[index]);
+}
+
+Payload.Game.prototype.startTurn = function(player)
+{
+	Payload.assert(player instanceof Payload.Player);
+	
+	this.currentPlayer = player;
+}
+
+Payload.Game.prototype.endTurn = function()
+{
+	Payload.assert(this.currentPlayer != null);
+	
+	var currentPlayerIndex = this.players.indexOf(this.currentPlayer);
+	
+	Payload.assert(currentPlayerIndex > -1);
+	
+	var nextIndex = (currentPlayerIndex++ % this.players.length);
+	
+	this.startTurn(this.players[nextIndex]);
+}
+
+Payload.Game.prototype.end = function()
+{
+	
+}
+// requires: core.js
+
+Payload.Interaction = function(camera, element)
+{
+	var self = this;
+	
+	this.camera		= camera;
+	this.element	= element;
+	
+	this.isDragging = false;
+	
+	element.addEventListener("mousedown", function(event) {
+		self.onMouseDown(event);
+	});
+	
+	element.addEventListener("mouseup", function(event) {
+		self.onMouseUp(event);
+	});
+	
+	element.addEventListener("mousemove", function(event) {
+		self.onMouseMove(event);
+	});
+	
+	element.addEventListener("mousewheel", function(event) {
+		self.onMouseWheel(event);
+	});
+}
+
+Payload.Interaction.prototype.onMouseDown = function(event)
+{
+	this.isDragging = true;
+}
+
+Payload.Interaction.prototype.onMouseUp = function(event)
+{
+	this.isDragging = false;
+}
+
+Payload.Interaction.prototype.onMouseMove = function(event)
+{
+	if(!this.isDragging)
+		return;
+	
+	this.camera.position.x -= event.movementX / this.camera.zoom;
+	this.camera.position.y -= event.movementY / this.camera.zoom;
+}
+
+Payload.Interaction.prototype.onMouseWheel = function(event)
+{	
+	var amount		= event.deltaY < 0 ? 1 : -1;
+	var factor		= this.camera.zoom * 0.1;
+	
+	// TODO: Center on mouse point, apply zoom, recenter on old camera center
+	
+	this.camera.zoom += amount * factor;
+	this.camera.updateProjectionMatrix();
+}
+window.addEventListener("load", function(event) {
+
+	window.payload = new Payload();
+	payload.init();
+	
+});
+// requires: events/event-dispatcher.js
+
+Payload.Player = function(options)
+{
+	Payload.EventDispatcher.call(this);
+	
+	if(!options)
+		options = {};
+	
+	for(var name in options)
+		this[name] = options;
+}
+
+Payload.extend(Payload.Player, Payload.EventDispatcher);
+
+// require: core.js
+
+Payload.Units = {
+	
+	RATIO: 20,
+	
+	physicsToGraphics: function(x) {
+		return x * Payload.Units.PHYSICS_TO_GRAPHICS;
+	},
+	
+	graphicsToPhysics: function(x) {
+		return x * Payload.Units.GRAPHICS_TO_PHYSICS;
+	}
+	
+};
+
+Payload.Units.GRAPHICS_TO_PHYSICS		= 1 / Payload.Units.RATIO;
+Payload.Units.PHYSICS_TO_GRAPHICS		= Payload.Units.RATIO;
+
+Payload.Units.p2g = Payload.Units.physicsToGraphics;
+Payload.Units.g2p = Payload.Units.graphicsToPhysics;
+
 /* requires: 
 core.js
 events/event-dispatcher.js
@@ -373,7 +478,7 @@ events/event-dispatcher.js
  * Handles physics, graphics, entities, updates etc.
  */
 
-Payload.World = function(options)
+Payload.World = function(game, options)
 {
 	Payload.EventDispatcher.apply(this, arguments);
 	
@@ -382,6 +487,7 @@ Payload.World = function(options)
 	
 	this.options = options = $.extend(true, {}, Payload.World.defaults, options);
 	
+	this.game		= game;
 	this.entities	= [];
 	this.planets	= [];
 	this.ships		= [];
@@ -514,13 +620,12 @@ Payload.World.prototype.initPlanets = function(options)
 	}
 }
 
-Payload.World.prototype.initShips = function(options)
+Payload.World.prototype.initShipForPlayer = function(player, options)
 {
 	// A single debug ship
-	
 	// TODO: Move this to a spawn / teleport function on the ship ideally. It'll need to be reused for teleport.
-	
 	// NB: Maximum of 64 attempts to place the ship. Placing a ship inside a planet causes very odd behaviour with Box2D
+	
 	var position, entities;
 	var max				= 64;
 	
@@ -545,12 +650,25 @@ Payload.World.prototype.initShips = function(options)
 	if(attempt > max * 0.8)
 		console.warn("High number of attempts to find spawn point for ship");
 	
-	var options			= $.extend({}, options.ship, {
-		position: position
-	});
+	var ship		= new Payload.Ship(this, 
+		$.extend({}, options.ship, {
+			position: position
+		})
+	);
 	
-	var ship		= new Payload.Ship(this, options);
 	this.add(ship);
+	player.ship = ship;
+}
+
+Payload.World.prototype.initShips = function(options)
+{
+	var self = this;
+	
+	this.game.players.forEach(function(player) {
+		
+		self.initShipForPlayer(player, options);
+		
+	});
 }
 
 Payload.World.prototype.add = function(entity)
@@ -1015,9 +1133,15 @@ Payload.Entity.prototype.update = function()
 		var x			= position.get_x() * Payload.Units.PHYSICS_TO_GRAPHICS;
 		var y			= position.get_y() * Payload.Units.PHYSICS_TO_GRAPHICS;
 		
-		Payload.assert(!isNaN(x));
-		Payload.assert(!isNaN(y));
-		Payload.assert(!isNaN(angle));
+		try{
+			Payload.assert(!isNaN(x));
+			Payload.assert(!isNaN(y));
+			Payload.assert(!isNaN(angle));
+		}catch(e) {
+			this.world.b2World.DestroyBody(this.b2Body);
+			this.b2Body = null;
+			console.warn("Box2D encountered a NaN value, body for entity destroyed");
+		}
 		
 		this.object3d.position.set(x, y, 0);
 		this.object3d.rotation.set(0, 0, angle);
@@ -1061,7 +1185,7 @@ Payload.Entity.prototype.launch = function(options)
 	}
 }
 
-Payload.Entity.prototype.detonate = function()
+Payload.Entity.prototype.detonate = function(options)
 {
 	// Take option for EMP / explosion
 }
@@ -1554,6 +1678,34 @@ Payload.Ship.prototype.initGraphics = function(options)
 	this.object3d = new THREE.Mesh(geometry, material);
 }
 // requires: core.js
+	
+Payload.WeaponSelect = function($element)
+{
+	this.$element = $element;
+	this.$element.html("");
+	
+	for(var name in Payload.Weapon)
+	{
+		var $option	= $("<option></option>");
+		var cost;
+		
+		if(Payload.Weapon[name].COST !== undefined)
+			cost	= Payload.Weapon[name].COST;
+		else
+		{
+			console.warn("Payload.Weapon." + name + " has no COST");
+			cost	= 0;
+		}
+		
+		var caption	= name.replace(/([A-Z])/g, " $1").trim(" ") + " (" + cost + ")";
+		
+		$option.attr("value", name);
+		$option.text(caption);
+		
+		$($element).append($option);
+	}
+}
+// requires: core.js
 		
 /**
  * Base class used for events (for non-HTMLElement objects)
@@ -1611,6 +1763,9 @@ Payload.Weapon.prototype.fire = function()
 Payload.Bomb = function(world)
 {
 	Payload.Weapon.apply(this, arguments);
+	
+	this.damage = 1;
+	this.radius = 10;
 }
 
 Payload.extend(Payload.Bomb, Payload.Weapon);
@@ -1640,6 +1795,45 @@ Payload.Bomb.prototype.fire = function(options)
 	projectile.launch(options);
 }
 
+// requires: weapons/bomb.js
+
+Payload.Weapon.LargeBomb = function(world)
+{
+	Payload.Bomb.apply(this, arguments);
+	
+	this.damage = 40;
+	this.radius = 120;
+}
+
+Payload.extend(Payload.Weapon.LargeBomb, Payload.Bomb);
+
+Payload.Weapon.LargeBomb.COST	= 30;
+// requires: weapons/bomb.js
+
+Payload.Weapon.MediumBomb = function(world)
+{
+	Payload.Bomb.apply(this, arguments);
+	
+	this.damage = 15;
+	this.radius = 80;
+}
+
+Payload.extend(Payload.Weapon.MediumBomb, Payload.Bomb);
+
+Payload.Weapon.MediumBomb.COST	= 10;
+// requires: weapons/bomb.js
+
+Payload.Weapon.MegaBomb = function(world)
+{
+	Payload.Bomb.apply(this, arguments);
+	
+	this.damage = 60;
+	this.radius = 160;
+}
+
+Payload.extend(Payload.Weapon.MegaBomb, Payload.Bomb);
+
+Payload.Weapon.MegaBomb.COST	= 60;
 // requires: entities/entity.js
 
 Payload.Projectile = function(world, options)
@@ -1649,4 +1843,17 @@ Payload.Projectile = function(world, options)
 
 Payload.extend(Payload.Projectile, Payload.Entity);
 
+// requires: weapons/bomb.js
+
+Payload.Weapon.SmallBomb = function(world)
+{
+	Payload.Bomb.apply(this, arguments);
+	
+	this.damage = 10;
+	this.radius = 50;
+}
+
+Payload.extend(Payload.Weapon.SmallBomb, Payload.Bomb);
+
+Payload.Weapon.SmallBomb.COST	= 0;
 //# sourceMappingURL=main.js.map

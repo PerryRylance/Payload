@@ -121,9 +121,15 @@ Payload.Entity.prototype.update = function()
 		var x			= position.get_x() * Payload.Units.PHYSICS_TO_GRAPHICS;
 		var y			= position.get_y() * Payload.Units.PHYSICS_TO_GRAPHICS;
 		
-		Payload.assert(!isNaN(x));
-		Payload.assert(!isNaN(y));
-		Payload.assert(!isNaN(angle));
+		try{
+			Payload.assert(!isNaN(x));
+			Payload.assert(!isNaN(y));
+			Payload.assert(!isNaN(angle));
+		}catch(e) {
+			this.world.b2World.DestroyBody(this.b2Body);
+			this.b2Body = null;
+			console.warn("Box2D encountered a NaN value, body for entity destroyed");
+		}
 		
 		this.object3d.position.set(x, y, 0);
 		this.object3d.rotation.set(0, 0, angle);
@@ -167,7 +173,7 @@ Payload.Entity.prototype.launch = function(options)
 	}
 }
 
-Payload.Entity.prototype.detonate = function()
+Payload.Entity.prototype.detonate = function(options)
 {
 	// Take option for EMP / explosion
 }

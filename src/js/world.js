@@ -8,7 +8,7 @@ events/event-dispatcher.js
  * Handles physics, graphics, entities, updates etc.
  */
 
-Payload.World = function(options)
+Payload.World = function(game, options)
 {
 	Payload.EventDispatcher.apply(this, arguments);
 	
@@ -17,6 +17,7 @@ Payload.World = function(options)
 	
 	this.options = options = $.extend(true, {}, Payload.World.defaults, options);
 	
+	this.game		= game;
 	this.entities	= [];
 	this.planets	= [];
 	this.ships		= [];
@@ -149,13 +150,12 @@ Payload.World.prototype.initPlanets = function(options)
 	}
 }
 
-Payload.World.prototype.initShips = function(options)
+Payload.World.prototype.initShipForPlayer = function(player, options)
 {
 	// A single debug ship
-	
 	// TODO: Move this to a spawn / teleport function on the ship ideally. It'll need to be reused for teleport.
-	
 	// NB: Maximum of 64 attempts to place the ship. Placing a ship inside a planet causes very odd behaviour with Box2D
+	
 	var position, entities;
 	var max				= 64;
 	
@@ -180,12 +180,25 @@ Payload.World.prototype.initShips = function(options)
 	if(attempt > max * 0.8)
 		console.warn("High number of attempts to find spawn point for ship");
 	
-	var options			= $.extend({}, options.ship, {
-		position: position
-	});
+	var ship		= new Payload.Ship(this, 
+		$.extend({}, options.ship, {
+			position: position
+		})
+	);
 	
-	var ship		= new Payload.Ship(this, options);
 	this.add(ship);
+	player.ship = ship;
+}
+
+Payload.World.prototype.initShips = function(options)
+{
+	var self = this;
+	
+	this.game.players.forEach(function(player) {
+		
+		self.initShipForPlayer(player, options);
+		
+	});
 }
 
 Payload.World.prototype.add = function(entity)
