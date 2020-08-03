@@ -9,6 +9,10 @@ window.Payload = function()
 	window.Box2D = Box2D({
 		TOTAL_MEMORY: Payload.BOX2D_MEMORY_MB * 1048576
 	});
+	
+	CameraControls.install({
+		THREE: window.THREE
+	});
 }
 
 Payload.BOX2D_MEMORY_MB		= 256;
