@@ -9,6 +9,10 @@ window.Payload = function()
 	window.Box2D = Box2D({
 		TOTAL_MEMORY: Payload.BOX2D_MEMORY_MB * 1048576
 	});
+	
+	CameraControls.install({
+		THREE: window.THREE
+	});
 }
 
 Payload.BOX2D_MEMORY_MB		= 256;
@@ -377,53 +381,21 @@ Payload.Interaction = function(camera, element)
 	this.camera		= camera;
 	this.element	= element;
 	
-	this.isDragging = false;
+	this.clock		= new THREE.Clock();
+	this.controls	= new CameraControls(camera, element);
 	
-	element.addEventListener("mousedown", function(event) {
-		self.onMouseDown(event);
-	});
+	this.controls.mouseButtons.left = CameraControls.ACTION.TRUCK;
+	this.controls.mouseButtons.right = CameraControls.ACTION.NONE;
+	this.controls.mouseButtons.wheel = CameraControls.ACTION.ZOOM;
 	
-	element.addEventListener("mouseup", function(event) {
-		self.onMouseUp(event);
-	});
-	
-	element.addEventListener("mousemove", function(event) {
-		self.onMouseMove(event);
-	});
-	
-	element.addEventListener("mousewheel", function(event) {
-		self.onMouseWheel(event);
-	});
+	this.controls.zoomToCursor = true;
 }
 
-Payload.Interaction.prototype.onMouseDown = function(event)
+Payload.Interaction.prototype.update = function()
 {
-	this.isDragging = true;
-}
-
-Payload.Interaction.prototype.onMouseUp = function(event)
-{
-	this.isDragging = false;
-}
-
-Payload.Interaction.prototype.onMouseMove = function(event)
-{
-	if(!this.isDragging)
-		return;
+	var delta		= this.clock.getDelta();
 	
-	this.camera.position.x -= event.movementX / this.camera.zoom;
-	this.camera.position.y -= event.movementY / this.camera.zoom;
-}
-
-Payload.Interaction.prototype.onMouseWheel = function(event)
-{	
-	var amount		= event.deltaY < 0 ? 1 : -1;
-	var factor		= this.camera.zoom * 0.1;
-	
-	// TODO: Center on mouse point, apply zoom, recenter on old camera center
-	
-	this.camera.zoom += amount * factor;
-	this.camera.updateProjectionMatrix();
+	this.controls.update(delta);
 }
 window.addEventListener("load", function(event) {
 
@@ -635,7 +607,7 @@ Payload.World.prototype.initShipForPlayer = function(player, options)
 		var planet		= this.planets[index];
 		
 		position		= planet.getPointOnSurface({
-			additionalRadius: options.ship.radius
+			additionalRadius: options.ship.radius * 2
 		});
 		
 		entities		= this.getEntitiesAtPosition(position);
@@ -788,6 +760,8 @@ Payload.World.prototype.step = function()
 	// Entities
 	for(var i = 0; i < this.entities.length; i++)
 		this.entities[i].update();
+	
+	this.interaction.update();
 	
 	// Rendering
 	this.renderer.render(this.scene, this.camera);

@@ -165,7 +165,7 @@ Payload.World.prototype.initShipForPlayer = function(player, options)
 		var planet		= this.planets[index];
 		
 		position		= planet.getPointOnSurface({
-			additionalRadius: options.ship.radius
+			additionalRadius: options.ship.radius * 2
 		});
 		
 		entities		= this.getEntitiesAtPosition(position);
@@ -318,6 +318,8 @@ Payload.World.prototype.step = function()
 	// Entities
 	for(var i = 0; i < this.entities.length; i++)
 		this.entities[i].update();
+	
+	this.interaction.update();
 	
 	// Rendering
 	this.renderer.render(this.scene, this.camera);
