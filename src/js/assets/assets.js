@@ -1,79 +1,66 @@
-// requires: events/event-dispatcher.js
+import EventDispatcher from "@perry-rylance/event-dispatcher";
+import Collection from "./Collection";
 
-/**
- * @module Payload.Assets
- * Loads all assetse ready for use before the game starts
- */
-Payload.Assets = function()
+export default class Assets extends EventDispatcher
 {
-	var self = this;
-	
-	Payload.EventDispatcher.call(this);
-	
-	this.collections = [];
-	
-	this.manager = new THREE.LoadingManager();
-	this.manager.onStart = function(url, loaded, total) {
-		self.onProgress(url, loaded, total);
-	};
-	this.manager.onProgress = function(url, loaded, total) {
-		self.onProgress(url, loaded, total);
-	};
-	this.manager.onLoad = function() {
-		self.onLoad();
-	};
-	this.manager.onError = function(url) {
-		self.onError(url);
-	}
-}
-
-Payload.extend(Payload.Assets, Payload.EventDispatcher);
-
-Payload.Assets.prototype.load = function()
-{
-	var self = this;
-	
-	$.ajax("assets.json", {
-		
-		success: function(response, status, xhr) {
-			self.loadFromJSON(response);
-		},
-		
-		error: function(xhr, status, error) {
-			throw new Error("Error loading assets file");
-		}
-		
-	});
-}
-
-Payload.Assets.prototype.loadFromJSON = function(json)
-{
-	Payload.assert(typeof json == "object", "Invalid assets file");
-	
-	// NB: Get around a quirk of the directory map gulp plugin
-	json = json[""];
-	
-	for(var name in json)
+	constructor()
 	{
-		this[name] = new Payload.Assets.Collection(json[name]);
+		super();
+		
+		this.collections = [];
+		
+		this.manager = new THREE.LoadingManager();
+		
+		this.manager.onStart = 
+			this.manager.onProgress = 
+			(url, loaded, total) => this.onProgress(url, loaded, total)
+		
+		this.manager.onLoad = () => this.onLoad();
+		
+		this.manager.onError = (url) => this.onError(url);
 	}
-}
-
-Payload.Assets.prototype.onProgress = function(url, loaded, total)
-{
-	this.trigger({
-		type:		"progress",
-		amount:		loaded / total,
-		percent:	(loaded / total) * 100
-	});
-}
-
-Payload.Assets.prototype.onError = function(url, loaded, total)
-{
-	throw new Error("Failed to load asset");
-}
-
-Payload.Assets.prototype.onLoad = function()
-{
-	this.trigger("load");
+	
+	load()
+	{
+		var self = this;
+		
+		$.ajax("assets.json", {
+			success: (response, status, xhr) => this.loadFromJSON(response),
+			error: (xhr, status, error) => {
+				throw new Error("Error loading assets file");
+			}
+		});
+	}
+	
+	loadFromJSON(json)
+	{
+		Payload.assert(typeof json == "object", "Invalid assets file");
+		
+		// NB: Get around a quirk of the directory map gulp plugin
+		json = json[""];
+		
+		for(var name in json)
+		{
+			this[name] = new Collection(json[name]);
+		}
+	}
+	
+	onProgress(url, loaded, total)
+	{
+		this.trigger({
+			type:		"progress",
+			amount:		loaded / total,
+			percent:	(loaded / total) * 100
+		});
+	}
+	
+	onError(url, loaded, total)
+	{
+		throw new Error("Failed to load asset");
+	}
+	
+	onLoad()
+	{
+		this.trigger("load");
+	}
 }

@@ -4,11 +4,10 @@
  * (c) 2017 @yomotsu
  * Released under the MIT License.
  */
-// exports = {};
 (function (global, factory) {
 	typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
 	typeof define === 'function' && define.amd ? define(factory) :
-	(global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.CameraControls = factory());
+	(global = global || self, global.CameraControls = factory());
 }(this, (function () { 'use strict';
 
 	/*! *****************************************************************************
@@ -187,6 +186,7 @@
 	        _this.maxAzimuthAngle = Infinity;
 	        _this.minDistance = 0;
 	        _this.maxDistance = Infinity;
+	        _this.infinityDolly = false;
 	        _this.minZoom = 0.01;
 	        _this.maxZoom = Infinity;
 	        _this.dampingFactor = 0.05;
@@ -196,13 +196,11 @@
 	        _this.dollySpeed = 1.0;
 	        _this.truckSpeed = 2.0;
 	        _this.dollyToCursor = false;
-	        _this.zoomToCursor = false;
 	        _this.verticalDragToForward = false;
 	        _this.boundaryFriction = 0.0;
 	        _this.colliderMeshes = [];
 	        _this._state = ACTION.NONE;
 	        _this._viewport = null;
-	        _this._zoomControlAmount = 0;
 	        _this._dollyControlAmount = 0;
 	        _this._boundaryEnclosesCamera = false;
 	        _this._needsUpdate = true;
@@ -229,7 +227,8 @@
 	        _this._target0 = _this._target.clone();
 	        _this._position0 = _this._camera.position.clone();
 	        _this._zoom0 = _this._zoom;
-	        _this._dollyOrZoomControlCoords = new THREE.Vector2();
+	        _this._dollyControlAmount = 0;
+	        _this._dollyControlCoord = new THREE.Vector2();
 	        _this.mouseButtons = {
 	            left: ACTION.ROTATE,
 	            middle: ACTION.DOLLY,
@@ -283,20 +282,21 @@
 	                var distance = _this._sphericalEnd.radius * dollyScale;
 	                var prevRadius = _this._sphericalEnd.radius;
 	                _this.dollyTo(distance);
+	                if (_this.infinityDolly && distance < _this.minDistance) {
+	                    _this._camera.getWorldDirection(_v3A);
+	                    _this._targetEnd.add(_v3A.normalize().multiplyScalar(prevRadius));
+	                    _this._target.add(_v3A.normalize().multiplyScalar(prevRadius));
+	                }
 	                if (_this.dollyToCursor) {
 	                    _this._dollyControlAmount += _this._sphericalEnd.radius - prevRadius;
-	                    _this._dollyOrZoomControlCoords.set(x, y);
+	                    _this._dollyControlCoord.set(x, y);
 	                }
 	                return;
 	            };
-	            var zoomInternal_1 = function (delta, x, y) {
+	            var zoomInternal_1 = function (delta) {
 	                var zoomScale = Math.pow(0.95, delta * _this.dollySpeed);
-	                var prevZoom = _this._zoom;
+					console.log(zoomScale);
 	                _this.zoomTo(_this._zoom * zoomScale);
-	                if (_this.zoomToCursor) {
-	                    _this._zoomControlAmount -= _this._zoom - prevZoom;
-	                    _this._dollyOrZoomControlCoords.set(x, y);
-	                }
 	                return;
 	            };
 	            var onMouseDown_1 = function (event) {
@@ -345,7 +345,6 @@
 	                    return;
 	                event.preventDefault();
 	                if (_this.dollyToCursor ||
-	                    _this.zoomToCursor ||
 	                    _this.mouseButtons.wheel === ACTION.ROTATE ||
 	                    _this.mouseButtons.wheel === ACTION.TRUCK) {
 	                    var now = performance.now();
@@ -355,6 +354,8 @@
 	                }
 	                var deltaYFactor = isMac ? -1 : -3;
 	                var delta = (event.deltaMode === 1) ? event.deltaY / deltaYFactor : event.deltaY / (deltaYFactor * 10);
+	                var x = _this.dollyToCursor ? (event.clientX - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
+	                var y = _this.dollyToCursor ? (event.clientY - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
 	                switch (_this.mouseButtons.wheel) {
 	                    case ACTION.ROTATE: {
 	                        rotateInternal_1(event.deltaX, event.deltaY);
@@ -365,15 +366,11 @@
 	                        break;
 	                    }
 	                    case ACTION.DOLLY: {
-	                        var x = _this.dollyToCursor ? (event.clientX - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
-	                        var y = _this.dollyToCursor ? (event.clientY - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
 	                        dollyInternal_1(-delta, x, y);
 	                        break;
 	                    }
 	                    case ACTION.ZOOM: {
-	                        var x = _this.zoomToCursor ? (event.clientX - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
-	                        var y = _this.zoomToCursor ? (event.clientY - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
-	                        zoomInternal_1(-delta, x, y);
+	                        zoomInternal_1(-delta);
 	                        break;
 	                    }
 	                }
@@ -429,44 +426,35 @@
 	                        rotateInternal_1(deltaX, deltaY);
 	                        break;
 	                    }
-	                    case ACTION.DOLLY: {
+	                    case ACTION.DOLLY:
+	                    case ACTION.ZOOM: {
 	                        var dollyX = _this.dollyToCursor ? (dragStartPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
 	                        var dollyY = _this.dollyToCursor ? (dragStartPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
-	                        dollyInternal_1(deltaY * TOUCH_DOLLY_FACTOR, dollyX, dollyY);
-	                        break;
-	                    }
-	                    case ACTION.ZOOM: {
-	                        var zoomX = _this.zoomToCursor ? (dragStartPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
-	                        var zoomY = _this.zoomToCursor ? (dragStartPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
-	                        zoomInternal_1(deltaY * TOUCH_DOLLY_FACTOR, zoomX, zoomY);
+	                        _this._state === ACTION.DOLLY ?
+	                            dollyInternal_1(deltaY * TOUCH_DOLLY_FACTOR, dollyX, dollyY) :
+	                            zoomInternal_1(deltaY * TOUCH_DOLLY_FACTOR);
 	                        break;
 	                    }
 	                    case ACTION.TOUCH_DOLLY:
 	                    case ACTION.TOUCH_ZOOM:
 	                    case ACTION.TOUCH_DOLLY_TRUCK:
 	                    case ACTION.TOUCH_ZOOM_TRUCK: {
-	                        var isDolly = _this._state === ACTION.TOUCH_DOLLY ||
-	                            _this._state === ACTION.TOUCH_DOLLY_TRUCK;
-	                        var isTruck = _this._state === ACTION.TOUCH_DOLLY_TRUCK ||
-	                            _this._state === ACTION.TOUCH_ZOOM_TRUCK;
 	                        var touchEvent = event;
 	                        var dx = _v2.x - touchEvent.touches[1].clientX;
 	                        var dy = _v2.y - touchEvent.touches[1].clientY;
 	                        var distance = Math.sqrt(dx * dx + dy * dy);
 	                        var dollyDelta = dollyStart_1.y - distance;
 	                        dollyStart_1.set(0, distance);
-	                        if (isDolly) {
-	                            var dollyX = _this.dollyToCursor ? (lastDragPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
-	                            var dollyY = _this.dollyToCursor ? (lastDragPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
-	                            dollyInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR, dollyX, dollyY);
-	                        }
-	                        else {
-	                            var zoomX = _this.zoomToCursor ? (lastDragPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
-	                            var zoomY = _this.zoomToCursor ? (lastDragPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
-	                            zoomInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR, zoomX, zoomY);
-	                        }
-	                        if (isTruck)
+	                        var dollyX = _this.dollyToCursor ? (lastDragPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
+	                        var dollyY = _this.dollyToCursor ? (lastDragPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
+	                        _this._state === ACTION.TOUCH_DOLLY ||
+	                            _this._state === ACTION.TOUCH_DOLLY_TRUCK ?
+	                            dollyInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR, dollyX, dollyY) :
+	                            zoomInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR);
+	                        if (_this._state === ACTION.TOUCH_DOLLY_TRUCK ||
+	                            _this._state === ACTION.TOUCH_ZOOM_TRUCK) {
 	                            truckInternal_1(deltaX, deltaY);
+	                        }
 	                        break;
 	                    }
 	                    case ACTION.TRUCK:
@@ -617,6 +605,12 @@
 	        enumerable: true,
 	        configurable: true
 	    });
+	    CameraControls.prototype.addEventListener = function (type, listener) {
+	        _super.prototype.addEventListener.call(this, type, listener);
+	    };
+	    CameraControls.prototype.removeEventListener = function (type, listener) {
+	        _super.prototype.removeEventListener.call(this, type, listener);
+	    };
 	    CameraControls.prototype.rotate = function (azimuthAngle, polarAngle, enableTransition) {
 	        if (enableTransition === void 0) { enableTransition = false; }
 	        this.rotateTo(this._sphericalEnd.theta + azimuthAngle, this._sphericalEnd.phi + polarAngle, enableTransition);
@@ -879,7 +873,7 @@
 	            this._spherical.copy(this._sphericalEnd);
 	            this._target.copy(this._targetEnd);
 	        }
-	        if (this._dollyControlAmount !== 0 || this._zoomControlAmount !== 0) {
+	        if (this._dollyControlAmount !== 0) {
 	            if (this._camera.isPerspectiveCamera) {
 	                var camera = this._camera;
 	                var direction = _v3A.setFromSpherical(this._sphericalEnd).applyQuaternion(this._yAxisUpSpaceInverse).normalize().negate();
@@ -889,17 +883,14 @@
 	                var planeY = _v3C.crossVectors(planeX, direction);
 	                var worldToScreen = this._sphericalEnd.radius * Math.tan(camera.getEffectiveFOV() * THREE.Math.DEG2RAD * 0.5);
 	                var prevRadius = this._sphericalEnd.radius - this._dollyControlAmount;
-	                var prevZoom = this._zoomEnd - this._zoomControlAmount;
-	                var dollyLerpRatio = !this._dollyControlAmount ? 0 : (prevRadius - this._sphericalEnd.radius) / this._sphericalEnd.radius;
-	                var zoomLerpRatio = !this._zoomControlAmount ? 0 : (prevZoom - this._zoomEnd) / this._zoomEnd;
+	                var lerpRatio_1 = (prevRadius - this._sphericalEnd.radius) / this._sphericalEnd.radius;
 	                var cursor = _v3A.copy(this._targetEnd)
-	                    .add(planeX.multiplyScalar(this._dollyOrZoomControlCoords.x * worldToScreen * camera.aspect))
-	                    .add(planeY.multiplyScalar(this._dollyOrZoomControlCoords.y * worldToScreen));
-	                this._targetEnd.lerp(cursor, dollyLerpRatio + zoomLerpRatio);
+	                    .add(planeX.multiplyScalar(this._dollyControlCoord.x * worldToScreen * camera.aspect))
+	                    .add(planeY.multiplyScalar(this._dollyControlCoord.y * worldToScreen));
+	                this._targetEnd.lerp(cursor, lerpRatio_1);
 	                this._target.copy(this._targetEnd);
 	            }
 	            this._dollyControlAmount = 0;
-	            this._zoomControlAmount = 0;
 	        }
 	        var maxDistance = this._collisionTest();
 	        this._spherical.radius = Math.min(this._spherical.radius, maxDistance);
@@ -950,11 +941,10 @@
 	            dollySpeed: this.dollySpeed,
 	            truckSpeed: this.truckSpeed,
 	            dollyToCursor: this.dollyToCursor,
-	            zoomToCursor: this.zoomToCursor,
 	            verticalDragToForward: this.verticalDragToForward,
 	            target: this._targetEnd.toArray(),
-	            position: this._camera.position.toArray(),
-	            zoom: this._camera.zoom,
+	            position: _v3A.setFromSpherical(this._sphericalEnd).add(this._targetEnd).toArray(),
+	            zoom: this._zoomEnd,
 	            target0: this._target0.toArray(),
 	            position0: this._position0.toArray(),
 	            zoom0: this._zoom0,
@@ -978,7 +968,6 @@
 	        this.dollySpeed = obj.dollySpeed;
 	        this.truckSpeed = obj.truckSpeed;
 	        this.dollyToCursor = obj.dollyToCursor;
-	        this.zoomToCursor = obj.zoomToCursor;
 	        this.verticalDragToForward = obj.verticalDragToForward;
 	        this._target0.fromArray(obj.target0);
 	        this._position0.fromArray(obj.position0);

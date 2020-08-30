@@ -1,15 +1,25 @@
-// requires: assets/assets.js
+import Asset from "./Asset";
 
-/**
- * @module Payload.Collection
- * Loads all assetse ready for use before the game starts
- */
-
-Payload.Assets.Collection = function(json)
+export default class Collection
 {
-	this.assets = {};
+	constructor(json)
+	{
+		Payload.assert(typeof json == "object");
+		
+		this.assets = {};
+		
+		for(var name in json)
+		{
+			var child = json[name];
+			
+			if(Collection.isAssetDefinition(child))
+				this.assets[name] = new Asset(child);
+			else
+				this[name] = new Collection(child);
+		}
+	}
 	
-	function isAssetDefinition(obj)
+	static isAssetDefinition(obj)
 	{
 		var index = 0;
 		
@@ -26,21 +36,11 @@ Payload.Assets.Collection = function(json)
 		}
 	}
 	
-	for(var name in json)
+	random(game)
 	{
-		var child = json[name];
+		var arr		= Object.values(this.assets);
+		var index	= Math.floor( game.random() * arr.length );
 		
-		if(isAssetDefinition(child))
-			this.assets[name] = new Payload.Assets.Asset(child);
-		else
-			this[name] = new Payload.Assets.Collection(child);
+		return arr[index];
 	}
-}
-
-Payload.Assets.Collection.prototype.random = function()
-{
-	var arr		= Object.values(this.assets);
-	var index	= Math.floor( Math.random() * arr.length );
-	
-	return arr[index];
 }

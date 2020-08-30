@@ -1,8 +1,19 @@
 const
 	gulp			= require('gulp'),
+	del				= require('del'),
+	source			= require('vinyl-source-stream'),
+	buffer			= require('vinyl-buffer'),
 	sourcemaps		= require('gulp-sourcemaps'),
+	
+	babel			= require('gulp-babel'),
+	babelify		= require('babelify'),
+	log				= require('gulplog'),
+	inject			= require('gulp-inject-string'),
+	browserify		= require('browserify'),
+	
 	concat			= require('gulp-concat'),
 	deporder		= require('gulp-deporder'),
+	
 	uglify			= require("gulp-uglify"),
 	uglifycss		= require('gulp-uglifycss'),
 	include			= require("gulp-html-tag-include"),
@@ -37,16 +48,32 @@ function copy()
 		.pipe(gulpCopy("dist/assets", {prefix: 2}));
 }
 
-function js() {
+function js()
+{
+	var b = browserify({
+		entries: './src/js/entry.js',
+		debug: true
+	}).transform(babelify, {
+		presets: ['@babel/preset-env']/*,
+		plugins: [
+			"@babel/plugin-transform-modules-commonjs"
+		]*/
+	});
 	
-	return gulp.src(paths.scripts)
-		.pipe(sourcemaps.init())
-		.pipe(deporder())
-		.pipe(concat("main.js"))
+	del("dist/js/**/*");
+	
+	return b.bundle()
+		.pipe(source("entry.js"))
+		.pipe(buffer())
+		.pipe(sourcemaps.init({
+			loadMaps: true
+		}))
 		// .pipe(uglify())
-		.pipe(sourcemaps.write("."))
-		.pipe(gulp.dest("dist/js/"));
-		
+		.on("error", log.error)
+		.pipe(inject.prepend("jQuery(function($) {"))
+		.pipe(inject.append("});"))
+		.pipe(sourcemaps.write('./'))
+		.pipe(gulp.dest('./dist/js/'));
 }
 
 function css()
