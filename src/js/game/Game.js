@@ -1,6 +1,7 @@
 import EventDispatcherWithOptions from "../EventDispatcherWithOptions";
 import Player from "./Player";
 import World from "./World";
+import UI from "./UI";
 
 export default class Game extends EventDispatcherWithOptions
 {
@@ -10,6 +11,7 @@ export default class Game extends EventDispatcherWithOptions
 		
 		this.players		= [];
 		this.currentPlayer	= null;
+		
 		this.status			= Game.STATUS_LOBBY;
 		
 		// NB: Put this in the UI module
@@ -36,6 +38,9 @@ export default class Game extends EventDispatcherWithOptions
 		
 		this.random		= PRNG.Alea(this.seed);
 		this.world		= new World(this);
+		
+		this.weapons	= Payload.weapons["default"];
+		this.ui			= new UI(this);
 		
 		var index		= Math.floor(this.random() * this.players.length);
 		this.startTurn(this.players[index]);

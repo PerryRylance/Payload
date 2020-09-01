@@ -54,10 +54,7 @@ function js()
 		entries: './src/js/entry.js',
 		debug: true
 	}).transform(babelify, {
-		presets: ['@babel/preset-env']/*,
-		plugins: [
-			"@babel/plugin-transform-modules-commonjs"
-		]*/
+		presets: ['@babel/preset-env']
 	});
 	
 	del("dist/js/**/*");
@@ -111,7 +108,10 @@ function serve(done)
 	done();
 }
 
-const task = gulp.parallel(assets, copy, html, js, css);
+assets();
+copy();
+
+const task = gulp.parallel(html, js, css);
 
 const watch = () => gulp.watch("src/**/(*.js|*.html|*.scss)", gulp.series(task, reload));
 const dev = gulp.series(task, serve, watch);

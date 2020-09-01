@@ -5,6 +5,7 @@ import CameraControls from "camera-controls";
 import Assets from "./assets/Assets";
 import Player from "./game/Player";
 import Game from "./game/Game";
+import DefaultWeaponSet from "./game/weapons/default/Set";
 
 export default class Payload
 {
@@ -68,10 +69,15 @@ export default class Payload
 }
 
 Payload.BOX2D_MEMORY_MB = 256;
+
 Payload.createInstance = function()
 {
 	return new Payload();
 }
+
+Payload.weapons = {
+	"default": DefaultWeaponSet
+};
 
 window.Payload = Payload;
 window.payload = Payload.createInstance();
