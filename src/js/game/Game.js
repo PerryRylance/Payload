@@ -34,7 +34,6 @@ export default class Game extends EventDispatcherWithOptions
 		Payload.assert(this.players.length ? true : false);
 		
 		this.seed		= new Date().getTime();
-		this.seed		= 123;
 		
 		this.random		= PRNG.Alea(this.seed);
 		this.world		= new World(this);

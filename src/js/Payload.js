@@ -81,4 +81,7 @@ Payload.weapons = {
 
 window.Payload = Payload;
 window.payload = Payload.createInstance();
-payload.init();
+
+$(window).on("load", function(event) {
+	payload.init();
+});

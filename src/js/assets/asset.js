@@ -8,8 +8,14 @@ export default class Asset
 		this.loader		= new constructor(payload.assets.manager);
 		
 		this.loader.load("/assets" + src, (resource) => {
+			
 			this.resource = resource;
-		})
+			
+			if(this.loader instanceof THREE.MTLLoader)
+				resource.preload();
+			
+		});
+		
 	}
 	
 	static getLoaderFromFilename(filename)
@@ -28,6 +34,26 @@ export default class Asset
 				return THREE.TextureLoader;
 			
 				break;
+			
+			case ".mtl":
+				
+				return THREE.MTLLoader;
+				
+				break;
+			
+			case ".obj":
+			
+				return THREE.OBJLoader;
+			
+				break;
+			
+			case ".wav":
+			case ".ogg":
+			case ".mp3":
+			
+				return THREE.AudioLoader;
+				
+				return;
 			
 			default:
 				
