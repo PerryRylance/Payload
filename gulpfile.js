@@ -8,7 +8,8 @@ const
 	babel			= require('gulp-babel'),
 	babelify		= require('babelify'),
 	log				= require('gulplog'),
-	inject			= require('gulp-inject-string'),
+	inject			= require('gulp-inject'),
+	injectString	= require('gulp-inject-string'),
 	browserify		= require('browserify'),
 	
 	concat			= require('gulp-concat'),
@@ -51,7 +52,12 @@ function copy()
 function js()
 {
 	var b = browserify({
-		entries: './src/js/entry.js',
+		entries: [
+			'./src/js/entry.js',
+			// NB: Temporary solution until I can figure out how to properly import these modules. Maybe try Rollup instead of Browserify?
+			'./src/lib/MTLLoader.js',
+			'./src/lib/OBJLoader.js'
+		],
 		debug: true
 	}).transform(babelify, {
 		presets: ['@babel/preset-env']
@@ -67,8 +73,8 @@ function js()
 		}))
 		// .pipe(uglify())
 		.on("error", log.error)
-		.pipe(inject.prepend("jQuery(function($) {"))
-		.pipe(inject.append("});"))
+		.pipe(injectString.prepend("jQuery(function($) {"))
+		.pipe(injectString.append("});"))
 		.pipe(sourcemaps.write('./'))
 		.pipe(gulp.dest('./dist/js/'));
 }

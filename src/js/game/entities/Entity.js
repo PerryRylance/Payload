@@ -11,6 +11,7 @@ export default class Entity extends EventDispatcherWithOptions
 		super(options);
 		
 		this.world = world;
+		this.zIndex = 0;
 		
 		this.initPhysics(options);
 		this.initGraphics(options);
@@ -84,6 +85,11 @@ export default class Entity extends EventDispatcherWithOptions
 		
 	}
 	
+	_setAngle(angle)
+	{
+		this.object3d.rotation.z = angle;
+	}
+	
 	update()
 	{
 		if(this.b2Body && this.object3d)
@@ -102,14 +108,14 @@ export default class Entity extends EventDispatcherWithOptions
 				this.world.b2World.DestroyBody(this.b2Body);
 				this.b2Body = null;
 				
-				console.warn("Box2D encountered a NaN value", this);
+				console.warn("Box2D encountered a NaN value at step " + this.world.currentStep, this);
 			}
 			
 			if(!isNaN(x) && !isNaN(y))
-				this.object3d.position.set(x, y, 0);
+				this.object3d.position.set(x, y, this.zIndex);
 			
 			if(!isNaN(angle))
-				this.object3d.rotation.set(0, 0, angle);
+				this._setAngle(angle);
 		}
 	}
 	

@@ -119,12 +119,12 @@ export default class Planet extends Entity
 		
 		// Inner sites
 		var power	= 2;	// Higher powers will bias points towards the surface, 2 will give an even distribution
-		var inner	= Math.round(Math.sqrt(area) / 4);// * density;
+		var inner	= Math.round(Math.sqrt(area) / 8);// * density;
 		
 		for(var i = 0; i < inner; i++)
 		{
 			var a = game.random() * 2 * Math.PI;
-			var r = radius * Math.pow(game.random(), 1 / power);
+			var r = radius * 0.9 * Math.pow(game.random(), 1 / power);
 			
 			sites.push([
 				Math.sin(a) * r,
@@ -221,7 +221,7 @@ export default class Planet extends Entity
 		this._fixtureDestructionQueue = [];
 		this._fixturesByPolygonIndex = [];
 		
-		this.b2CenterOfGravity	= new Box2D.b2Vec2();
+		this.b2CenterOfGravity	= new Box2D.b2Vec2(0, 0);
 		this.b2BodyDef			= new Box2D.b2BodyDef();
 		this.b2Body				= this.world.b2World.CreateBody(this.b2BodyDef);
 		
@@ -434,13 +434,25 @@ export default class Planet extends Entity
 		var radius	= this._radius;
 		var gravity	= radius * this._destructionGravityMultiplier;
 		
-		var center	= this.b2Body.GetWorldCenter();
-		var target	= entity.b2Body.GetWorldCenter();
+		var center	= new Box2D.b2Vec2(
+			this.b2Body.GetWorldCenter().get_x(),
+			this.b2Body.GetWorldCenter().get_y()
+		);
+		
+		var target	= new Box2D.b2Vec2(
+			entity.b2Body.GetWorldCenter().get_x(),
+			entity.b2Body.GetWorldCenter().get_y()
+		);
 		
 		var delta	= new Box2D.b2Vec2(0, 0);
+		var temp	= new Box2D.b2Vec2(
+			this.b2CenterOfGravity.get_x(),
+			this.b2CenterOfGravity.get_y()
+		);
+		
 		delta.op_add(target);
 		delta.op_sub(center);
-		delta.op_sub(this.b2CenterOfGravity);
+		delta.op_sub(temp);
 		
 		var distance = delta.Length();
 		
@@ -452,7 +464,11 @@ export default class Planet extends Entity
 		);
 		
 		var sum		= Math.abs(delta.get_x()) + Math.abs(delta.get_y());
-		delta.op_mul((1 / sum) * gravity / distance);
+		var mult	= (1 / sum) * gravity / distance;
+		
+		delta.op_mul(mult);
+		
+		
 		
 		entity.b2Body.ApplyForceToCenter(delta);
 	}
@@ -467,6 +483,8 @@ export default class Planet extends Entity
 	
 	handleMeshDestruction()
 	{
+		return;
+		
 		var self = this;
 		var updateMesh = this._fixtureDestructionQueue.length > 0;
 		

@@ -261,2206 +261,6 @@ EventDispatcher.domNamespaceSuffix = "ed";
 module.exports = Event;
 module.exports = EventDispatcher;
 },{}],2:[function(require,module,exports){
-/*!
- * camera-controls
- * https://github.com/yomotsu/camera-controls
- * (c) 2017 @yomotsu
- * Released under the MIT License.
- */
-(function (global, factory) {
-	typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
-	typeof define === 'function' && define.amd ? define(factory) :
-	(global = global || self, global.CameraControls = factory());
-}(this, (function () { 'use strict';
-
-	/*! *****************************************************************************
-	Copyright (c) Microsoft Corporation. All rights reserved.
-	Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-	this file except in compliance with the License. You may obtain a copy of the
-	License at http://www.apache.org/licenses/LICENSE-2.0
-
-	THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-	KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED
-	WARRANTIES OR CONDITIONS OF TITLE, FITNESS FOR A PARTICULAR PURPOSE,
-	MERCHANTABLITY OR NON-INFRINGEMENT.
-
-	See the Apache Version 2.0 License for specific language governing permissions
-	and limitations under the License.
-	***************************************************************************** */
-	/* global Reflect, Promise */
-
-	var extendStatics = function(d, b) {
-	    extendStatics = Object.setPrototypeOf ||
-	        ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
-	        function (d, b) { for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p]; };
-	    return extendStatics(d, b);
-	};
-
-	function __extends(d, b) {
-	    extendStatics(d, b);
-	    function __() { this.constructor = d; }
-	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
-	}
-
-	var ACTION;
-	(function (ACTION) {
-	    ACTION[ACTION["NONE"] = 0] = "NONE";
-	    ACTION[ACTION["ROTATE"] = 1] = "ROTATE";
-	    ACTION[ACTION["TRUCK"] = 2] = "TRUCK";
-	    ACTION[ACTION["DOLLY"] = 3] = "DOLLY";
-	    ACTION[ACTION["ZOOM"] = 4] = "ZOOM";
-	    ACTION[ACTION["TOUCH_ROTATE"] = 5] = "TOUCH_ROTATE";
-	    ACTION[ACTION["TOUCH_TRUCK"] = 6] = "TOUCH_TRUCK";
-	    ACTION[ACTION["TOUCH_DOLLY"] = 7] = "TOUCH_DOLLY";
-	    ACTION[ACTION["TOUCH_ZOOM"] = 8] = "TOUCH_ZOOM";
-	    ACTION[ACTION["TOUCH_DOLLY_TRUCK"] = 9] = "TOUCH_DOLLY_TRUCK";
-	    ACTION[ACTION["TOUCH_ZOOM_TRUCK"] = 10] = "TOUCH_ZOOM_TRUCK";
-	})(ACTION || (ACTION = {}));
-
-	var PI_2 = Math.PI * 2;
-	var PI_HALF = Math.PI / 2;
-	var FPS_60 = 1 / 0.016;
-
-	var EPSILON = 1e-5;
-	function approxZero(number) {
-	    return Math.abs(number) < EPSILON;
-	}
-	function approxEquals(a, b) {
-	    return approxZero(a - b);
-	}
-	function roundToStep(value, step) {
-	    return Math.round(value / step) * step;
-	}
-	function infinityToMaxNumber(value) {
-	    if (isFinite(value))
-	        return value;
-	    if (value < 0)
-	        return -Number.MAX_VALUE;
-	    return Number.MAX_VALUE;
-	}
-	function maxNumberToInfinity(value) {
-	    if (Math.abs(value) < Number.MAX_VALUE)
-	        return value;
-	    return value * Infinity;
-	}
-
-	function isTouchEvent(event) {
-	    return 'TouchEvent' in window && event instanceof TouchEvent;
-	}
-
-	function extractClientCoordFromEvent(event, out) {
-	    out.set(0, 0);
-	    if (isTouchEvent(event)) {
-	        var touchEvent = event;
-	        for (var i = 0; i < touchEvent.touches.length; i++) {
-	            out.x += touchEvent.touches[i].clientX;
-	            out.y += touchEvent.touches[i].clientY;
-	        }
-	        out.x /= touchEvent.touches.length;
-	        out.y /= touchEvent.touches.length;
-	        return out;
-	    }
-	    else {
-	        var mouseEvent = event;
-	        out.set(mouseEvent.clientX, mouseEvent.clientY);
-	        return out;
-	    }
-	}
-
-	function notSupportedInOrthographicCamera(camera, message) {
-	    if (!camera.isPerspectiveCamera) {
-	        console.warn(message + " is not supported in OrthographicCamera");
-	        return true;
-	    }
-	    return false;
-	}
-
-	var EventDispatcher = (function () {
-	    function EventDispatcher() {
-	        this._listeners = {};
-	    }
-	    EventDispatcher.prototype.addEventListener = function (type, listener) {
-	        var listeners = this._listeners;
-	        if (listeners[type] === undefined)
-	            listeners[type] = [];
-	        if (listeners[type].indexOf(listener) === -1)
-	            listeners[type].push(listener);
-	    };
-	    EventDispatcher.prototype.removeEventListener = function (type, listener) {
-	        var listeners = this._listeners;
-	        var listenerArray = listeners[type];
-	        if (listenerArray !== undefined) {
-	            var index = listenerArray.indexOf(listener);
-	            if (index !== -1)
-	                listenerArray.splice(index, 1);
-	        }
-	    };
-	    EventDispatcher.prototype.removeAllEventListeners = function (type) {
-	        if (!type) {
-	            this._listeners = {};
-	            return;
-	        }
-	        if (Array.isArray(this._listeners[type]))
-	            this._listeners[type].length = 0;
-	    };
-	    EventDispatcher.prototype.dispatchEvent = function (event) {
-	        var listeners = this._listeners;
-	        var listenerArray = listeners[event.type];
-	        if (listenerArray !== undefined) {
-	            event.target = this;
-	            var array = listenerArray.slice(0);
-	            for (var i = 0, l = array.length; i < l; i++) {
-	                array[i].call(this, event);
-	            }
-	        }
-	    };
-	    return EventDispatcher;
-	}());
-
-	var isMac = /Mac/.test(navigator.platform);
-	var readonlyACTION = Object.freeze(ACTION);
-	var TOUCH_DOLLY_FACTOR = 1 / 8;
-	var THREE;
-	var _ORIGIN;
-	var _AXIS_Y;
-	var _AXIS_Z;
-	var _v2;
-	var _v3A;
-	var _v3B;
-	var _v3C;
-	var _xColumn;
-	var _yColumn;
-	var _sphericalA;
-	var _sphericalB;
-	var _box3A;
-	var _box3B;
-	var _quaternionA;
-	var _quaternionB;
-	var _rotationMatrix;
-	var _raycaster;
-	var CameraControls = (function (_super) {
-	    __extends(CameraControls, _super);
-	    function CameraControls(camera, domElement) {
-	        var _this = _super.call(this) || this;
-	        _this.enabled = true;
-	        _this.minPolarAngle = 0;
-	        _this.maxPolarAngle = Math.PI;
-	        _this.minAzimuthAngle = -Infinity;
-	        _this.maxAzimuthAngle = Infinity;
-	        _this.minDistance = 0;
-	        _this.maxDistance = Infinity;
-	        _this.minZoom = 0.01;
-	        _this.maxZoom = Infinity;
-	        _this.dampingFactor = 0.05;
-	        _this.draggingDampingFactor = 0.25;
-	        _this.azimuthRotateSpeed = 1.0;
-	        _this.polarRotateSpeed = 1.0;
-	        _this.dollySpeed = 1.0;
-	        _this.truckSpeed = 2.0;
-	        _this.dollyToCursor = false;
-	        _this.verticalDragToForward = false;
-	        _this.boundaryFriction = 0.0;
-	        _this.colliderMeshes = [];
-	        _this._state = ACTION.NONE;
-	        _this._viewport = null;
-	        _this._dollyControlAmount = 0;
-	        _this._boundaryEnclosesCamera = false;
-	        _this._needsUpdate = true;
-	        _this._updatedLastTime = false;
-	        _this._camera = camera;
-	        _this._yAxisUpSpace = new THREE.Quaternion().setFromUnitVectors(_this._camera.up, _AXIS_Y);
-	        _this._yAxisUpSpaceInverse = _this._yAxisUpSpace.clone().inverse();
-	        _this._state = ACTION.NONE;
-	        _this._domElement = domElement;
-	        _this._target = new THREE.Vector3();
-	        _this._targetEnd = _this._target.clone();
-	        _this._spherical = new THREE.Spherical().setFromVector3(_v3A.copy(_this._camera.position).applyQuaternion(_this._yAxisUpSpace));
-	        _this._sphericalEnd = _this._spherical.clone();
-	        _this._zoom = _this._camera.zoom;
-	        _this._zoomEnd = _this._zoom;
-	        _this._nearPlaneCorners = [
-	            new THREE.Vector3(),
-	            new THREE.Vector3(),
-	            new THREE.Vector3(),
-	            new THREE.Vector3(),
-	        ];
-	        _this._updateNearPlaneCorners();
-	        _this._boundary = new THREE.Box3(new THREE.Vector3(-Infinity, -Infinity, -Infinity), new THREE.Vector3(Infinity, Infinity, Infinity));
-	        _this._target0 = _this._target.clone();
-	        _this._position0 = _this._camera.position.clone();
-	        _this._zoom0 = _this._zoom;
-	        _this._dollyControlAmount = 0;
-	        _this._dollyControlCoord = new THREE.Vector2();
-	        _this.mouseButtons = {
-	            left: ACTION.ROTATE,
-	            middle: ACTION.DOLLY,
-	            right: ACTION.TRUCK,
-	            wheel: _this._camera.isPerspectiveCamera ? ACTION.DOLLY :
-	                _this._camera.isOrthographicCamera ? ACTION.ZOOM :
-	                    ACTION.NONE,
-	        };
-	        _this.touches = {
-	            one: ACTION.TOUCH_ROTATE,
-	            two: _this._camera.isPerspectiveCamera ? ACTION.TOUCH_DOLLY_TRUCK :
-	                _this._camera.isOrthographicCamera ? ACTION.TOUCH_ZOOM_TRUCK :
-	                    ACTION.NONE,
-	            three: ACTION.TOUCH_TRUCK,
-	        };
-	        if (_this._domElement) {
-	            var dragStartPosition_1 = new THREE.Vector2();
-	            var lastDragPosition_1 = new THREE.Vector2();
-	            var dollyStart_1 = new THREE.Vector2();
-	            var elementRect_1 = new THREE.Vector4();
-	            var truckInternal_1 = function (deltaX, deltaY) {
-	                if (_this._camera.isPerspectiveCamera) {
-	                    var camera_1 = _this._camera;
-	                    var offset = _v3A.copy(camera_1.position).sub(_this._target);
-	                    var fov = camera_1.getEffectiveFOV() * THREE.Math.DEG2RAD;
-	                    var targetDistance = offset.length() * Math.tan(fov * 0.5);
-	                    var truckX = (_this.truckSpeed * deltaX * targetDistance / elementRect_1.w);
-	                    var pedestalY = (_this.truckSpeed * deltaY * targetDistance / elementRect_1.w);
-	                    if (_this.verticalDragToForward) {
-	                        _this.truck(truckX, 0, true);
-	                        _this.forward(-pedestalY, true);
-	                    }
-	                    else {
-	                        _this.truck(truckX, pedestalY, true);
-	                    }
-	                }
-	                else if (_this._camera.isOrthographicCamera) {
-	                    var camera_2 = _this._camera;
-	                    var truckX = deltaX * (camera_2.right - camera_2.left) / camera_2.zoom / elementRect_1.z;
-	                    var pedestalY = deltaY * (camera_2.top - camera_2.bottom) / camera_2.zoom / elementRect_1.w;
-	                    _this.truck(truckX, pedestalY, true);
-	                }
-	            };
-	            var rotateInternal_1 = function (deltaX, deltaY) {
-	                var theta = PI_2 * _this.azimuthRotateSpeed * deltaX / elementRect_1.w;
-	                var phi = PI_2 * _this.polarRotateSpeed * deltaY / elementRect_1.w;
-	                _this.rotate(theta, phi, true);
-	            };
-	            var dollyInternal_1 = function (delta, x, y) {
-	                var dollyScale = Math.pow(0.95, -delta * _this.dollySpeed);
-	                var distance = _this._sphericalEnd.radius * dollyScale;
-	                var prevRadius = _this._sphericalEnd.radius;
-	                _this.dollyTo(distance);
-	                if (_this.dollyToCursor) {
-	                    _this._dollyControlAmount += _this._sphericalEnd.radius - prevRadius;
-	                    _this._dollyControlCoord.set(x, y);
-	                }
-	                return;
-	            };
-	            var zoomInternal_1 = function (delta) {
-	                var zoomScale = Math.pow(0.95, delta * _this.dollySpeed);
-	                _this.zoomTo(_this._zoom * zoomScale);
-	                return;
-	            };
-	            var onMouseDown_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                event.preventDefault();
-	                var prevState = _this._state;
-	                switch (event.button) {
-	                    case THREE.MOUSE.LEFT:
-	                        _this._state = _this.mouseButtons.left;
-	                        break;
-	                    case THREE.MOUSE.MIDDLE:
-	                        _this._state = _this.mouseButtons.middle;
-	                        break;
-	                    case THREE.MOUSE.RIGHT:
-	                        _this._state = _this.mouseButtons.right;
-	                        break;
-	                }
-	                if (prevState !== _this._state) {
-	                    startDragging_1(event);
-	                }
-	            };
-	            var onTouchStart_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                event.preventDefault();
-	                var prevState = _this._state;
-	                switch (event.touches.length) {
-	                    case 1:
-	                        _this._state = _this.touches.one;
-	                        break;
-	                    case 2:
-	                        _this._state = _this.touches.two;
-	                        break;
-	                    case 3:
-	                        _this._state = _this.touches.three;
-	                        break;
-	                }
-	                if (prevState !== _this._state) {
-	                    startDragging_1(event);
-	                }
-	            };
-	            var lastScrollTimeStamp_1 = -1;
-	            var onMouseWheel_1 = function (event) {
-	                if (!_this.enabled || _this.mouseButtons.wheel === ACTION.NONE)
-	                    return;
-	                event.preventDefault();
-	                if (_this.dollyToCursor ||
-	                    _this.mouseButtons.wheel === ACTION.ROTATE ||
-	                    _this.mouseButtons.wheel === ACTION.TRUCK) {
-	                    var now = performance.now();
-	                    if (lastScrollTimeStamp_1 - now < 1000)
-	                        _this._getClientRect(elementRect_1);
-	                    lastScrollTimeStamp_1 = now;
-	                }
-	                var deltaYFactor = isMac ? -1 : -3;
-	                var delta = (event.deltaMode === 1) ? event.deltaY / deltaYFactor : event.deltaY / (deltaYFactor * 10);
-	                var x = _this.dollyToCursor ? (event.clientX - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
-	                var y = _this.dollyToCursor ? (event.clientY - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
-	                switch (_this.mouseButtons.wheel) {
-	                    case ACTION.ROTATE: {
-	                        rotateInternal_1(event.deltaX, event.deltaY);
-	                        break;
-	                    }
-	                    case ACTION.TRUCK: {
-	                        truckInternal_1(event.deltaX, event.deltaY);
-	                        break;
-	                    }
-	                    case ACTION.DOLLY: {
-	                        dollyInternal_1(-delta, x, y);
-	                        break;
-	                    }
-	                    case ACTION.ZOOM: {
-	                        zoomInternal_1(-delta);
-	                        break;
-	                    }
-	                }
-	                _this.dispatchEvent({
-	                    type: 'control',
-	                    originalEvent: event,
-	                });
-	            };
-	            var onContextMenu_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                event.preventDefault();
-	            };
-	            var startDragging_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                event.preventDefault();
-	                extractClientCoordFromEvent(event, _v2);
-	                _this._getClientRect(elementRect_1);
-	                dragStartPosition_1.copy(_v2);
-	                lastDragPosition_1.copy(_v2);
-	                var isMultiTouch = isTouchEvent(event) && event.touches.length >= 2;
-	                if (isMultiTouch) {
-	                    var touchEvent = event;
-	                    var dx = _v2.x - touchEvent.touches[1].clientX;
-	                    var dy = _v2.y - touchEvent.touches[1].clientY;
-	                    var distance = Math.sqrt(dx * dx + dy * dy);
-	                    dollyStart_1.set(0, distance);
-	                    var x = (touchEvent.touches[0].clientX + touchEvent.touches[1].clientX) * 0.5;
-	                    var y = (touchEvent.touches[0].clientY + touchEvent.touches[1].clientY) * 0.5;
-	                    lastDragPosition_1.set(x, y);
-	                }
-	                document.addEventListener('mousemove', dragging_1);
-	                document.addEventListener('touchmove', dragging_1, { passive: false });
-	                document.addEventListener('mouseup', endDragging_1);
-	                document.addEventListener('touchend', endDragging_1);
-	                _this.dispatchEvent({
-	                    type: 'controlstart',
-	                    originalEvent: event,
-	                });
-	            };
-	            var dragging_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                event.preventDefault();
-	                extractClientCoordFromEvent(event, _v2);
-	                var deltaX = lastDragPosition_1.x - _v2.x;
-	                var deltaY = lastDragPosition_1.y - _v2.y;
-	                lastDragPosition_1.copy(_v2);
-	                switch (_this._state) {
-	                    case ACTION.ROTATE:
-	                    case ACTION.TOUCH_ROTATE: {
-	                        rotateInternal_1(deltaX, deltaY);
-	                        break;
-	                    }
-	                    case ACTION.DOLLY:
-	                    case ACTION.ZOOM: {
-	                        var dollyX = _this.dollyToCursor ? (dragStartPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
-	                        var dollyY = _this.dollyToCursor ? (dragStartPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
-	                        _this._state === ACTION.DOLLY ?
-	                            dollyInternal_1(deltaY * TOUCH_DOLLY_FACTOR, dollyX, dollyY) :
-	                            zoomInternal_1(deltaY * TOUCH_DOLLY_FACTOR);
-	                        break;
-	                    }
-	                    case ACTION.TOUCH_DOLLY:
-	                    case ACTION.TOUCH_ZOOM:
-	                    case ACTION.TOUCH_DOLLY_TRUCK:
-	                    case ACTION.TOUCH_ZOOM_TRUCK: {
-	                        var touchEvent = event;
-	                        var dx = _v2.x - touchEvent.touches[1].clientX;
-	                        var dy = _v2.y - touchEvent.touches[1].clientY;
-	                        var distance = Math.sqrt(dx * dx + dy * dy);
-	                        var dollyDelta = dollyStart_1.y - distance;
-	                        dollyStart_1.set(0, distance);
-	                        var dollyX = _this.dollyToCursor ? (lastDragPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
-	                        var dollyY = _this.dollyToCursor ? (lastDragPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
-	                        _this._state === ACTION.TOUCH_DOLLY ||
-	                            _this._state === ACTION.TOUCH_DOLLY_TRUCK ?
-	                            dollyInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR, dollyX, dollyY) :
-	                            zoomInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR);
-	                        if (_this._state === ACTION.TOUCH_DOLLY_TRUCK ||
-	                            _this._state === ACTION.TOUCH_ZOOM_TRUCK) {
-	                            truckInternal_1(deltaX, deltaY);
-	                        }
-	                        break;
-	                    }
-	                    case ACTION.TRUCK:
-	                    case ACTION.TOUCH_TRUCK: {
-	                        truckInternal_1(deltaX, deltaY);
-	                        break;
-	                    }
-	                }
-	                _this.dispatchEvent({
-	                    type: 'control',
-	                    originalEvent: event,
-	                });
-	            };
-	            var endDragging_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                _this._state = ACTION.NONE;
-	                document.removeEventListener('mousemove', dragging_1);
-	                document.removeEventListener('touchmove', dragging_1, { passive: false });
-	                document.removeEventListener('mouseup', endDragging_1);
-	                document.removeEventListener('touchend', endDragging_1);
-	                _this.dispatchEvent({
-	                    type: 'controlend',
-	                    originalEvent: event,
-	                });
-	            };
-	            _this._domElement.addEventListener('mousedown', onMouseDown_1);
-	            _this._domElement.addEventListener('touchstart', onTouchStart_1);
-	            _this._domElement.addEventListener('wheel', onMouseWheel_1);
-	            _this._domElement.addEventListener('contextmenu', onContextMenu_1);
-	            _this._removeAllEventListeners = function () {
-	                _this._domElement.removeEventListener('mousedown', onMouseDown_1);
-	                _this._domElement.removeEventListener('touchstart', onTouchStart_1);
-	                _this._domElement.removeEventListener('wheel', onMouseWheel_1);
-	                _this._domElement.removeEventListener('contextmenu', onContextMenu_1);
-	                document.removeEventListener('mousemove', dragging_1);
-	                document.removeEventListener('touchmove', dragging_1, { passive: false });
-	                document.removeEventListener('mouseup', endDragging_1);
-	                document.removeEventListener('touchend', endDragging_1);
-	            };
-	        }
-	        _this.update(0);
-	        return _this;
-	    }
-	    CameraControls.install = function (libs) {
-	        THREE = libs.THREE;
-	        _ORIGIN = Object.freeze(new THREE.Vector3(0, 0, 0));
-	        _AXIS_Y = Object.freeze(new THREE.Vector3(0, 1, 0));
-	        _AXIS_Z = Object.freeze(new THREE.Vector3(0, 0, 1));
-	        _v2 = new THREE.Vector2();
-	        _v3A = new THREE.Vector3();
-	        _v3B = new THREE.Vector3();
-	        _v3C = new THREE.Vector3();
-	        _xColumn = new THREE.Vector3();
-	        _yColumn = new THREE.Vector3();
-	        _sphericalA = new THREE.Spherical();
-	        _sphericalB = new THREE.Spherical();
-	        _box3A = new THREE.Box3();
-	        _box3B = new THREE.Box3();
-	        _quaternionA = new THREE.Quaternion();
-	        _quaternionB = new THREE.Quaternion();
-	        _rotationMatrix = new THREE.Matrix4();
-	        _raycaster = new THREE.Raycaster();
-	    };
-	    Object.defineProperty(CameraControls, "ACTION", {
-	        get: function () {
-	            return readonlyACTION;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "currentAction", {
-	        get: function () {
-	            return this._state;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "distance", {
-	        get: function () {
-	            return this._spherical.radius;
-	        },
-	        set: function (distance) {
-	            if (this._spherical.radius === distance &&
-	                this._sphericalEnd.radius === distance)
-	                return;
-	            this._spherical.radius = distance;
-	            this._sphericalEnd.radius = distance;
-	            this._needsUpdate = true;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "azimuthAngle", {
-	        get: function () {
-	            return this._spherical.theta;
-	        },
-	        set: function (azimuthAngle) {
-	            if (this._spherical.theta === azimuthAngle &&
-	                this._sphericalEnd.theta === azimuthAngle)
-	                return;
-	            this._spherical.theta = azimuthAngle;
-	            this._sphericalEnd.theta = azimuthAngle;
-	            this._needsUpdate = true;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "polarAngle", {
-	        get: function () {
-	            return this._spherical.phi;
-	        },
-	        set: function (polarAngle) {
-	            if (this._spherical.phi === polarAngle &&
-	                this._sphericalEnd.phi === polarAngle)
-	                return;
-	            this._spherical.phi = polarAngle;
-	            this._sphericalEnd.phi = polarAngle;
-	            this._needsUpdate = true;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "phiSpeed", {
-	        set: function (speed) {
-	            console.warn('phiSpeed was renamed. use azimuthRotateSpeed instead');
-	            this.azimuthRotateSpeed = speed;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "thetaSpeed", {
-	        set: function (speed) {
-	            console.warn('thetaSpeed was renamed. use polarRotateSpeed instead');
-	            this.polarRotateSpeed = speed;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "boundaryEnclosesCamera", {
-	        get: function () {
-	            return this._boundaryEnclosesCamera;
-	        },
-	        set: function (boundaryEnclosesCamera) {
-	            this._boundaryEnclosesCamera = boundaryEnclosesCamera;
-	            this._needsUpdate = true;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    CameraControls.prototype.rotate = function (azimuthAngle, polarAngle, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this.rotateTo(this._sphericalEnd.theta + azimuthAngle, this._sphericalEnd.phi + polarAngle, enableTransition);
-	    };
-	    CameraControls.prototype.rotateTo = function (azimuthAngle, polarAngle, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        var theta = THREE.Math.clamp(azimuthAngle, this.minAzimuthAngle, this.maxAzimuthAngle);
-	        var phi = THREE.Math.clamp(polarAngle, this.minPolarAngle, this.maxPolarAngle);
-	        this._sphericalEnd.theta = theta;
-	        this._sphericalEnd.phi = phi;
-	        this._sphericalEnd.makeSafe();
-	        if (!enableTransition) {
-	            this._spherical.theta = this._sphericalEnd.theta;
-	            this._spherical.phi = this._sphericalEnd.phi;
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.dolly = function (distance, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this.dollyTo(this._sphericalEnd.radius - distance, enableTransition);
-	    };
-	    CameraControls.prototype.dollyTo = function (distance, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        if (notSupportedInOrthographicCamera(this._camera, 'dolly'))
-	            return;
-	        this._sphericalEnd.radius = THREE.Math.clamp(distance, this.minDistance, this.maxDistance);
-	        if (!enableTransition) {
-	            this._spherical.radius = this._sphericalEnd.radius;
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.zoom = function (zoomStep, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this.zoomTo(this._zoomEnd + zoomStep, enableTransition);
-	    };
-	    CameraControls.prototype.zoomTo = function (zoom, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this._zoomEnd = THREE.Math.clamp(zoom, this.minZoom, this.maxZoom);
-	        if (!enableTransition) {
-	            this._zoom = this._zoomEnd;
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.pan = function (x, y, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        console.log('`pan` has been renamed to `truck`');
-	        this.truck(x, y, enableTransition);
-	    };
-	    CameraControls.prototype.truck = function (x, y, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this._camera.updateMatrix();
-	        _xColumn.setFromMatrixColumn(this._camera.matrix, 0);
-	        _yColumn.setFromMatrixColumn(this._camera.matrix, 1);
-	        _xColumn.multiplyScalar(x);
-	        _yColumn.multiplyScalar(-y);
-	        var offset = _v3A.copy(_xColumn).add(_yColumn);
-	        this._encloseToBoundary(this._targetEnd, offset, this.boundaryFriction);
-	        if (!enableTransition) {
-	            this._target.copy(this._targetEnd);
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.forward = function (distance, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        _v3A.setFromMatrixColumn(this._camera.matrix, 0);
-	        _v3A.crossVectors(this._camera.up, _v3A);
-	        _v3A.multiplyScalar(distance);
-	        this._encloseToBoundary(this._targetEnd, _v3A, this.boundaryFriction);
-	        if (!enableTransition) {
-	            this._target.copy(this._targetEnd);
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.moveTo = function (x, y, z, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this._targetEnd.set(x, y, z);
-	        if (!enableTransition) {
-	            this._target.copy(this._targetEnd);
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.fitTo = function (box3OrObject, enableTransition, _a) {
-	        var _b = _a === void 0 ? {} : _a, _c = _b.paddingLeft, paddingLeft = _c === void 0 ? 0 : _c, _d = _b.paddingRight, paddingRight = _d === void 0 ? 0 : _d, _e = _b.paddingBottom, paddingBottom = _e === void 0 ? 0 : _e, _f = _b.paddingTop, paddingTop = _f === void 0 ? 0 : _f;
-	        var aabb = box3OrObject.isBox3
-	            ? _box3A.copy(box3OrObject)
-	            : _box3A.setFromObject(box3OrObject);
-	        var theta = roundToStep(this._sphericalEnd.theta, PI_HALF);
-	        var phi = roundToStep(this._sphericalEnd.phi, PI_HALF);
-	        this.rotateTo(theta, phi, enableTransition);
-	        var normal = _v3A.setFromSpherical(this._sphericalEnd).normalize();
-	        var rotation = _quaternionA.setFromUnitVectors(normal, _AXIS_Z);
-	        var viewFromPolar = approxEquals(Math.abs(normal.y), 1);
-	        if (viewFromPolar) {
-	            rotation.multiply(_quaternionB.setFromAxisAngle(_AXIS_Y, theta));
-	        }
-	        var bb = _box3B.makeEmpty();
-	        _v3B.copy(aabb.min).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.min).setX(aabb.max.x).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.min).setY(aabb.max.y).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.max).setZ(aabb.min.z).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.min).setZ(aabb.max.z).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.max).setY(aabb.min.y).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.max).setX(aabb.min.x).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.max).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        rotation.setFromUnitVectors(_AXIS_Z, normal);
-	        bb.min.x -= paddingLeft;
-	        bb.min.y -= paddingBottom;
-	        bb.max.x += paddingRight;
-	        bb.max.y += paddingTop;
-	        var bbSize = bb.getSize(_v3A);
-	        var center = bb.getCenter(_v3B).applyQuaternion(rotation);
-	        var isPerspectiveCamera = this._camera.isPerspectiveCamera;
-	        var isOrthographicCamera = this._camera.isOrthographicCamera;
-	        if (isPerspectiveCamera) {
-	            var distance = this.getDistanceToFit(bbSize.x, bbSize.y, bbSize.z);
-	            this.moveTo(center.x, center.y, center.z, enableTransition);
-	            this.dollyTo(distance, enableTransition);
-	            return;
-	        }
-	        else if (isOrthographicCamera) {
-	            var camera = this._camera;
-	            var width = camera.right - camera.left;
-	            var height = camera.top - camera.bottom;
-	            var zoom = Math.min(width / bbSize.x, height / bbSize.y);
-	            this.moveTo(center.x, center.y, center.z, enableTransition);
-	            this.zoomTo(zoom, enableTransition);
-	            return;
-	        }
-	    };
-	    CameraControls.prototype.setLookAt = function (positionX, positionY, positionZ, targetX, targetY, targetZ, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        var position = _v3A.set(positionX, positionY, positionZ);
-	        var target = _v3B.set(targetX, targetY, targetZ);
-	        this._targetEnd.copy(target);
-	        this._sphericalEnd.setFromVector3(position.sub(target).applyQuaternion(this._yAxisUpSpace));
-	        this.normalizeRotations();
-	        if (!enableTransition) {
-	            this._target.copy(this._targetEnd);
-	            this._spherical.copy(this._sphericalEnd);
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.lerpLookAt = function (positionAX, positionAY, positionAZ, targetAX, targetAY, targetAZ, positionBX, positionBY, positionBZ, targetBX, targetBY, targetBZ, t, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        var positionA = _v3A.set(positionAX, positionAY, positionAZ);
-	        var targetA = _v3B.set(targetAX, targetAY, targetAZ);
-	        _sphericalA.setFromVector3(positionA.sub(targetA).applyQuaternion(this._yAxisUpSpace));
-	        var targetB = _v3A.set(targetBX, targetBY, targetBZ);
-	        this._targetEnd.copy(targetA).lerp(targetB, t);
-	        var positionB = _v3B.set(positionBX, positionBY, positionBZ);
-	        _sphericalB.setFromVector3(positionB.sub(targetB).applyQuaternion(this._yAxisUpSpace));
-	        var deltaTheta = _sphericalB.theta - _sphericalA.theta;
-	        var deltaPhi = _sphericalB.phi - _sphericalA.phi;
-	        var deltaRadius = _sphericalB.radius - _sphericalA.radius;
-	        this._sphericalEnd.set(_sphericalA.radius + deltaRadius * t, _sphericalA.phi + deltaPhi * t, _sphericalA.theta + deltaTheta * t);
-	        this.normalizeRotations();
-	        if (!enableTransition) {
-	            this._target.copy(this._targetEnd);
-	            this._spherical.copy(this._sphericalEnd);
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.setPosition = function (positionX, positionY, positionZ, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this.setLookAt(positionX, positionY, positionZ, this._targetEnd.x, this._targetEnd.y, this._targetEnd.z, enableTransition);
-	    };
-	    CameraControls.prototype.setTarget = function (targetX, targetY, targetZ, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        var pos = this.getPosition(_v3A);
-	        this.setLookAt(pos.x, pos.y, pos.z, targetX, targetY, targetZ, enableTransition);
-	    };
-	    CameraControls.prototype.setBoundary = function (box3) {
-	        if (!box3) {
-	            this._boundary.min.set(-Infinity, -Infinity, -Infinity);
-	            this._boundary.max.set(Infinity, Infinity, Infinity);
-	            this._needsUpdate = true;
-	            return;
-	        }
-	        this._boundary.copy(box3);
-	        this._boundary.clampPoint(this._targetEnd, this._targetEnd);
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.setViewport = function (viewportOrX, y, width, height) {
-	        if (viewportOrX === null) {
-	            this._viewport = null;
-	            return;
-	        }
-	        this._viewport = this._viewport || new THREE.Vector4();
-	        if (typeof viewportOrX === 'number') {
-	            this._viewport.set(viewportOrX, y, width, height);
-	        }
-	        else {
-	            this._viewport.copy(viewportOrX);
-	        }
-	    };
-	    CameraControls.prototype.getDistanceToFit = function (width, height, depth) {
-	        if (notSupportedInOrthographicCamera(this._camera, 'getDistanceToFit'))
-	            return this._spherical.radius;
-	        var camera = this._camera;
-	        var boundingRectAspect = width / height;
-	        var fov = camera.getEffectiveFOV() * THREE.Math.DEG2RAD;
-	        var aspect = camera.aspect;
-	        var heightToFit = boundingRectAspect < aspect ? height : width / aspect;
-	        return heightToFit * 0.5 / Math.tan(fov * 0.5) + depth * 0.5;
-	    };
-	    CameraControls.prototype.getTarget = function (out) {
-	        var _out = !!out && out.isVector3 ? out : new THREE.Vector3();
-	        return _out.copy(this._targetEnd);
-	    };
-	    CameraControls.prototype.getPosition = function (out) {
-	        var _out = !!out && out.isVector3 ? out : new THREE.Vector3();
-	        return _out.setFromSpherical(this._sphericalEnd).applyQuaternion(this._yAxisUpSpaceInverse).add(this._targetEnd);
-	    };
-	    CameraControls.prototype.normalizeRotations = function () {
-	        this._sphericalEnd.theta = this._sphericalEnd.theta % PI_2;
-	        if (this._sphericalEnd.theta < 0)
-	            this._sphericalEnd.theta += PI_2;
-	        this._spherical.theta += PI_2 * Math.round((this._sphericalEnd.theta - this._spherical.theta) / PI_2);
-	    };
-	    CameraControls.prototype.reset = function (enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this.setLookAt(this._position0.x, this._position0.y, this._position0.z, this._target0.x, this._target0.y, this._target0.z, enableTransition);
-	        this.zoomTo(this._zoom0, enableTransition);
-	    };
-	    CameraControls.prototype.saveState = function () {
-	        this._target0.copy(this._target);
-	        this._position0.copy(this._camera.position);
-	        this._zoom0 = this._zoom;
-	    };
-	    CameraControls.prototype.updateCameraUp = function () {
-	        this._yAxisUpSpace.setFromUnitVectors(this._camera.up, _AXIS_Y);
-	        this._yAxisUpSpaceInverse.copy(this._yAxisUpSpace).inverse();
-	    };
-	    CameraControls.prototype.update = function (delta) {
-	        var dampingFactor = this._state === ACTION.NONE ? this.dampingFactor : this.draggingDampingFactor;
-	        var lerpRatio = 1.0 - Math.exp(-dampingFactor * delta * FPS_60);
-	        var deltaTheta = this._sphericalEnd.theta - this._spherical.theta;
-	        var deltaPhi = this._sphericalEnd.phi - this._spherical.phi;
-	        var deltaRadius = this._sphericalEnd.radius - this._spherical.radius;
-	        var deltaTarget = _v3A.subVectors(this._targetEnd, this._target);
-	        if (!approxZero(deltaTheta) ||
-	            !approxZero(deltaPhi) ||
-	            !approxZero(deltaRadius) ||
-	            !approxZero(deltaTarget.x) ||
-	            !approxZero(deltaTarget.y) ||
-	            !approxZero(deltaTarget.z)) {
-	            this._spherical.set(this._spherical.radius + deltaRadius * lerpRatio, this._spherical.phi + deltaPhi * lerpRatio, this._spherical.theta + deltaTheta * lerpRatio);
-	            this._target.add(deltaTarget.multiplyScalar(lerpRatio));
-	            this._needsUpdate = true;
-	        }
-	        else {
-	            this._spherical.copy(this._sphericalEnd);
-	            this._target.copy(this._targetEnd);
-	        }
-	        if (this._dollyControlAmount !== 0) {
-	            if (this._camera.isPerspectiveCamera) {
-	                var camera = this._camera;
-	                var direction = _v3A.setFromSpherical(this._sphericalEnd).applyQuaternion(this._yAxisUpSpaceInverse).normalize().negate();
-	                var planeX = _v3B.copy(direction).cross(camera.up).normalize();
-	                if (planeX.lengthSq() === 0)
-	                    planeX.x = 1.0;
-	                var planeY = _v3C.crossVectors(planeX, direction);
-	                var worldToScreen = this._sphericalEnd.radius * Math.tan(camera.getEffectiveFOV() * THREE.Math.DEG2RAD * 0.5);
-	                var prevRadius = this._sphericalEnd.radius - this._dollyControlAmount;
-	                var lerpRatio_1 = (prevRadius - this._sphericalEnd.radius) / this._sphericalEnd.radius;
-	                var cursor = _v3A.copy(this._targetEnd)
-	                    .add(planeX.multiplyScalar(this._dollyControlCoord.x * worldToScreen * camera.aspect))
-	                    .add(planeY.multiplyScalar(this._dollyControlCoord.y * worldToScreen));
-	                this._targetEnd.lerp(cursor, lerpRatio_1);
-	                this._target.copy(this._targetEnd);
-	            }
-	            this._dollyControlAmount = 0;
-	        }
-	        var maxDistance = this._collisionTest();
-	        this._spherical.radius = Math.min(this._spherical.radius, maxDistance);
-	        this._spherical.makeSafe();
-	        this._camera.position.setFromSpherical(this._spherical).applyQuaternion(this._yAxisUpSpaceInverse).add(this._target);
-	        this._camera.lookAt(this._target);
-	        if (this._boundaryEnclosesCamera) {
-	            this._encloseToBoundary(this._camera.position.copy(this._target), _v3A.setFromSpherical(this._spherical).applyQuaternion(this._yAxisUpSpaceInverse), 1.0);
-	        }
-	        var zoomDelta = this._zoomEnd - this._zoom;
-	        this._zoom += zoomDelta * lerpRatio;
-	        if (this._camera.zoom !== this._zoom) {
-	            if (approxZero(zoomDelta))
-	                this._zoom = this._zoomEnd;
-	            this._camera.zoom = this._zoom;
-	            this._camera.updateProjectionMatrix();
-	            this._updateNearPlaneCorners();
-	            this._needsUpdate = true;
-	        }
-	        var updated = this._needsUpdate;
-	        if (updated && !this._updatedLastTime) {
-	            this.dispatchEvent({ type: 'wake' });
-	            this.dispatchEvent({ type: 'update' });
-	        }
-	        else if (updated) {
-	            this.dispatchEvent({ type: 'update' });
-	        }
-	        else if (!updated && this._updatedLastTime) {
-	            this.dispatchEvent({ type: 'sleep' });
-	        }
-	        this._updatedLastTime = updated;
-	        this._needsUpdate = false;
-	        return updated;
-	    };
-	    CameraControls.prototype.toJSON = function () {
-	        return JSON.stringify({
-	            enabled: this.enabled,
-	            minDistance: this.minDistance,
-	            maxDistance: infinityToMaxNumber(this.maxDistance),
-	            minZoom: this.minZoom,
-	            maxZoom: infinityToMaxNumber(this.maxZoom),
-	            minPolarAngle: this.minPolarAngle,
-	            maxPolarAngle: infinityToMaxNumber(this.maxPolarAngle),
-	            minAzimuthAngle: infinityToMaxNumber(this.minAzimuthAngle),
-	            maxAzimuthAngle: infinityToMaxNumber(this.maxAzimuthAngle),
-	            dampingFactor: this.dampingFactor,
-	            draggingDampingFactor: this.draggingDampingFactor,
-	            dollySpeed: this.dollySpeed,
-	            truckSpeed: this.truckSpeed,
-	            dollyToCursor: this.dollyToCursor,
-	            verticalDragToForward: this.verticalDragToForward,
-	            target: this._targetEnd.toArray(),
-	            position: this._camera.position.toArray(),
-	            zoom: this._camera.zoom,
-	            target0: this._target0.toArray(),
-	            position0: this._position0.toArray(),
-	            zoom0: this._zoom0,
-	        });
-	    };
-	    CameraControls.prototype.fromJSON = function (json, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        var obj = JSON.parse(json);
-	        var position = _v3A.fromArray(obj.position);
-	        this.enabled = obj.enabled;
-	        this.minDistance = obj.minDistance;
-	        this.maxDistance = maxNumberToInfinity(obj.maxDistance);
-	        this.minZoom = obj.minZoom;
-	        this.maxZoom = maxNumberToInfinity(obj.maxZoom);
-	        this.minPolarAngle = obj.minPolarAngle;
-	        this.maxPolarAngle = maxNumberToInfinity(obj.maxPolarAngle);
-	        this.minAzimuthAngle = maxNumberToInfinity(obj.minAzimuthAngle);
-	        this.maxAzimuthAngle = maxNumberToInfinity(obj.maxAzimuthAngle);
-	        this.dampingFactor = obj.dampingFactor;
-	        this.draggingDampingFactor = obj.draggingDampingFactor;
-	        this.dollySpeed = obj.dollySpeed;
-	        this.truckSpeed = obj.truckSpeed;
-	        this.dollyToCursor = obj.dollyToCursor;
-	        this.verticalDragToForward = obj.verticalDragToForward;
-	        this._target0.fromArray(obj.target0);
-	        this._position0.fromArray(obj.position0);
-	        this._zoom0 = obj.zoom0;
-	        this.moveTo(obj.target[0], obj.target[1], obj.target[2], enableTransition);
-	        _sphericalA.setFromVector3(position.sub(this._targetEnd).applyQuaternion(this._yAxisUpSpace));
-	        this.rotateTo(_sphericalA.theta, _sphericalA.phi, enableTransition);
-	        this.zoomTo(obj.zoom, enableTransition);
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.dispose = function () {
-	        this._removeAllEventListeners();
-	    };
-	    CameraControls.prototype._encloseToBoundary = function (position, offset, friction) {
-	        var offsetLength2 = offset.lengthSq();
-	        if (offsetLength2 === 0.0) {
-	            return position;
-	        }
-	        var newTarget = _v3B.copy(offset).add(position);
-	        var clampedTarget = this._boundary.clampPoint(newTarget, _v3C);
-	        var deltaClampedTarget = clampedTarget.sub(newTarget);
-	        var deltaClampedTargetLength2 = deltaClampedTarget.lengthSq();
-	        if (deltaClampedTargetLength2 === 0.0) {
-	            return position.add(offset);
-	        }
-	        else if (deltaClampedTargetLength2 === offsetLength2) {
-	            return position;
-	        }
-	        else if (friction === 0.0) {
-	            return position.add(offset).add(deltaClampedTarget);
-	        }
-	        else {
-	            var offsetFactor = 1.0 + friction * deltaClampedTargetLength2 / offset.dot(deltaClampedTarget);
-	            return position
-	                .add(_v3B.copy(offset).multiplyScalar(offsetFactor))
-	                .add(deltaClampedTarget.multiplyScalar(1.0 - friction));
-	        }
-	    };
-	    CameraControls.prototype._updateNearPlaneCorners = function () {
-	        if (this._camera.isPerspectiveCamera) {
-	            var camera = this._camera;
-	            var near = camera.near;
-	            var fov = camera.getEffectiveFOV() * THREE.Math.DEG2RAD;
-	            var heightHalf = Math.tan(fov * 0.5) * near;
-	            var widthHalf = heightHalf * camera.aspect;
-	            this._nearPlaneCorners[0].set(-widthHalf, -heightHalf, 0);
-	            this._nearPlaneCorners[1].set(widthHalf, -heightHalf, 0);
-	            this._nearPlaneCorners[2].set(widthHalf, heightHalf, 0);
-	            this._nearPlaneCorners[3].set(-widthHalf, heightHalf, 0);
-	        }
-	        else if (this._camera.isOrthographicCamera) {
-	            var camera = this._camera;
-	            var zoomInv = 1 / camera.zoom;
-	            var left = camera.left * zoomInv;
-	            var right = camera.right * zoomInv;
-	            var top_1 = camera.top * zoomInv;
-	            var bottom = camera.bottom * zoomInv;
-	            this._nearPlaneCorners[0].set(left, top_1, 0);
-	            this._nearPlaneCorners[1].set(right, top_1, 0);
-	            this._nearPlaneCorners[2].set(right, bottom, 0);
-	            this._nearPlaneCorners[3].set(left, bottom, 0);
-	        }
-	    };
-	    CameraControls.prototype._collisionTest = function () {
-	        var distance = Infinity;
-	        var hasCollider = this.colliderMeshes.length >= 1;
-	        if (!hasCollider)
-	            return distance;
-	        if (notSupportedInOrthographicCamera(this._camera, '_collisionTest'))
-	            return distance;
-	        distance = this._spherical.radius;
-	        var direction = _v3A.setFromSpherical(this._spherical).divideScalar(distance);
-	        _rotationMatrix.lookAt(_ORIGIN, direction, this._camera.up);
-	        for (var i = 0; i < 4; i++) {
-	            var nearPlaneCorner = _v3B.copy(this._nearPlaneCorners[i]);
-	            nearPlaneCorner.applyMatrix4(_rotationMatrix);
-	            var origin_1 = _v3C.addVectors(this._target, nearPlaneCorner);
-	            _raycaster.set(origin_1, direction);
-	            _raycaster.far = distance;
-	            var intersects = _raycaster.intersectObjects(this.colliderMeshes);
-	            if (intersects.length !== 0 && intersects[0].distance < distance) {
-	                distance = intersects[0].distance;
-	            }
-	        }
-	        return distance;
-	    };
-	    CameraControls.prototype._getClientRect = function (target) {
-	        var rect = this._domElement.getBoundingClientRect();
-	        target.x = rect.left;
-	        target.y = rect.top;
-	        if (this._viewport) {
-	            target.x += this._viewport.x;
-	            target.y += rect.height - this._viewport.w - this._viewport.y;
-	            target.z = this._viewport.z;
-	            target.w = this._viewport.w;
-	        }
-	        else {
-	            target.z = rect.width;
-	            target.w = rect.height;
-	        }
-	        return target;
-	    };
-	    CameraControls.prototype._removeAllEventListeners = function () { };
-	    return CameraControls;
-	}(EventDispatcher));
-
-	return CameraControls;
-
-})));
-
-},{}],3:[function(require,module,exports){
-// https://github.com/d3/d3-delaunay v5.3.0 Copyright 2020 Mike Bostock
-// https://github.com/mapbox/delaunator v4.0.1. Copyright 2019 Mapbox, Inc.
-(function (global, factory) {
-typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
-typeof define === 'function' && define.amd ? define(['exports'], factory) :
-(global = global || self, factory(global.d3 = global.d3 || {}));
-}(this, function (exports) { 'use strict';
-
-const EPSILON = Math.pow(2, -52);
-const EDGE_STACK = new Uint32Array(512);
-
-class Delaunator {
-
-    static from(points, getX = defaultGetX, getY = defaultGetY) {
-        const n = points.length;
-        const coords = new Float64Array(n * 2);
-
-        for (let i = 0; i < n; i++) {
-            const p = points[i];
-            coords[2 * i] = getX(p);
-            coords[2 * i + 1] = getY(p);
-        }
-
-        return new Delaunator(coords);
-    }
-
-    constructor(coords) {
-        const n = coords.length >> 1;
-        if (n > 0 && typeof coords[0] !== 'number') throw new Error('Expected coords to contain numbers.');
-
-        this.coords = coords;
-
-        // arrays that will store the triangulation graph
-        const maxTriangles = Math.max(2 * n - 5, 0);
-        this._triangles = new Uint32Array(maxTriangles * 3);
-        this._halfedges = new Int32Array(maxTriangles * 3);
-
-        // temporary arrays for tracking the edges of the advancing convex hull
-        this._hashSize = Math.ceil(Math.sqrt(n));
-        this._hullPrev = new Uint32Array(n); // edge to prev edge
-        this._hullNext = new Uint32Array(n); // edge to next edge
-        this._hullTri = new Uint32Array(n); // edge to adjacent triangle
-        this._hullHash = new Int32Array(this._hashSize).fill(-1); // angular edge hash
-
-        // temporary arrays for sorting points
-        this._ids = new Uint32Array(n);
-        this._dists = new Float64Array(n);
-
-        this.update();
-    }
-
-    update() {
-        const {coords, _hullPrev: hullPrev, _hullNext: hullNext, _hullTri: hullTri, _hullHash: hullHash} =  this;
-        const n = coords.length >> 1;
-
-        // populate an array of point indices; calculate input data bbox
-        let minX = Infinity;
-        let minY = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
-
-        for (let i = 0; i < n; i++) {
-            const x = coords[2 * i];
-            const y = coords[2 * i + 1];
-            if (x < minX) minX = x;
-            if (y < minY) minY = y;
-            if (x > maxX) maxX = x;
-            if (y > maxY) maxY = y;
-            this._ids[i] = i;
-        }
-        const cx = (minX + maxX) / 2;
-        const cy = (minY + maxY) / 2;
-
-        let minDist = Infinity;
-        let i0, i1, i2;
-
-        // pick a seed point close to the center
-        for (let i = 0; i < n; i++) {
-            const d = dist(cx, cy, coords[2 * i], coords[2 * i + 1]);
-            if (d < minDist) {
-                i0 = i;
-                minDist = d;
-            }
-        }
-        const i0x = coords[2 * i0];
-        const i0y = coords[2 * i0 + 1];
-
-        minDist = Infinity;
-
-        // find the point closest to the seed
-        for (let i = 0; i < n; i++) {
-            if (i === i0) continue;
-            const d = dist(i0x, i0y, coords[2 * i], coords[2 * i + 1]);
-            if (d < minDist && d > 0) {
-                i1 = i;
-                minDist = d;
-            }
-        }
-        let i1x = coords[2 * i1];
-        let i1y = coords[2 * i1 + 1];
-
-        let minRadius = Infinity;
-
-        // find the third point which forms the smallest circumcircle with the first two
-        for (let i = 0; i < n; i++) {
-            if (i === i0 || i === i1) continue;
-            const r = circumradius(i0x, i0y, i1x, i1y, coords[2 * i], coords[2 * i + 1]);
-            if (r < minRadius) {
-                i2 = i;
-                minRadius = r;
-            }
-        }
-        let i2x = coords[2 * i2];
-        let i2y = coords[2 * i2 + 1];
-
-        if (minRadius === Infinity) {
-            // order collinear points by dx (or dy if all x are identical)
-            // and return the list as a hull
-            for (let i = 0; i < n; i++) {
-                this._dists[i] = (coords[2 * i] - coords[0]) || (coords[2 * i + 1] - coords[1]);
-            }
-            quicksort(this._ids, this._dists, 0, n - 1);
-            const hull = new Uint32Array(n);
-            let j = 0;
-            for (let i = 0, d0 = -Infinity; i < n; i++) {
-                const id = this._ids[i];
-                if (this._dists[id] > d0) {
-                    hull[j++] = id;
-                    d0 = this._dists[id];
-                }
-            }
-            this.hull = hull.subarray(0, j);
-            this.triangles = new Uint32Array(0);
-            this.halfedges = new Uint32Array(0);
-            return;
-        }
-
-        // swap the order of the seed points for counter-clockwise orientation
-        if (orient(i0x, i0y, i1x, i1y, i2x, i2y)) {
-            const i = i1;
-            const x = i1x;
-            const y = i1y;
-            i1 = i2;
-            i1x = i2x;
-            i1y = i2y;
-            i2 = i;
-            i2x = x;
-            i2y = y;
-        }
-
-        const center = circumcenter(i0x, i0y, i1x, i1y, i2x, i2y);
-        this._cx = center.x;
-        this._cy = center.y;
-
-        for (let i = 0; i < n; i++) {
-            this._dists[i] = dist(coords[2 * i], coords[2 * i + 1], center.x, center.y);
-        }
-
-        // sort the points by distance from the seed triangle circumcenter
-        quicksort(this._ids, this._dists, 0, n - 1);
-
-        // set up the seed triangle as the starting hull
-        this._hullStart = i0;
-        let hullSize = 3;
-
-        hullNext[i0] = hullPrev[i2] = i1;
-        hullNext[i1] = hullPrev[i0] = i2;
-        hullNext[i2] = hullPrev[i1] = i0;
-
-        hullTri[i0] = 0;
-        hullTri[i1] = 1;
-        hullTri[i2] = 2;
-
-        hullHash.fill(-1);
-        hullHash[this._hashKey(i0x, i0y)] = i0;
-        hullHash[this._hashKey(i1x, i1y)] = i1;
-        hullHash[this._hashKey(i2x, i2y)] = i2;
-
-        this.trianglesLen = 0;
-        this._addTriangle(i0, i1, i2, -1, -1, -1);
-
-        for (let k = 0, xp, yp; k < this._ids.length; k++) {
-            const i = this._ids[k];
-            const x = coords[2 * i];
-            const y = coords[2 * i + 1];
-
-            // skip near-duplicate points
-            if (k > 0 && Math.abs(x - xp) <= EPSILON && Math.abs(y - yp) <= EPSILON) continue;
-            xp = x;
-            yp = y;
-
-            // skip seed triangle points
-            if (i === i0 || i === i1 || i === i2) continue;
-
-            // find a visible edge on the convex hull using edge hash
-            let start = 0;
-            for (let j = 0, key = this._hashKey(x, y); j < this._hashSize; j++) {
-                start = hullHash[(key + j) % this._hashSize];
-                if (start !== -1 && start !== hullNext[start]) break;
-            }
-
-            start = hullPrev[start];
-            let e = start, q;
-            while (q = hullNext[e], !orient(x, y, coords[2 * e], coords[2 * e + 1], coords[2 * q], coords[2 * q + 1])) {
-                e = q;
-                if (e === start) {
-                    e = -1;
-                    break;
-                }
-            }
-            if (e === -1) continue; // likely a near-duplicate point; skip it
-
-            // add the first triangle from the point
-            let t = this._addTriangle(e, i, hullNext[e], -1, -1, hullTri[e]);
-
-            // recursively flip triangles from the point until they satisfy the Delaunay condition
-            hullTri[i] = this._legalize(t + 2);
-            hullTri[e] = t; // keep track of boundary triangles on the hull
-            hullSize++;
-
-            // walk forward through the hull, adding more triangles and flipping recursively
-            let n = hullNext[e];
-            while (q = hullNext[n], orient(x, y, coords[2 * n], coords[2 * n + 1], coords[2 * q], coords[2 * q + 1])) {
-                t = this._addTriangle(n, i, q, hullTri[i], -1, hullTri[n]);
-                hullTri[i] = this._legalize(t + 2);
-                hullNext[n] = n; // mark as removed
-                hullSize--;
-                n = q;
-            }
-
-            // walk backward from the other side, adding more triangles and flipping
-            if (e === start) {
-                while (q = hullPrev[e], orient(x, y, coords[2 * q], coords[2 * q + 1], coords[2 * e], coords[2 * e + 1])) {
-                    t = this._addTriangle(q, i, e, -1, hullTri[e], hullTri[q]);
-                    this._legalize(t + 2);
-                    hullTri[q] = t;
-                    hullNext[e] = e; // mark as removed
-                    hullSize--;
-                    e = q;
-                }
-            }
-
-            // update the hull indices
-            this._hullStart = hullPrev[i] = e;
-            hullNext[e] = hullPrev[n] = i;
-            hullNext[i] = n;
-
-            // save the two new edges in the hash table
-            hullHash[this._hashKey(x, y)] = i;
-            hullHash[this._hashKey(coords[2 * e], coords[2 * e + 1])] = e;
-        }
-
-        this.hull = new Uint32Array(hullSize);
-        for (let i = 0, e = this._hullStart; i < hullSize; i++) {
-            this.hull[i] = e;
-            e = hullNext[e];
-        }
-
-        // trim typed triangle mesh arrays
-        this.triangles = this._triangles.subarray(0, this.trianglesLen);
-        this.halfedges = this._halfedges.subarray(0, this.trianglesLen);
-    }
-
-    _hashKey(x, y) {
-        return Math.floor(pseudoAngle(x - this._cx, y - this._cy) * this._hashSize) % this._hashSize;
-    }
-
-    _legalize(a) {
-        const {_triangles: triangles, _halfedges: halfedges, coords} = this;
-
-        let i = 0;
-        let ar = 0;
-
-        // recursion eliminated with a fixed-size stack
-        while (true) {
-            const b = halfedges[a];
-
-            /* if the pair of triangles doesn't satisfy the Delaunay condition
-             * (p1 is inside the circumcircle of [p0, pl, pr]), flip them,
-             * then do the same check/flip recursively for the new pair of triangles
-             *
-             *           pl                    pl
-             *          /||\                  /  \
-             *       al/ || \bl            al/    \a
-             *        /  ||  \              /      \
-             *       /  a||b  \    flip    /___ar___\
-             *     p0\   ||   /p1   =>   p0\---bl---/p1
-             *        \  ||  /              \      /
-             *       ar\ || /br             b\    /br
-             *          \||/                  \  /
-             *           pr                    pr
-             */
-            const a0 = a - a % 3;
-            ar = a0 + (a + 2) % 3;
-
-            if (b === -1) { // convex hull edge
-                if (i === 0) break;
-                a = EDGE_STACK[--i];
-                continue;
-            }
-
-            const b0 = b - b % 3;
-            const al = a0 + (a + 1) % 3;
-            const bl = b0 + (b + 2) % 3;
-
-            const p0 = triangles[ar];
-            const pr = triangles[a];
-            const pl = triangles[al];
-            const p1 = triangles[bl];
-
-            const illegal = inCircle(
-                coords[2 * p0], coords[2 * p0 + 1],
-                coords[2 * pr], coords[2 * pr + 1],
-                coords[2 * pl], coords[2 * pl + 1],
-                coords[2 * p1], coords[2 * p1 + 1]);
-
-            if (illegal) {
-                triangles[a] = p1;
-                triangles[b] = p0;
-
-                const hbl = halfedges[bl];
-
-                // edge swapped on the other side of the hull (rare); fix the halfedge reference
-                if (hbl === -1) {
-                    let e = this._hullStart;
-                    do {
-                        if (this._hullTri[e] === bl) {
-                            this._hullTri[e] = a;
-                            break;
-                        }
-                        e = this._hullPrev[e];
-                    } while (e !== this._hullStart);
-                }
-                this._link(a, hbl);
-                this._link(b, halfedges[ar]);
-                this._link(ar, bl);
-
-                const br = b0 + (b + 1) % 3;
-
-                // don't worry about hitting the cap: it can only happen on extremely degenerate input
-                if (i < EDGE_STACK.length) {
-                    EDGE_STACK[i++] = br;
-                }
-            } else {
-                if (i === 0) break;
-                a = EDGE_STACK[--i];
-            }
-        }
-
-        return ar;
-    }
-
-    _link(a, b) {
-        this._halfedges[a] = b;
-        if (b !== -1) this._halfedges[b] = a;
-    }
-
-    // add a new triangle given vertex indices and adjacent half-edge ids
-    _addTriangle(i0, i1, i2, a, b, c) {
-        const t = this.trianglesLen;
-
-        this._triangles[t] = i0;
-        this._triangles[t + 1] = i1;
-        this._triangles[t + 2] = i2;
-
-        this._link(t, a);
-        this._link(t + 1, b);
-        this._link(t + 2, c);
-
-        this.trianglesLen += 3;
-
-        return t;
-    }
-}
-
-// monotonically increases with real angle, but doesn't need expensive trigonometry
-function pseudoAngle(dx, dy) {
-    const p = dx / (Math.abs(dx) + Math.abs(dy));
-    return (dy > 0 ? 3 - p : 1 + p) / 4; // [0..1]
-}
-
-function dist(ax, ay, bx, by) {
-    const dx = ax - bx;
-    const dy = ay - by;
-    return dx * dx + dy * dy;
-}
-
-// return 2d orientation sign if we're confident in it through J. Shewchuk's error bound check
-function orientIfSure(px, py, rx, ry, qx, qy) {
-    const l = (ry - py) * (qx - px);
-    const r = (rx - px) * (qy - py);
-    return Math.abs(l - r) >= 3.3306690738754716e-16 * Math.abs(l + r) ? l - r : 0;
-}
-
-// a more robust orientation test that's stable in a given triangle (to fix robustness issues)
-function orient(rx, ry, qx, qy, px, py) {
-    const sign = orientIfSure(px, py, rx, ry, qx, qy) ||
-    orientIfSure(rx, ry, qx, qy, px, py) ||
-    orientIfSure(qx, qy, px, py, rx, ry);
-    return sign < 0;
-}
-
-function inCircle(ax, ay, bx, by, cx, cy, px, py) {
-    const dx = ax - px;
-    const dy = ay - py;
-    const ex = bx - px;
-    const ey = by - py;
-    const fx = cx - px;
-    const fy = cy - py;
-
-    const ap = dx * dx + dy * dy;
-    const bp = ex * ex + ey * ey;
-    const cp = fx * fx + fy * fy;
-
-    return dx * (ey * cp - bp * fy) -
-           dy * (ex * cp - bp * fx) +
-           ap * (ex * fy - ey * fx) < 0;
-}
-
-function circumradius(ax, ay, bx, by, cx, cy) {
-    const dx = bx - ax;
-    const dy = by - ay;
-    const ex = cx - ax;
-    const ey = cy - ay;
-
-    const bl = dx * dx + dy * dy;
-    const cl = ex * ex + ey * ey;
-    const d = 0.5 / (dx * ey - dy * ex);
-
-    const x = (ey * bl - dy * cl) * d;
-    const y = (dx * cl - ex * bl) * d;
-
-    return x * x + y * y;
-}
-
-function circumcenter(ax, ay, bx, by, cx, cy) {
-    const dx = bx - ax;
-    const dy = by - ay;
-    const ex = cx - ax;
-    const ey = cy - ay;
-
-    const bl = dx * dx + dy * dy;
-    const cl = ex * ex + ey * ey;
-    const d = 0.5 / (dx * ey - dy * ex);
-
-    const x = ax + (ey * bl - dy * cl) * d;
-    const y = ay + (dx * cl - ex * bl) * d;
-
-    return {x, y};
-}
-
-function quicksort(ids, dists, left, right) {
-    if (right - left <= 20) {
-        for (let i = left + 1; i <= right; i++) {
-            const temp = ids[i];
-            const tempDist = dists[temp];
-            let j = i - 1;
-            while (j >= left && dists[ids[j]] > tempDist) ids[j + 1] = ids[j--];
-            ids[j + 1] = temp;
-        }
-    } else {
-        const median = (left + right) >> 1;
-        let i = left + 1;
-        let j = right;
-        swap(ids, median, i);
-        if (dists[ids[left]] > dists[ids[right]]) swap(ids, left, right);
-        if (dists[ids[i]] > dists[ids[right]]) swap(ids, i, right);
-        if (dists[ids[left]] > dists[ids[i]]) swap(ids, left, i);
-
-        const temp = ids[i];
-        const tempDist = dists[temp];
-        while (true) {
-            do i++; while (dists[ids[i]] < tempDist);
-            do j--; while (dists[ids[j]] > tempDist);
-            if (j < i) break;
-            swap(ids, i, j);
-        }
-        ids[left + 1] = ids[j];
-        ids[j] = temp;
-
-        if (right - i + 1 >= j - left) {
-            quicksort(ids, dists, i, right);
-            quicksort(ids, dists, left, j - 1);
-        } else {
-            quicksort(ids, dists, left, j - 1);
-            quicksort(ids, dists, i, right);
-        }
-    }
-}
-
-function swap(arr, i, j) {
-    const tmp = arr[i];
-    arr[i] = arr[j];
-    arr[j] = tmp;
-}
-
-function defaultGetX(p) {
-    return p[0];
-}
-function defaultGetY(p) {
-    return p[1];
-}
-
-const epsilon = 1e-6;
-
-class Path {
-  constructor() {
-    this._x0 = this._y0 = // start of current subpath
-    this._x1 = this._y1 = null; // end of current subpath
-    this._ = "";
-  }
-  moveTo(x, y) {
-    this._ += `M${this._x0 = this._x1 = +x},${this._y0 = this._y1 = +y}`;
-  }
-  closePath() {
-    if (this._x1 !== null) {
-      this._x1 = this._x0, this._y1 = this._y0;
-      this._ += "Z";
-    }
-  }
-  lineTo(x, y) {
-    this._ += `L${this._x1 = +x},${this._y1 = +y}`;
-  }
-  arc(x, y, r) {
-    x = +x, y = +y, r = +r;
-    const x0 = x + r;
-    const y0 = y;
-    if (r < 0) throw new Error("negative radius");
-    if (this._x1 === null) this._ += `M${x0},${y0}`;
-    else if (Math.abs(this._x1 - x0) > epsilon || Math.abs(this._y1 - y0) > epsilon) this._ += "L" + x0 + "," + y0;
-    if (!r) return;
-    this._ += `A${r},${r},0,1,1,${x - r},${y}A${r},${r},0,1,1,${this._x1 = x0},${this._y1 = y0}`;
-  }
-  rect(x, y, w, h) {
-    this._ += `M${this._x0 = this._x1 = +x},${this._y0 = this._y1 = +y}h${+w}v${+h}h${-w}Z`;
-  }
-  value() {
-    return this._ || null;
-  }
-}
-
-class Polygon {
-  constructor() {
-    this._ = [];
-  }
-  moveTo(x, y) {
-    this._.push([x, y]);
-  }
-  closePath() {
-    this._.push(this._[0].slice());
-  }
-  lineTo(x, y) {
-    this._.push([x, y]);
-  }
-  value() {
-    return this._.length ? this._ : null;
-  }
-}
-
-class Voronoi {
-  constructor(delaunay, [xmin, ymin, xmax, ymax] = [0, 0, 960, 500]) {
-    if (!((xmax = +xmax) >= (xmin = +xmin)) || !((ymax = +ymax) >= (ymin = +ymin))) throw new Error("invalid bounds");
-    this.delaunay = delaunay;
-    this._circumcenters = new Float64Array(delaunay.points.length * 2);
-    this.vectors = new Float64Array(delaunay.points.length * 2);
-    this.xmax = xmax, this.xmin = xmin;
-    this.ymax = ymax, this.ymin = ymin;
-    this._init();
-  }
-  update() {
-    this.delaunay.update();
-    this._init();
-    return this;
-  }
-  _init() {
-    const {delaunay: {points, hull, triangles}, vectors} = this;
-
-    // Compute circumcenters.
-    const circumcenters = this.circumcenters = this._circumcenters.subarray(0, triangles.length / 3 * 2);
-    for (let i = 0, j = 0, n = triangles.length, x, y; i < n; i += 3, j += 2) {
-      const t1 = triangles[i] * 2;
-      const t2 = triangles[i + 1] * 2;
-      const t3 = triangles[i + 2] * 2;
-      const x1 = points[t1];
-      const y1 = points[t1 + 1];
-      const x2 = points[t2];
-      const y2 = points[t2 + 1];
-      const x3 = points[t3];
-      const y3 = points[t3 + 1];
-
-      const dx = x2 - x1;
-      const dy = y2 - y1;
-      const ex = x3 - x1;
-      const ey = y3 - y1;
-      const bl = dx * dx + dy * dy;
-      const cl = ex * ex + ey * ey;
-      const ab = (dx * ey - dy * ex) * 2;
-
-      if (!ab) {
-        // degenerate case (collinear diagram)
-        x = (x1 + x3) / 2 - 1e8 * ey;
-        y = (y1 + y3) / 2 + 1e8 * ex;
-      }
-      else if (Math.abs(ab) < 1e-8) {
-        // almost equal points (degenerate triangle)
-        x = (x1 + x3) / 2;
-        y = (y1 + y3) / 2;
-      } else {
-        const d = 1 / ab;
-        x = x1 + (ey * bl - dy * cl) * d;
-        y = y1 + (dx * cl - ex * bl) * d;
-      }
-      circumcenters[j] = x;
-      circumcenters[j + 1] = y;
-    }
-
-    // Compute exterior cell rays.
-    let h = hull[hull.length - 1];
-    let p0, p1 = h * 4;
-    let x0, x1 = points[2 * h];
-    let y0, y1 = points[2 * h + 1];
-    vectors.fill(0);
-    for (let i = 0; i < hull.length; ++i) {
-      h = hull[i];
-      p0 = p1, x0 = x1, y0 = y1;
-      p1 = h * 4, x1 = points[2 * h], y1 = points[2 * h + 1];
-      vectors[p0 + 2] = vectors[p1] = y0 - y1;
-      vectors[p0 + 3] = vectors[p1 + 1] = x1 - x0;
-    }
-  }
-  render(context) {
-    const buffer = context == null ? context = new Path : undefined;
-    const {delaunay: {halfedges, inedges, hull}, circumcenters, vectors} = this;
-    if (hull.length <= 1) return null;
-    for (let i = 0, n = halfedges.length; i < n; ++i) {
-      const j = halfedges[i];
-      if (j < i) continue;
-      const ti = Math.floor(i / 3) * 2;
-      const tj = Math.floor(j / 3) * 2;
-      const xi = circumcenters[ti];
-      const yi = circumcenters[ti + 1];
-      const xj = circumcenters[tj];
-      const yj = circumcenters[tj + 1];
-      this._renderSegment(xi, yi, xj, yj, context);
-    }
-    let h0, h1 = hull[hull.length - 1];
-    for (let i = 0; i < hull.length; ++i) {
-      h0 = h1, h1 = hull[i];
-      const t = Math.floor(inedges[h1] / 3) * 2;
-      const x = circumcenters[t];
-      const y = circumcenters[t + 1];
-      const v = h0 * 4;
-      const p = this._project(x, y, vectors[v + 2], vectors[v + 3]);
-      if (p) this._renderSegment(x, y, p[0], p[1], context);
-    }
-    return buffer && buffer.value();
-  }
-  renderBounds(context) {
-    const buffer = context == null ? context = new Path : undefined;
-    context.rect(this.xmin, this.ymin, this.xmax - this.xmin, this.ymax - this.ymin);
-    return buffer && buffer.value();
-  }
-  renderCell(i, context) {
-    const buffer = context == null ? context = new Path : undefined;
-    const points = this._clip(i);
-    if (points === null || !points.length) return;
-    context.moveTo(points[0], points[1]);
-    let n = points.length;
-    while (points[0] === points[n-2] && points[1] === points[n-1] && n > 1) n -= 2;
-    for (let i = 2; i < n; i += 2) {
-      if (points[i] !== points[i-2] || points[i+1] !== points[i-1])
-        context.lineTo(points[i], points[i + 1]);
-    }
-    context.closePath();
-    return buffer && buffer.value();
-  }
-  *cellPolygons() {
-    const {delaunay: {points}} = this;
-    for (let i = 0, n = points.length / 2; i < n; ++i) {
-      const cell = this.cellPolygon(i);
-      if (cell) cell.index = i, yield cell;
-    }
-  }
-  cellPolygon(i) {
-    const polygon = new Polygon;
-    this.renderCell(i, polygon);
-    return polygon.value();
-  }
-  _renderSegment(x0, y0, x1, y1, context) {
-    let S;
-    const c0 = this._regioncode(x0, y0);
-    const c1 = this._regioncode(x1, y1);
-    if (c0 === 0 && c1 === 0) {
-      context.moveTo(x0, y0);
-      context.lineTo(x1, y1);
-    } else if (S = this._clipSegment(x0, y0, x1, y1, c0, c1)) {
-      context.moveTo(S[0], S[1]);
-      context.lineTo(S[2], S[3]);
-    }
-  }
-  contains(i, x, y) {
-    if ((x = +x, x !== x) || (y = +y, y !== y)) return false;
-    return this.delaunay._step(i, x, y) === i;
-  }
-  *neighbors(i) {
-    const ci = this._clip(i);
-    if (ci) for (const j of this.delaunay.neighbors(i)) {
-      const cj = this._clip(j);
-      // find the common edge
-      if (cj) loop: for (let ai = 0, li = ci.length; ai < li; ai += 2) {
-        for (let aj = 0, lj = cj.length; aj < lj; aj += 2) {
-          if (ci[ai] == cj[aj]
-          && ci[ai + 1] == cj[aj + 1]
-          && ci[(ai + 2) % li] == cj[(aj + lj - 2) % lj]
-          && ci[(ai + 3) % li] == cj[(aj + lj - 1) % lj]
-          ) {
-            yield j;
-            break loop;
-          }
-        }
-      }
-    }
-  }
-  _cell(i) {
-    const {circumcenters, delaunay: {inedges, halfedges, triangles}} = this;
-    const e0 = inedges[i];
-    if (e0 === -1) return null; // coincident point
-    const points = [];
-    let e = e0;
-    do {
-      const t = Math.floor(e / 3);
-      points.push(circumcenters[t * 2], circumcenters[t * 2 + 1]);
-      e = e % 3 === 2 ? e - 2 : e + 1;
-      if (triangles[e] !== i) break; // bad triangulation
-      e = halfedges[e];
-    } while (e !== e0 && e !== -1);
-    return points;
-  }
-  _clip(i) {
-    // degenerate case (1 valid point: return the box)
-    if (i === 0 && this.delaunay.hull.length === 1) {
-      return [this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax, this.xmin, this.ymin];
-    }
-    const points = this._cell(i);
-    if (points === null) return null;
-    const {vectors: V} = this;
-    const v = i * 4;
-    return V[v] || V[v + 1]
-        ? this._clipInfinite(i, points, V[v], V[v + 1], V[v + 2], V[v + 3])
-        : this._clipFinite(i, points);
-  }
-  _clipFinite(i, points) {
-    const n = points.length;
-    let P = null;
-    let x0, y0, x1 = points[n - 2], y1 = points[n - 1];
-    let c0, c1 = this._regioncode(x1, y1);
-    let e0, e1;
-    for (let j = 0; j < n; j += 2) {
-      x0 = x1, y0 = y1, x1 = points[j], y1 = points[j + 1];
-      c0 = c1, c1 = this._regioncode(x1, y1);
-      if (c0 === 0 && c1 === 0) {
-        e0 = e1, e1 = 0;
-        if (P) P.push(x1, y1);
-        else P = [x1, y1];
-      } else {
-        let S, sx0, sy0, sx1, sy1;
-        if (c0 === 0) {
-          if ((S = this._clipSegment(x0, y0, x1, y1, c0, c1)) === null) continue;
-          [sx0, sy0, sx1, sy1] = S;
-        } else {
-          if ((S = this._clipSegment(x1, y1, x0, y0, c1, c0)) === null) continue;
-          [sx1, sy1, sx0, sy0] = S;
-          e0 = e1, e1 = this._edgecode(sx0, sy0);
-          if (e0 && e1) this._edge(i, e0, e1, P, P.length);
-          if (P) P.push(sx0, sy0);
-          else P = [sx0, sy0];
-        }
-        e0 = e1, e1 = this._edgecode(sx1, sy1);
-        if (e0 && e1) this._edge(i, e0, e1, P, P.length);
-        if (P) P.push(sx1, sy1);
-        else P = [sx1, sy1];
-      }
-    }
-    if (P) {
-      e0 = e1, e1 = this._edgecode(P[0], P[1]);
-      if (e0 && e1) this._edge(i, e0, e1, P, P.length);
-    } else if (this.contains(i, (this.xmin + this.xmax) / 2, (this.ymin + this.ymax) / 2)) {
-      return [this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax, this.xmin, this.ymin];
-    }
-    return P;
-  }
-  _clipSegment(x0, y0, x1, y1, c0, c1) {
-    while (true) {
-      if (c0 === 0 && c1 === 0) return [x0, y0, x1, y1];
-      if (c0 & c1) return null;
-      let x, y, c = c0 || c1;
-      if (c & 0b1000) x = x0 + (x1 - x0) * (this.ymax - y0) / (y1 - y0), y = this.ymax;
-      else if (c & 0b0100) x = x0 + (x1 - x0) * (this.ymin - y0) / (y1 - y0), y = this.ymin;
-      else if (c & 0b0010) y = y0 + (y1 - y0) * (this.xmax - x0) / (x1 - x0), x = this.xmax;
-      else y = y0 + (y1 - y0) * (this.xmin - x0) / (x1 - x0), x = this.xmin;
-      if (c0) x0 = x, y0 = y, c0 = this._regioncode(x0, y0);
-      else x1 = x, y1 = y, c1 = this._regioncode(x1, y1);
-    }
-  }
-  _clipInfinite(i, points, vx0, vy0, vxn, vyn) {
-    let P = Array.from(points), p;
-    if (p = this._project(P[0], P[1], vx0, vy0)) P.unshift(p[0], p[1]);
-    if (p = this._project(P[P.length - 2], P[P.length - 1], vxn, vyn)) P.push(p[0], p[1]);
-    if (P = this._clipFinite(i, P)) {
-      for (let j = 0, n = P.length, c0, c1 = this._edgecode(P[n - 2], P[n - 1]); j < n; j += 2) {
-        c0 = c1, c1 = this._edgecode(P[j], P[j + 1]);
-        if (c0 && c1) j = this._edge(i, c0, c1, P, j), n = P.length;
-      }
-    } else if (this.contains(i, (this.xmin + this.xmax) / 2, (this.ymin + this.ymax) / 2)) {
-      P = [this.xmin, this.ymin, this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax];
-    }
-    return P;
-  }
-  _edge(i, e0, e1, P, j) {
-    while (e0 !== e1) {
-      let x, y;
-      switch (e0) {
-        case 0b0101: e0 = 0b0100; continue; // top-left
-        case 0b0100: e0 = 0b0110, x = this.xmax, y = this.ymin; break; // top
-        case 0b0110: e0 = 0b0010; continue; // top-right
-        case 0b0010: e0 = 0b1010, x = this.xmax, y = this.ymax; break; // right
-        case 0b1010: e0 = 0b1000; continue; // bottom-right
-        case 0b1000: e0 = 0b1001, x = this.xmin, y = this.ymax; break; // bottom
-        case 0b1001: e0 = 0b0001; continue; // bottom-left
-        case 0b0001: e0 = 0b0101, x = this.xmin, y = this.ymin; break; // left
-      }
-      if ((P[j] !== x || P[j + 1] !== y) && this.contains(i, x, y)) {
-        P.splice(j, 0, x, y), j += 2;
-      }
-    }
-    if (P.length > 4) {
-      for (let i = 0; i < P.length; i+= 2) {
-        const j = (i + 2) % P.length, k = (i + 4) % P.length;
-        if (P[i] === P[j] && P[j] === P[k]
-        || P[i + 1] === P[j + 1] && P[j + 1] === P[k + 1])
-          P.splice(j, 2), i -= 2;
-      }
-    }
-    return j;
-  }
-  _project(x0, y0, vx, vy) {
-    let t = Infinity, c, x, y;
-    if (vy < 0) { // top
-      if (y0 <= this.ymin) return null;
-      if ((c = (this.ymin - y0) / vy) < t) y = this.ymin, x = x0 + (t = c) * vx;
-    } else if (vy > 0) { // bottom
-      if (y0 >= this.ymax) return null;
-      if ((c = (this.ymax - y0) / vy) < t) y = this.ymax, x = x0 + (t = c) * vx;
-    }
-    if (vx > 0) { // right
-      if (x0 >= this.xmax) return null;
-      if ((c = (this.xmax - x0) / vx) < t) x = this.xmax, y = y0 + (t = c) * vy;
-    } else if (vx < 0) { // left
-      if (x0 <= this.xmin) return null;
-      if ((c = (this.xmin - x0) / vx) < t) x = this.xmin, y = y0 + (t = c) * vy;
-    }
-    return [x, y];
-  }
-  _edgecode(x, y) {
-    return (x === this.xmin ? 0b0001
-        : x === this.xmax ? 0b0010 : 0b0000)
-        | (y === this.ymin ? 0b0100
-        : y === this.ymax ? 0b1000 : 0b0000);
-  }
-  _regioncode(x, y) {
-    return (x < this.xmin ? 0b0001
-        : x > this.xmax ? 0b0010 : 0b0000)
-        | (y < this.ymin ? 0b0100
-        : y > this.ymax ? 0b1000 : 0b0000);
-  }
-}
-
-const tau = 2 * Math.PI, pow = Math.pow;
-
-function pointX(p) {
-  return p[0];
-}
-
-function pointY(p) {
-  return p[1];
-}
-
-// A triangulation is collinear if all its triangles have a non-null area
-function collinear(d) {
-  const {triangles, coords} = d;
-  for (let i = 0; i < triangles.length; i += 3) {
-    const a = 2 * triangles[i],
-          b = 2 * triangles[i + 1],
-          c = 2 * triangles[i + 2],
-          cross = (coords[c] - coords[a]) * (coords[b + 1] - coords[a + 1])
-                - (coords[b] - coords[a]) * (coords[c + 1] - coords[a + 1]);
-    if (cross > 1e-10) return false;
-  }
-  return true;
-}
-
-function jitter(x, y, r) {
-  return [x + Math.sin(x + y) * r, y + Math.cos(x - y) * r];
-}
-
-class Delaunay {
-  static from(points, fx = pointX, fy = pointY, that) {
-    return new Delaunay("length" in points
-        ? flatArray(points, fx, fy, that)
-        : Float64Array.from(flatIterable(points, fx, fy, that)));
-  }
-  constructor(points) {
-    this._delaunator = new Delaunator(points);
-    this.inedges = new Int32Array(points.length / 2);
-    this._hullIndex = new Int32Array(points.length / 2);
-    this.points = this._delaunator.coords;
-    this._init();
-  }
-  update() {
-    this._delaunator.update();
-    this._init();
-    return this;
-  }
-  _init() {
-    const d = this._delaunator, points = this.points;
-
-    // check for collinear
-    if (d.hull && d.hull.length > 2 && collinear(d)) {
-      this.collinear = Int32Array.from({length: points.length/2}, (_,i) => i)
-        .sort((i, j) => points[2 * i] - points[2 * j] || points[2 * i + 1] - points[2 * j + 1]); // for exact neighbors
-      const e = this.collinear[0], f = this.collinear[this.collinear.length - 1],
-        bounds = [ points[2 * e], points[2 * e + 1], points[2 * f], points[2 * f + 1] ],
-        r = 1e-8 * Math.hypot(bounds[3] - bounds[1], bounds[2] - bounds[0]);
-      for (let i = 0, n = points.length / 2; i < n; ++i) {
-        const p = jitter(points[2 * i], points[2 * i + 1], r);
-        points[2 * i] = p[0];
-        points[2 * i + 1] = p[1];
-      }
-      this._delaunator = new Delaunator(points);
-    } else {
-      delete this.collinear;
-    }
-
-    const halfedges = this.halfedges = this._delaunator.halfedges;
-    const hull = this.hull = this._delaunator.hull;
-    const triangles = this.triangles = this._delaunator.triangles;
-    const inedges = this.inedges.fill(-1);
-    const hullIndex = this._hullIndex.fill(-1);
-
-    // Compute an index from each point to an (arbitrary) incoming halfedge
-    // Used to give the first neighbor of each point; for this reason,
-    // on the hull we give priority to exterior halfedges
-    for (let e = 0, n = halfedges.length; e < n; ++e) {
-      const p = triangles[e % 3 === 2 ? e - 2 : e + 1];
-      if (halfedges[e] === -1 || inedges[p] === -1) inedges[p] = e;
-    }
-    for (let i = 0, n = hull.length; i < n; ++i) {
-      hullIndex[hull[i]] = i;
-    }
-
-    // degenerate case: 1 or 2 (distinct) points
-    if (hull.length <= 2 && hull.length > 0) {
-      this.triangles = new Int32Array(3).fill(-1);
-      this.halfedges = new Int32Array(3).fill(-1);
-      this.triangles[0] = hull[0];
-      this.triangles[1] = hull[1];
-      this.triangles[2] = hull[1];
-      inedges[hull[0]] = 1;
-      if (hull.length === 2) inedges[hull[1]] = 0;
-    }
-  }
-  voronoi(bounds) {
-    return new Voronoi(this, bounds);
-  }
-  *neighbors(i) {
-    const {inedges, hull, _hullIndex, halfedges, triangles, collinear} = this;
-
-    // degenerate case with several collinear points
-    if (collinear) {
-      const l = collinear.indexOf(i);
-      if (l > 0) yield collinear[l - 1];
-      if (l < collinear.length - 1) yield collinear[l + 1];
-      return;
-    }
-
-    const e0 = inedges[i];
-    if (e0 === -1) return; // coincident point
-    let e = e0, p0 = -1;
-    do {
-      yield p0 = triangles[e];
-      e = e % 3 === 2 ? e - 2 : e + 1;
-      if (triangles[e] !== i) return; // bad triangulation
-      e = halfedges[e];
-      if (e === -1) {
-        const p = hull[(_hullIndex[i] + 1) % hull.length];
-        if (p !== p0) yield p;
-        return;
-      }
-    } while (e !== e0);
-  }
-  find(x, y, i = 0) {
-    if ((x = +x, x !== x) || (y = +y, y !== y)) return -1;
-    const i0 = i;
-    let c;
-    while ((c = this._step(i, x, y)) >= 0 && c !== i && c !== i0) i = c;
-    return c;
-  }
-  _step(i, x, y) {
-    const {inedges, hull, _hullIndex, halfedges, triangles, points} = this;
-    if (inedges[i] === -1 || !points.length) return (i + 1) % (points.length >> 1);
-    let c = i;
-    let dc = pow(x - points[i * 2], 2) + pow(y - points[i * 2 + 1], 2);
-    const e0 = inedges[i];
-    let e = e0;
-    do {
-      let t = triangles[e];
-      const dt = pow(x - points[t * 2], 2) + pow(y - points[t * 2 + 1], 2);
-      if (dt < dc) dc = dt, c = t;
-      e = e % 3 === 2 ? e - 2 : e + 1;
-      if (triangles[e] !== i) break; // bad triangulation
-      e = halfedges[e];
-      if (e === -1) {
-        e = hull[(_hullIndex[i] + 1) % hull.length];
-        if (e !== t) {
-          if (pow(x - points[e * 2], 2) + pow(y - points[e * 2 + 1], 2) < dc) return e;
-        }
-        break;
-      }
-    } while (e !== e0);
-    return c;
-  }
-  render(context) {
-    const buffer = context == null ? context = new Path : undefined;
-    const {points, halfedges, triangles} = this;
-    for (let i = 0, n = halfedges.length; i < n; ++i) {
-      const j = halfedges[i];
-      if (j < i) continue;
-      const ti = triangles[i] * 2;
-      const tj = triangles[j] * 2;
-      context.moveTo(points[ti], points[ti + 1]);
-      context.lineTo(points[tj], points[tj + 1]);
-    }
-    this.renderHull(context);
-    return buffer && buffer.value();
-  }
-  renderPoints(context, r = 2) {
-    const buffer = context == null ? context = new Path : undefined;
-    const {points} = this;
-    for (let i = 0, n = points.length; i < n; i += 2) {
-      const x = points[i], y = points[i + 1];
-      context.moveTo(x + r, y);
-      context.arc(x, y, r, 0, tau);
-    }
-    return buffer && buffer.value();
-  }
-  renderHull(context) {
-    const buffer = context == null ? context = new Path : undefined;
-    const {hull, points} = this;
-    const h = hull[0] * 2, n = hull.length;
-    context.moveTo(points[h], points[h + 1]);
-    for (let i = 1; i < n; ++i) {
-      const h = 2 * hull[i];
-      context.lineTo(points[h], points[h + 1]);
-    }
-    context.closePath();
-    return buffer && buffer.value();
-  }
-  hullPolygon() {
-    const polygon = new Polygon;
-    this.renderHull(polygon);
-    return polygon.value();
-  }
-  renderTriangle(i, context) {
-    const buffer = context == null ? context = new Path : undefined;
-    const {points, triangles} = this;
-    const t0 = triangles[i *= 3] * 2;
-    const t1 = triangles[i + 1] * 2;
-    const t2 = triangles[i + 2] * 2;
-    context.moveTo(points[t0], points[t0 + 1]);
-    context.lineTo(points[t1], points[t1 + 1]);
-    context.lineTo(points[t2], points[t2 + 1]);
-    context.closePath();
-    return buffer && buffer.value();
-  }
-  *trianglePolygons() {
-    const {triangles} = this;
-    for (let i = 0, n = triangles.length / 3; i < n; ++i) {
-      yield this.trianglePolygon(i);
-    }
-  }
-  trianglePolygon(i) {
-    const polygon = new Polygon;
-    this.renderTriangle(i, polygon);
-    return polygon.value();
-  }
-}
-
-function flatArray(points, fx, fy, that) {
-  const n = points.length;
-  const array = new Float64Array(n * 2);
-  for (let i = 0; i < n; ++i) {
-    const p = points[i];
-    array[i * 2] = fx.call(that, p, i, points);
-    array[i * 2 + 1] = fy.call(that, p, i, points);
-  }
-  return array;
-}
-
-function* flatIterable(points, fx, fy, that) {
-  let i = 0;
-  for (const p of points) {
-    yield fx.call(that, p, i, points);
-    yield fy.call(that, p, i, points);
-    ++i;
-  }
-}
-
-exports.Delaunay = Delaunay;
-exports.Voronoi = Voronoi;
-
-Object.defineProperty(exports, '__esModule', { value: true });
-
-}));
-
-},{}],4:[function(require,module,exports){
-// stats.js - http://github.com/mrdoob/stats.js
-(function(f,e){"object"===typeof exports&&"undefined"!==typeof module?module.exports=e():"function"===typeof define&&define.amd?define(e):f.Stats=e()})(this,function(){var f=function(){function e(a){c.appendChild(a.dom);return a}function u(a){for(var d=0;d<c.children.length;d++)c.children[d].style.display=d===a?"block":"none";l=a}var l=0,c=document.createElement("div");c.style.cssText="position:fixed;top:0;left:0;cursor:pointer;opacity:0.9;z-index:10000";c.addEventListener("click",function(a){a.preventDefault();
-u(++l%c.children.length)},!1);var k=(performance||Date).now(),g=k,a=0,r=e(new f.Panel("FPS","#0ff","#002")),h=e(new f.Panel("MS","#0f0","#020"));if(self.performance&&self.performance.memory)var t=e(new f.Panel("MB","#f08","#201"));u(0);return{REVISION:16,dom:c,addPanel:e,showPanel:u,begin:function(){k=(performance||Date).now()},end:function(){a++;var c=(performance||Date).now();h.update(c-k,200);if(c>g+1E3&&(r.update(1E3*a/(c-g),100),g=c,a=0,t)){var d=performance.memory;t.update(d.usedJSHeapSize/
-1048576,d.jsHeapSizeLimit/1048576)}return c},update:function(){k=this.end()},domElement:c,setMode:u}};f.Panel=function(e,f,l){var c=Infinity,k=0,g=Math.round,a=g(window.devicePixelRatio||1),r=80*a,h=48*a,t=3*a,v=2*a,d=3*a,m=15*a,n=74*a,p=30*a,q=document.createElement("canvas");q.width=r;q.height=h;q.style.cssText="width:80px;height:48px";var b=q.getContext("2d");b.font="bold "+9*a+"px Helvetica,Arial,sans-serif";b.textBaseline="top";b.fillStyle=l;b.fillRect(0,0,r,h);b.fillStyle=f;b.fillText(e,t,v);
-b.fillRect(d,m,n,p);b.fillStyle=l;b.globalAlpha=.9;b.fillRect(d,m,n,p);return{dom:q,update:function(h,w){c=Math.min(c,h);k=Math.max(k,h);b.fillStyle=l;b.globalAlpha=1;b.fillRect(0,0,r,m);b.fillStyle=f;b.fillText(g(h)+" "+e+" ("+g(c)+"-"+g(k)+")",t,v);b.drawImage(q,d+a,m,n-a,p,d,m,n-a,p);b.fillRect(d+n-a,m,a,p);b.fillStyle=l;b.globalAlpha=.9;b.fillRect(d+n-a,m,a,g((1-h/w)*p))}}};return f});
-
-},{}],5:[function(require,module,exports){
 (function (global, factory) {
 	typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
 	typeof define === 'function' && define.amd ? define(['exports'], factory) :
@@ -53548,7 +51348,2209 @@ b.fillRect(d,m,n,p);b.fillStyle=l;b.globalAlpha=.9;b.fillRect(d,m,n,p);return{do
 
 })));
 
+},{}],3:[function(require,module,exports){
+/*!
+ * camera-controls
+ * https://github.com/yomotsu/camera-controls
+ * (c) 2017 @yomotsu
+ * Released under the MIT License.
+ */
+(function (global, factory) {
+	typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
+	typeof define === 'function' && define.amd ? define(factory) :
+	(global = global || self, global.CameraControls = factory());
+}(this, (function () { 'use strict';
+
+	/*! *****************************************************************************
+	Copyright (c) Microsoft Corporation. All rights reserved.
+	Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+	this file except in compliance with the License. You may obtain a copy of the
+	License at http://www.apache.org/licenses/LICENSE-2.0
+
+	THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+	KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED
+	WARRANTIES OR CONDITIONS OF TITLE, FITNESS FOR A PARTICULAR PURPOSE,
+	MERCHANTABLITY OR NON-INFRINGEMENT.
+
+	See the Apache Version 2.0 License for specific language governing permissions
+	and limitations under the License.
+	***************************************************************************** */
+	/* global Reflect, Promise */
+
+	var extendStatics = function(d, b) {
+	    extendStatics = Object.setPrototypeOf ||
+	        ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+	        function (d, b) { for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p]; };
+	    return extendStatics(d, b);
+	};
+
+	function __extends(d, b) {
+	    extendStatics(d, b);
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	}
+
+	var ACTION;
+	(function (ACTION) {
+	    ACTION[ACTION["NONE"] = 0] = "NONE";
+	    ACTION[ACTION["ROTATE"] = 1] = "ROTATE";
+	    ACTION[ACTION["TRUCK"] = 2] = "TRUCK";
+	    ACTION[ACTION["DOLLY"] = 3] = "DOLLY";
+	    ACTION[ACTION["ZOOM"] = 4] = "ZOOM";
+	    ACTION[ACTION["TOUCH_ROTATE"] = 5] = "TOUCH_ROTATE";
+	    ACTION[ACTION["TOUCH_TRUCK"] = 6] = "TOUCH_TRUCK";
+	    ACTION[ACTION["TOUCH_DOLLY"] = 7] = "TOUCH_DOLLY";
+	    ACTION[ACTION["TOUCH_ZOOM"] = 8] = "TOUCH_ZOOM";
+	    ACTION[ACTION["TOUCH_DOLLY_TRUCK"] = 9] = "TOUCH_DOLLY_TRUCK";
+	    ACTION[ACTION["TOUCH_ZOOM_TRUCK"] = 10] = "TOUCH_ZOOM_TRUCK";
+	})(ACTION || (ACTION = {}));
+
+	var PI_2 = Math.PI * 2;
+	var PI_HALF = Math.PI / 2;
+	var FPS_60 = 1 / 0.016;
+
+	var EPSILON = 1e-5;
+	function approxZero(number) {
+	    return Math.abs(number) < EPSILON;
+	}
+	function approxEquals(a, b) {
+	    return approxZero(a - b);
+	}
+	function roundToStep(value, step) {
+	    return Math.round(value / step) * step;
+	}
+	function infinityToMaxNumber(value) {
+	    if (isFinite(value))
+	        return value;
+	    if (value < 0)
+	        return -Number.MAX_VALUE;
+	    return Number.MAX_VALUE;
+	}
+	function maxNumberToInfinity(value) {
+	    if (Math.abs(value) < Number.MAX_VALUE)
+	        return value;
+	    return value * Infinity;
+	}
+
+	function isTouchEvent(event) {
+	    return 'TouchEvent' in window && event instanceof TouchEvent;
+	}
+
+	function extractClientCoordFromEvent(event, out) {
+	    out.set(0, 0);
+	    if (isTouchEvent(event)) {
+	        var touchEvent = event;
+	        for (var i = 0; i < touchEvent.touches.length; i++) {
+	            out.x += touchEvent.touches[i].clientX;
+	            out.y += touchEvent.touches[i].clientY;
+	        }
+	        out.x /= touchEvent.touches.length;
+	        out.y /= touchEvent.touches.length;
+	        return out;
+	    }
+	    else {
+	        var mouseEvent = event;
+	        out.set(mouseEvent.clientX, mouseEvent.clientY);
+	        return out;
+	    }
+	}
+
+	function notSupportedInOrthographicCamera(camera, message) {
+	    if (!camera.isPerspectiveCamera) {
+	        console.warn(message + " is not supported in OrthographicCamera");
+	        return true;
+	    }
+	    return false;
+	}
+
+	var EventDispatcher = (function () {
+	    function EventDispatcher() {
+	        this._listeners = {};
+	    }
+	    EventDispatcher.prototype.addEventListener = function (type, listener) {
+	        var listeners = this._listeners;
+	        if (listeners[type] === undefined)
+	            listeners[type] = [];
+	        if (listeners[type].indexOf(listener) === -1)
+	            listeners[type].push(listener);
+	    };
+	    EventDispatcher.prototype.removeEventListener = function (type, listener) {
+	        var listeners = this._listeners;
+	        var listenerArray = listeners[type];
+	        if (listenerArray !== undefined) {
+	            var index = listenerArray.indexOf(listener);
+	            if (index !== -1)
+	                listenerArray.splice(index, 1);
+	        }
+	    };
+	    EventDispatcher.prototype.removeAllEventListeners = function (type) {
+	        if (!type) {
+	            this._listeners = {};
+	            return;
+	        }
+	        if (Array.isArray(this._listeners[type]))
+	            this._listeners[type].length = 0;
+	    };
+	    EventDispatcher.prototype.dispatchEvent = function (event) {
+	        var listeners = this._listeners;
+	        var listenerArray = listeners[event.type];
+	        if (listenerArray !== undefined) {
+	            event.target = this;
+	            var array = listenerArray.slice(0);
+	            for (var i = 0, l = array.length; i < l; i++) {
+	                array[i].call(this, event);
+	            }
+	        }
+	    };
+	    return EventDispatcher;
+	}());
+
+	var isMac = /Mac/.test(navigator.platform);
+	var readonlyACTION = Object.freeze(ACTION);
+	var TOUCH_DOLLY_FACTOR = 1 / 8;
+	var THREE;
+	var _ORIGIN;
+	var _AXIS_Y;
+	var _AXIS_Z;
+	var _v2;
+	var _v3A;
+	var _v3B;
+	var _v3C;
+	var _xColumn;
+	var _yColumn;
+	var _sphericalA;
+	var _sphericalB;
+	var _box3A;
+	var _box3B;
+	var _quaternionA;
+	var _quaternionB;
+	var _rotationMatrix;
+	var _raycaster;
+	var CameraControls = (function (_super) {
+	    __extends(CameraControls, _super);
+	    function CameraControls(camera, domElement) {
+	        var _this = _super.call(this) || this;
+	        _this.enabled = true;
+	        _this.minPolarAngle = 0;
+	        _this.maxPolarAngle = Math.PI;
+	        _this.minAzimuthAngle = -Infinity;
+	        _this.maxAzimuthAngle = Infinity;
+	        _this.minDistance = 0;
+	        _this.maxDistance = Infinity;
+	        _this.minZoom = 0.01;
+	        _this.maxZoom = Infinity;
+	        _this.dampingFactor = 0.05;
+	        _this.draggingDampingFactor = 0.25;
+	        _this.azimuthRotateSpeed = 1.0;
+	        _this.polarRotateSpeed = 1.0;
+	        _this.dollySpeed = 1.0;
+	        _this.truckSpeed = 2.0;
+	        _this.dollyToCursor = false;
+	        _this.verticalDragToForward = false;
+	        _this.boundaryFriction = 0.0;
+	        _this.colliderMeshes = [];
+	        _this._state = ACTION.NONE;
+	        _this._viewport = null;
+	        _this._dollyControlAmount = 0;
+	        _this._boundaryEnclosesCamera = false;
+	        _this._needsUpdate = true;
+	        _this._updatedLastTime = false;
+	        _this._camera = camera;
+	        _this._yAxisUpSpace = new THREE.Quaternion().setFromUnitVectors(_this._camera.up, _AXIS_Y);
+	        _this._yAxisUpSpaceInverse = _this._yAxisUpSpace.clone().inverse();
+	        _this._state = ACTION.NONE;
+	        _this._domElement = domElement;
+	        _this._target = new THREE.Vector3();
+	        _this._targetEnd = _this._target.clone();
+	        _this._spherical = new THREE.Spherical().setFromVector3(_v3A.copy(_this._camera.position).applyQuaternion(_this._yAxisUpSpace));
+	        _this._sphericalEnd = _this._spherical.clone();
+	        _this._zoom = _this._camera.zoom;
+	        _this._zoomEnd = _this._zoom;
+	        _this._nearPlaneCorners = [
+	            new THREE.Vector3(),
+	            new THREE.Vector3(),
+	            new THREE.Vector3(),
+	            new THREE.Vector3(),
+	        ];
+	        _this._updateNearPlaneCorners();
+	        _this._boundary = new THREE.Box3(new THREE.Vector3(-Infinity, -Infinity, -Infinity), new THREE.Vector3(Infinity, Infinity, Infinity));
+	        _this._target0 = _this._target.clone();
+	        _this._position0 = _this._camera.position.clone();
+	        _this._zoom0 = _this._zoom;
+	        _this._dollyControlAmount = 0;
+	        _this._dollyControlCoord = new THREE.Vector2();
+	        _this.mouseButtons = {
+	            left: ACTION.ROTATE,
+	            middle: ACTION.DOLLY,
+	            right: ACTION.TRUCK,
+	            wheel: _this._camera.isPerspectiveCamera ? ACTION.DOLLY :
+	                _this._camera.isOrthographicCamera ? ACTION.ZOOM :
+	                    ACTION.NONE,
+	        };
+	        _this.touches = {
+	            one: ACTION.TOUCH_ROTATE,
+	            two: _this._camera.isPerspectiveCamera ? ACTION.TOUCH_DOLLY_TRUCK :
+	                _this._camera.isOrthographicCamera ? ACTION.TOUCH_ZOOM_TRUCK :
+	                    ACTION.NONE,
+	            three: ACTION.TOUCH_TRUCK,
+	        };
+	        if (_this._domElement) {
+	            var dragStartPosition_1 = new THREE.Vector2();
+	            var lastDragPosition_1 = new THREE.Vector2();
+	            var dollyStart_1 = new THREE.Vector2();
+	            var elementRect_1 = new THREE.Vector4();
+	            var truckInternal_1 = function (deltaX, deltaY) {
+	                if (_this._camera.isPerspectiveCamera) {
+	                    var camera_1 = _this._camera;
+	                    var offset = _v3A.copy(camera_1.position).sub(_this._target);
+	                    var fov = camera_1.getEffectiveFOV() * THREE.Math.DEG2RAD;
+	                    var targetDistance = offset.length() * Math.tan(fov * 0.5);
+	                    var truckX = (_this.truckSpeed * deltaX * targetDistance / elementRect_1.w);
+	                    var pedestalY = (_this.truckSpeed * deltaY * targetDistance / elementRect_1.w);
+	                    if (_this.verticalDragToForward) {
+	                        _this.truck(truckX, 0, true);
+	                        _this.forward(-pedestalY, true);
+	                    }
+	                    else {
+	                        _this.truck(truckX, pedestalY, true);
+	                    }
+	                }
+	                else if (_this._camera.isOrthographicCamera) {
+	                    var camera_2 = _this._camera;
+	                    var truckX = deltaX * (camera_2.right - camera_2.left) / camera_2.zoom / elementRect_1.z;
+	                    var pedestalY = deltaY * (camera_2.top - camera_2.bottom) / camera_2.zoom / elementRect_1.w;
+	                    _this.truck(truckX, pedestalY, true);
+	                }
+	            };
+	            var rotateInternal_1 = function (deltaX, deltaY) {
+	                var theta = PI_2 * _this.azimuthRotateSpeed * deltaX / elementRect_1.w;
+	                var phi = PI_2 * _this.polarRotateSpeed * deltaY / elementRect_1.w;
+	                _this.rotate(theta, phi, true);
+	            };
+	            var dollyInternal_1 = function (delta, x, y) {
+	                var dollyScale = Math.pow(0.95, -delta * _this.dollySpeed);
+	                var distance = _this._sphericalEnd.radius * dollyScale;
+	                var prevRadius = _this._sphericalEnd.radius;
+	                _this.dollyTo(distance);
+	                if (_this.dollyToCursor) {
+	                    _this._dollyControlAmount += _this._sphericalEnd.radius - prevRadius;
+	                    _this._dollyControlCoord.set(x, y);
+	                }
+	                return;
+	            };
+	            var zoomInternal_1 = function (delta) {
+	                var zoomScale = Math.pow(0.95, delta * _this.dollySpeed);
+	                _this.zoomTo(_this._zoom * zoomScale);
+	                return;
+	            };
+	            var onMouseDown_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                event.preventDefault();
+	                var prevState = _this._state;
+	                switch (event.button) {
+	                    case THREE.MOUSE.LEFT:
+	                        _this._state = _this.mouseButtons.left;
+	                        break;
+	                    case THREE.MOUSE.MIDDLE:
+	                        _this._state = _this.mouseButtons.middle;
+	                        break;
+	                    case THREE.MOUSE.RIGHT:
+	                        _this._state = _this.mouseButtons.right;
+	                        break;
+	                }
+	                if (prevState !== _this._state) {
+	                    startDragging_1(event);
+	                }
+	            };
+	            var onTouchStart_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                event.preventDefault();
+	                var prevState = _this._state;
+	                switch (event.touches.length) {
+	                    case 1:
+	                        _this._state = _this.touches.one;
+	                        break;
+	                    case 2:
+	                        _this._state = _this.touches.two;
+	                        break;
+	                    case 3:
+	                        _this._state = _this.touches.three;
+	                        break;
+	                }
+	                if (prevState !== _this._state) {
+	                    startDragging_1(event);
+	                }
+	            };
+	            var lastScrollTimeStamp_1 = -1;
+	            var onMouseWheel_1 = function (event) {
+	                if (!_this.enabled || _this.mouseButtons.wheel === ACTION.NONE)
+	                    return;
+	                event.preventDefault();
+	                if (_this.dollyToCursor ||
+	                    _this.mouseButtons.wheel === ACTION.ROTATE ||
+	                    _this.mouseButtons.wheel === ACTION.TRUCK) {
+	                    var now = performance.now();
+	                    if (lastScrollTimeStamp_1 - now < 1000)
+	                        _this._getClientRect(elementRect_1);
+	                    lastScrollTimeStamp_1 = now;
+	                }
+	                var deltaYFactor = isMac ? -1 : -3;
+	                var delta = (event.deltaMode === 1) ? event.deltaY / deltaYFactor : event.deltaY / (deltaYFactor * 10);
+	                var x = _this.dollyToCursor ? (event.clientX - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
+	                var y = _this.dollyToCursor ? (event.clientY - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
+	                switch (_this.mouseButtons.wheel) {
+	                    case ACTION.ROTATE: {
+	                        rotateInternal_1(event.deltaX, event.deltaY);
+	                        break;
+	                    }
+	                    case ACTION.TRUCK: {
+	                        truckInternal_1(event.deltaX, event.deltaY);
+	                        break;
+	                    }
+	                    case ACTION.DOLLY: {
+	                        dollyInternal_1(-delta, x, y);
+	                        break;
+	                    }
+	                    case ACTION.ZOOM: {
+	                        zoomInternal_1(-delta);
+	                        break;
+	                    }
+	                }
+	                _this.dispatchEvent({
+	                    type: 'control',
+	                    originalEvent: event,
+	                });
+	            };
+	            var onContextMenu_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                event.preventDefault();
+	            };
+	            var startDragging_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                event.preventDefault();
+	                extractClientCoordFromEvent(event, _v2);
+	                _this._getClientRect(elementRect_1);
+	                dragStartPosition_1.copy(_v2);
+	                lastDragPosition_1.copy(_v2);
+	                var isMultiTouch = isTouchEvent(event) && event.touches.length >= 2;
+	                if (isMultiTouch) {
+	                    var touchEvent = event;
+	                    var dx = _v2.x - touchEvent.touches[1].clientX;
+	                    var dy = _v2.y - touchEvent.touches[1].clientY;
+	                    var distance = Math.sqrt(dx * dx + dy * dy);
+	                    dollyStart_1.set(0, distance);
+	                    var x = (touchEvent.touches[0].clientX + touchEvent.touches[1].clientX) * 0.5;
+	                    var y = (touchEvent.touches[0].clientY + touchEvent.touches[1].clientY) * 0.5;
+	                    lastDragPosition_1.set(x, y);
+	                }
+	                document.addEventListener('mousemove', dragging_1);
+	                document.addEventListener('touchmove', dragging_1, { passive: false });
+	                document.addEventListener('mouseup', endDragging_1);
+	                document.addEventListener('touchend', endDragging_1);
+	                _this.dispatchEvent({
+	                    type: 'controlstart',
+	                    originalEvent: event,
+	                });
+	            };
+	            var dragging_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                event.preventDefault();
+	                extractClientCoordFromEvent(event, _v2);
+	                var deltaX = lastDragPosition_1.x - _v2.x;
+	                var deltaY = lastDragPosition_1.y - _v2.y;
+	                lastDragPosition_1.copy(_v2);
+	                switch (_this._state) {
+	                    case ACTION.ROTATE:
+	                    case ACTION.TOUCH_ROTATE: {
+	                        rotateInternal_1(deltaX, deltaY);
+	                        break;
+	                    }
+	                    case ACTION.DOLLY:
+	                    case ACTION.ZOOM: {
+	                        var dollyX = _this.dollyToCursor ? (dragStartPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
+	                        var dollyY = _this.dollyToCursor ? (dragStartPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
+	                        _this._state === ACTION.DOLLY ?
+	                            dollyInternal_1(deltaY * TOUCH_DOLLY_FACTOR, dollyX, dollyY) :
+	                            zoomInternal_1(deltaY * TOUCH_DOLLY_FACTOR);
+	                        break;
+	                    }
+	                    case ACTION.TOUCH_DOLLY:
+	                    case ACTION.TOUCH_ZOOM:
+	                    case ACTION.TOUCH_DOLLY_TRUCK:
+	                    case ACTION.TOUCH_ZOOM_TRUCK: {
+	                        var touchEvent = event;
+	                        var dx = _v2.x - touchEvent.touches[1].clientX;
+	                        var dy = _v2.y - touchEvent.touches[1].clientY;
+	                        var distance = Math.sqrt(dx * dx + dy * dy);
+	                        var dollyDelta = dollyStart_1.y - distance;
+	                        dollyStart_1.set(0, distance);
+	                        var dollyX = _this.dollyToCursor ? (lastDragPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
+	                        var dollyY = _this.dollyToCursor ? (lastDragPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
+	                        _this._state === ACTION.TOUCH_DOLLY ||
+	                            _this._state === ACTION.TOUCH_DOLLY_TRUCK ?
+	                            dollyInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR, dollyX, dollyY) :
+	                            zoomInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR);
+	                        if (_this._state === ACTION.TOUCH_DOLLY_TRUCK ||
+	                            _this._state === ACTION.TOUCH_ZOOM_TRUCK) {
+	                            truckInternal_1(deltaX, deltaY);
+	                        }
+	                        break;
+	                    }
+	                    case ACTION.TRUCK:
+	                    case ACTION.TOUCH_TRUCK: {
+	                        truckInternal_1(deltaX, deltaY);
+	                        break;
+	                    }
+	                }
+	                _this.dispatchEvent({
+	                    type: 'control',
+	                    originalEvent: event,
+	                });
+	            };
+	            var endDragging_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                _this._state = ACTION.NONE;
+	                document.removeEventListener('mousemove', dragging_1);
+	                document.removeEventListener('touchmove', dragging_1, { passive: false });
+	                document.removeEventListener('mouseup', endDragging_1);
+	                document.removeEventListener('touchend', endDragging_1);
+	                _this.dispatchEvent({
+	                    type: 'controlend',
+	                    originalEvent: event,
+	                });
+	            };
+	            _this._domElement.addEventListener('mousedown', onMouseDown_1);
+	            _this._domElement.addEventListener('touchstart', onTouchStart_1);
+	            _this._domElement.addEventListener('wheel', onMouseWheel_1);
+	            _this._domElement.addEventListener('contextmenu', onContextMenu_1);
+	            _this._removeAllEventListeners = function () {
+	                _this._domElement.removeEventListener('mousedown', onMouseDown_1);
+	                _this._domElement.removeEventListener('touchstart', onTouchStart_1);
+	                _this._domElement.removeEventListener('wheel', onMouseWheel_1);
+	                _this._domElement.removeEventListener('contextmenu', onContextMenu_1);
+	                document.removeEventListener('mousemove', dragging_1);
+	                document.removeEventListener('touchmove', dragging_1, { passive: false });
+	                document.removeEventListener('mouseup', endDragging_1);
+	                document.removeEventListener('touchend', endDragging_1);
+	            };
+	        }
+	        _this.update(0);
+	        return _this;
+	    }
+	    CameraControls.install = function (libs) {
+	        THREE = libs.THREE;
+	        _ORIGIN = Object.freeze(new THREE.Vector3(0, 0, 0));
+	        _AXIS_Y = Object.freeze(new THREE.Vector3(0, 1, 0));
+	        _AXIS_Z = Object.freeze(new THREE.Vector3(0, 0, 1));
+	        _v2 = new THREE.Vector2();
+	        _v3A = new THREE.Vector3();
+	        _v3B = new THREE.Vector3();
+	        _v3C = new THREE.Vector3();
+	        _xColumn = new THREE.Vector3();
+	        _yColumn = new THREE.Vector3();
+	        _sphericalA = new THREE.Spherical();
+	        _sphericalB = new THREE.Spherical();
+	        _box3A = new THREE.Box3();
+	        _box3B = new THREE.Box3();
+	        _quaternionA = new THREE.Quaternion();
+	        _quaternionB = new THREE.Quaternion();
+	        _rotationMatrix = new THREE.Matrix4();
+	        _raycaster = new THREE.Raycaster();
+	    };
+	    Object.defineProperty(CameraControls, "ACTION", {
+	        get: function () {
+	            return readonlyACTION;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "currentAction", {
+	        get: function () {
+	            return this._state;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "distance", {
+	        get: function () {
+	            return this._spherical.radius;
+	        },
+	        set: function (distance) {
+	            if (this._spherical.radius === distance &&
+	                this._sphericalEnd.radius === distance)
+	                return;
+	            this._spherical.radius = distance;
+	            this._sphericalEnd.radius = distance;
+	            this._needsUpdate = true;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "azimuthAngle", {
+	        get: function () {
+	            return this._spherical.theta;
+	        },
+	        set: function (azimuthAngle) {
+	            if (this._spherical.theta === azimuthAngle &&
+	                this._sphericalEnd.theta === azimuthAngle)
+	                return;
+	            this._spherical.theta = azimuthAngle;
+	            this._sphericalEnd.theta = azimuthAngle;
+	            this._needsUpdate = true;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "polarAngle", {
+	        get: function () {
+	            return this._spherical.phi;
+	        },
+	        set: function (polarAngle) {
+	            if (this._spherical.phi === polarAngle &&
+	                this._sphericalEnd.phi === polarAngle)
+	                return;
+	            this._spherical.phi = polarAngle;
+	            this._sphericalEnd.phi = polarAngle;
+	            this._needsUpdate = true;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "phiSpeed", {
+	        set: function (speed) {
+	            console.warn('phiSpeed was renamed. use azimuthRotateSpeed instead');
+	            this.azimuthRotateSpeed = speed;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "thetaSpeed", {
+	        set: function (speed) {
+	            console.warn('thetaSpeed was renamed. use polarRotateSpeed instead');
+	            this.polarRotateSpeed = speed;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "boundaryEnclosesCamera", {
+	        get: function () {
+	            return this._boundaryEnclosesCamera;
+	        },
+	        set: function (boundaryEnclosesCamera) {
+	            this._boundaryEnclosesCamera = boundaryEnclosesCamera;
+	            this._needsUpdate = true;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    CameraControls.prototype.rotate = function (azimuthAngle, polarAngle, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this.rotateTo(this._sphericalEnd.theta + azimuthAngle, this._sphericalEnd.phi + polarAngle, enableTransition);
+	    };
+	    CameraControls.prototype.rotateTo = function (azimuthAngle, polarAngle, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        var theta = THREE.Math.clamp(azimuthAngle, this.minAzimuthAngle, this.maxAzimuthAngle);
+	        var phi = THREE.Math.clamp(polarAngle, this.minPolarAngle, this.maxPolarAngle);
+	        this._sphericalEnd.theta = theta;
+	        this._sphericalEnd.phi = phi;
+	        this._sphericalEnd.makeSafe();
+	        if (!enableTransition) {
+	            this._spherical.theta = this._sphericalEnd.theta;
+	            this._spherical.phi = this._sphericalEnd.phi;
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.dolly = function (distance, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this.dollyTo(this._sphericalEnd.radius - distance, enableTransition);
+	    };
+	    CameraControls.prototype.dollyTo = function (distance, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        if (notSupportedInOrthographicCamera(this._camera, 'dolly'))
+	            return;
+	        this._sphericalEnd.radius = THREE.Math.clamp(distance, this.minDistance, this.maxDistance);
+	        if (!enableTransition) {
+	            this._spherical.radius = this._sphericalEnd.radius;
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.zoom = function (zoomStep, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this.zoomTo(this._zoomEnd + zoomStep, enableTransition);
+	    };
+	    CameraControls.prototype.zoomTo = function (zoom, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this._zoomEnd = THREE.Math.clamp(zoom, this.minZoom, this.maxZoom);
+	        if (!enableTransition) {
+	            this._zoom = this._zoomEnd;
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.pan = function (x, y, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        console.log('`pan` has been renamed to `truck`');
+	        this.truck(x, y, enableTransition);
+	    };
+	    CameraControls.prototype.truck = function (x, y, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this._camera.updateMatrix();
+	        _xColumn.setFromMatrixColumn(this._camera.matrix, 0);
+	        _yColumn.setFromMatrixColumn(this._camera.matrix, 1);
+	        _xColumn.multiplyScalar(x);
+	        _yColumn.multiplyScalar(-y);
+	        var offset = _v3A.copy(_xColumn).add(_yColumn);
+	        this._encloseToBoundary(this._targetEnd, offset, this.boundaryFriction);
+	        if (!enableTransition) {
+	            this._target.copy(this._targetEnd);
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.forward = function (distance, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        _v3A.setFromMatrixColumn(this._camera.matrix, 0);
+	        _v3A.crossVectors(this._camera.up, _v3A);
+	        _v3A.multiplyScalar(distance);
+	        this._encloseToBoundary(this._targetEnd, _v3A, this.boundaryFriction);
+	        if (!enableTransition) {
+	            this._target.copy(this._targetEnd);
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.moveTo = function (x, y, z, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this._targetEnd.set(x, y, z);
+	        if (!enableTransition) {
+	            this._target.copy(this._targetEnd);
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.fitTo = function (box3OrObject, enableTransition, _a) {
+	        var _b = _a === void 0 ? {} : _a, _c = _b.paddingLeft, paddingLeft = _c === void 0 ? 0 : _c, _d = _b.paddingRight, paddingRight = _d === void 0 ? 0 : _d, _e = _b.paddingBottom, paddingBottom = _e === void 0 ? 0 : _e, _f = _b.paddingTop, paddingTop = _f === void 0 ? 0 : _f;
+	        var aabb = box3OrObject.isBox3
+	            ? _box3A.copy(box3OrObject)
+	            : _box3A.setFromObject(box3OrObject);
+	        var theta = roundToStep(this._sphericalEnd.theta, PI_HALF);
+	        var phi = roundToStep(this._sphericalEnd.phi, PI_HALF);
+	        this.rotateTo(theta, phi, enableTransition);
+	        var normal = _v3A.setFromSpherical(this._sphericalEnd).normalize();
+	        var rotation = _quaternionA.setFromUnitVectors(normal, _AXIS_Z);
+	        var viewFromPolar = approxEquals(Math.abs(normal.y), 1);
+	        if (viewFromPolar) {
+	            rotation.multiply(_quaternionB.setFromAxisAngle(_AXIS_Y, theta));
+	        }
+	        var bb = _box3B.makeEmpty();
+	        _v3B.copy(aabb.min).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.min).setX(aabb.max.x).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.min).setY(aabb.max.y).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.max).setZ(aabb.min.z).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.min).setZ(aabb.max.z).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.max).setY(aabb.min.y).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.max).setX(aabb.min.x).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.max).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        rotation.setFromUnitVectors(_AXIS_Z, normal);
+	        bb.min.x -= paddingLeft;
+	        bb.min.y -= paddingBottom;
+	        bb.max.x += paddingRight;
+	        bb.max.y += paddingTop;
+	        var bbSize = bb.getSize(_v3A);
+	        var center = bb.getCenter(_v3B).applyQuaternion(rotation);
+	        var isPerspectiveCamera = this._camera.isPerspectiveCamera;
+	        var isOrthographicCamera = this._camera.isOrthographicCamera;
+	        if (isPerspectiveCamera) {
+	            var distance = this.getDistanceToFit(bbSize.x, bbSize.y, bbSize.z);
+	            this.moveTo(center.x, center.y, center.z, enableTransition);
+	            this.dollyTo(distance, enableTransition);
+	            return;
+	        }
+	        else if (isOrthographicCamera) {
+	            var camera = this._camera;
+	            var width = camera.right - camera.left;
+	            var height = camera.top - camera.bottom;
+	            var zoom = Math.min(width / bbSize.x, height / bbSize.y);
+	            this.moveTo(center.x, center.y, center.z, enableTransition);
+	            this.zoomTo(zoom, enableTransition);
+	            return;
+	        }
+	    };
+	    CameraControls.prototype.setLookAt = function (positionX, positionY, positionZ, targetX, targetY, targetZ, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        var position = _v3A.set(positionX, positionY, positionZ);
+	        var target = _v3B.set(targetX, targetY, targetZ);
+	        this._targetEnd.copy(target);
+	        this._sphericalEnd.setFromVector3(position.sub(target).applyQuaternion(this._yAxisUpSpace));
+	        this.normalizeRotations();
+	        if (!enableTransition) {
+	            this._target.copy(this._targetEnd);
+	            this._spherical.copy(this._sphericalEnd);
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.lerpLookAt = function (positionAX, positionAY, positionAZ, targetAX, targetAY, targetAZ, positionBX, positionBY, positionBZ, targetBX, targetBY, targetBZ, t, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        var positionA = _v3A.set(positionAX, positionAY, positionAZ);
+	        var targetA = _v3B.set(targetAX, targetAY, targetAZ);
+	        _sphericalA.setFromVector3(positionA.sub(targetA).applyQuaternion(this._yAxisUpSpace));
+	        var targetB = _v3A.set(targetBX, targetBY, targetBZ);
+	        this._targetEnd.copy(targetA).lerp(targetB, t);
+	        var positionB = _v3B.set(positionBX, positionBY, positionBZ);
+	        _sphericalB.setFromVector3(positionB.sub(targetB).applyQuaternion(this._yAxisUpSpace));
+	        var deltaTheta = _sphericalB.theta - _sphericalA.theta;
+	        var deltaPhi = _sphericalB.phi - _sphericalA.phi;
+	        var deltaRadius = _sphericalB.radius - _sphericalA.radius;
+	        this._sphericalEnd.set(_sphericalA.radius + deltaRadius * t, _sphericalA.phi + deltaPhi * t, _sphericalA.theta + deltaTheta * t);
+	        this.normalizeRotations();
+	        if (!enableTransition) {
+	            this._target.copy(this._targetEnd);
+	            this._spherical.copy(this._sphericalEnd);
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.setPosition = function (positionX, positionY, positionZ, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this.setLookAt(positionX, positionY, positionZ, this._targetEnd.x, this._targetEnd.y, this._targetEnd.z, enableTransition);
+	    };
+	    CameraControls.prototype.setTarget = function (targetX, targetY, targetZ, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        var pos = this.getPosition(_v3A);
+	        this.setLookAt(pos.x, pos.y, pos.z, targetX, targetY, targetZ, enableTransition);
+	    };
+	    CameraControls.prototype.setBoundary = function (box3) {
+	        if (!box3) {
+	            this._boundary.min.set(-Infinity, -Infinity, -Infinity);
+	            this._boundary.max.set(Infinity, Infinity, Infinity);
+	            this._needsUpdate = true;
+	            return;
+	        }
+	        this._boundary.copy(box3);
+	        this._boundary.clampPoint(this._targetEnd, this._targetEnd);
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.setViewport = function (viewportOrX, y, width, height) {
+	        if (viewportOrX === null) {
+	            this._viewport = null;
+	            return;
+	        }
+	        this._viewport = this._viewport || new THREE.Vector4();
+	        if (typeof viewportOrX === 'number') {
+	            this._viewport.set(viewportOrX, y, width, height);
+	        }
+	        else {
+	            this._viewport.copy(viewportOrX);
+	        }
+	    };
+	    CameraControls.prototype.getDistanceToFit = function (width, height, depth) {
+	        if (notSupportedInOrthographicCamera(this._camera, 'getDistanceToFit'))
+	            return this._spherical.radius;
+	        var camera = this._camera;
+	        var boundingRectAspect = width / height;
+	        var fov = camera.getEffectiveFOV() * THREE.Math.DEG2RAD;
+	        var aspect = camera.aspect;
+	        var heightToFit = boundingRectAspect < aspect ? height : width / aspect;
+	        return heightToFit * 0.5 / Math.tan(fov * 0.5) + depth * 0.5;
+	    };
+	    CameraControls.prototype.getTarget = function (out) {
+	        var _out = !!out && out.isVector3 ? out : new THREE.Vector3();
+	        return _out.copy(this._targetEnd);
+	    };
+	    CameraControls.prototype.getPosition = function (out) {
+	        var _out = !!out && out.isVector3 ? out : new THREE.Vector3();
+	        return _out.setFromSpherical(this._sphericalEnd).applyQuaternion(this._yAxisUpSpaceInverse).add(this._targetEnd);
+	    };
+	    CameraControls.prototype.normalizeRotations = function () {
+	        this._sphericalEnd.theta = this._sphericalEnd.theta % PI_2;
+	        if (this._sphericalEnd.theta < 0)
+	            this._sphericalEnd.theta += PI_2;
+	        this._spherical.theta += PI_2 * Math.round((this._sphericalEnd.theta - this._spherical.theta) / PI_2);
+	    };
+	    CameraControls.prototype.reset = function (enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this.setLookAt(this._position0.x, this._position0.y, this._position0.z, this._target0.x, this._target0.y, this._target0.z, enableTransition);
+	        this.zoomTo(this._zoom0, enableTransition);
+	    };
+	    CameraControls.prototype.saveState = function () {
+	        this._target0.copy(this._target);
+	        this._position0.copy(this._camera.position);
+	        this._zoom0 = this._zoom;
+	    };
+	    CameraControls.prototype.updateCameraUp = function () {
+	        this._yAxisUpSpace.setFromUnitVectors(this._camera.up, _AXIS_Y);
+	        this._yAxisUpSpaceInverse.copy(this._yAxisUpSpace).inverse();
+	    };
+	    CameraControls.prototype.update = function (delta) {
+	        var dampingFactor = this._state === ACTION.NONE ? this.dampingFactor : this.draggingDampingFactor;
+	        var lerpRatio = 1.0 - Math.exp(-dampingFactor * delta * FPS_60);
+	        var deltaTheta = this._sphericalEnd.theta - this._spherical.theta;
+	        var deltaPhi = this._sphericalEnd.phi - this._spherical.phi;
+	        var deltaRadius = this._sphericalEnd.radius - this._spherical.radius;
+	        var deltaTarget = _v3A.subVectors(this._targetEnd, this._target);
+	        if (!approxZero(deltaTheta) ||
+	            !approxZero(deltaPhi) ||
+	            !approxZero(deltaRadius) ||
+	            !approxZero(deltaTarget.x) ||
+	            !approxZero(deltaTarget.y) ||
+	            !approxZero(deltaTarget.z)) {
+	            this._spherical.set(this._spherical.radius + deltaRadius * lerpRatio, this._spherical.phi + deltaPhi * lerpRatio, this._spherical.theta + deltaTheta * lerpRatio);
+	            this._target.add(deltaTarget.multiplyScalar(lerpRatio));
+	            this._needsUpdate = true;
+	        }
+	        else {
+	            this._spherical.copy(this._sphericalEnd);
+	            this._target.copy(this._targetEnd);
+	        }
+	        if (this._dollyControlAmount !== 0) {
+	            if (this._camera.isPerspectiveCamera) {
+	                var camera = this._camera;
+	                var direction = _v3A.setFromSpherical(this._sphericalEnd).applyQuaternion(this._yAxisUpSpaceInverse).normalize().negate();
+	                var planeX = _v3B.copy(direction).cross(camera.up).normalize();
+	                if (planeX.lengthSq() === 0)
+	                    planeX.x = 1.0;
+	                var planeY = _v3C.crossVectors(planeX, direction);
+	                var worldToScreen = this._sphericalEnd.radius * Math.tan(camera.getEffectiveFOV() * THREE.Math.DEG2RAD * 0.5);
+	                var prevRadius = this._sphericalEnd.radius - this._dollyControlAmount;
+	                var lerpRatio_1 = (prevRadius - this._sphericalEnd.radius) / this._sphericalEnd.radius;
+	                var cursor = _v3A.copy(this._targetEnd)
+	                    .add(planeX.multiplyScalar(this._dollyControlCoord.x * worldToScreen * camera.aspect))
+	                    .add(planeY.multiplyScalar(this._dollyControlCoord.y * worldToScreen));
+	                this._targetEnd.lerp(cursor, lerpRatio_1);
+	                this._target.copy(this._targetEnd);
+	            }
+	            this._dollyControlAmount = 0;
+	        }
+	        var maxDistance = this._collisionTest();
+	        this._spherical.radius = Math.min(this._spherical.radius, maxDistance);
+	        this._spherical.makeSafe();
+	        this._camera.position.setFromSpherical(this._spherical).applyQuaternion(this._yAxisUpSpaceInverse).add(this._target);
+	        this._camera.lookAt(this._target);
+	        if (this._boundaryEnclosesCamera) {
+	            this._encloseToBoundary(this._camera.position.copy(this._target), _v3A.setFromSpherical(this._spherical).applyQuaternion(this._yAxisUpSpaceInverse), 1.0);
+	        }
+	        var zoomDelta = this._zoomEnd - this._zoom;
+	        this._zoom += zoomDelta * lerpRatio;
+	        if (this._camera.zoom !== this._zoom) {
+	            if (approxZero(zoomDelta))
+	                this._zoom = this._zoomEnd;
+	            this._camera.zoom = this._zoom;
+	            this._camera.updateProjectionMatrix();
+	            this._updateNearPlaneCorners();
+	            this._needsUpdate = true;
+	        }
+	        var updated = this._needsUpdate;
+	        if (updated && !this._updatedLastTime) {
+	            this.dispatchEvent({ type: 'wake' });
+	            this.dispatchEvent({ type: 'update' });
+	        }
+	        else if (updated) {
+	            this.dispatchEvent({ type: 'update' });
+	        }
+	        else if (!updated && this._updatedLastTime) {
+	            this.dispatchEvent({ type: 'sleep' });
+	        }
+	        this._updatedLastTime = updated;
+	        this._needsUpdate = false;
+	        return updated;
+	    };
+	    CameraControls.prototype.toJSON = function () {
+	        return JSON.stringify({
+	            enabled: this.enabled,
+	            minDistance: this.minDistance,
+	            maxDistance: infinityToMaxNumber(this.maxDistance),
+	            minZoom: this.minZoom,
+	            maxZoom: infinityToMaxNumber(this.maxZoom),
+	            minPolarAngle: this.minPolarAngle,
+	            maxPolarAngle: infinityToMaxNumber(this.maxPolarAngle),
+	            minAzimuthAngle: infinityToMaxNumber(this.minAzimuthAngle),
+	            maxAzimuthAngle: infinityToMaxNumber(this.maxAzimuthAngle),
+	            dampingFactor: this.dampingFactor,
+	            draggingDampingFactor: this.draggingDampingFactor,
+	            dollySpeed: this.dollySpeed,
+	            truckSpeed: this.truckSpeed,
+	            dollyToCursor: this.dollyToCursor,
+	            verticalDragToForward: this.verticalDragToForward,
+	            target: this._targetEnd.toArray(),
+	            position: this._camera.position.toArray(),
+	            zoom: this._camera.zoom,
+	            target0: this._target0.toArray(),
+	            position0: this._position0.toArray(),
+	            zoom0: this._zoom0,
+	        });
+	    };
+	    CameraControls.prototype.fromJSON = function (json, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        var obj = JSON.parse(json);
+	        var position = _v3A.fromArray(obj.position);
+	        this.enabled = obj.enabled;
+	        this.minDistance = obj.minDistance;
+	        this.maxDistance = maxNumberToInfinity(obj.maxDistance);
+	        this.minZoom = obj.minZoom;
+	        this.maxZoom = maxNumberToInfinity(obj.maxZoom);
+	        this.minPolarAngle = obj.minPolarAngle;
+	        this.maxPolarAngle = maxNumberToInfinity(obj.maxPolarAngle);
+	        this.minAzimuthAngle = maxNumberToInfinity(obj.minAzimuthAngle);
+	        this.maxAzimuthAngle = maxNumberToInfinity(obj.maxAzimuthAngle);
+	        this.dampingFactor = obj.dampingFactor;
+	        this.draggingDampingFactor = obj.draggingDampingFactor;
+	        this.dollySpeed = obj.dollySpeed;
+	        this.truckSpeed = obj.truckSpeed;
+	        this.dollyToCursor = obj.dollyToCursor;
+	        this.verticalDragToForward = obj.verticalDragToForward;
+	        this._target0.fromArray(obj.target0);
+	        this._position0.fromArray(obj.position0);
+	        this._zoom0 = obj.zoom0;
+	        this.moveTo(obj.target[0], obj.target[1], obj.target[2], enableTransition);
+	        _sphericalA.setFromVector3(position.sub(this._targetEnd).applyQuaternion(this._yAxisUpSpace));
+	        this.rotateTo(_sphericalA.theta, _sphericalA.phi, enableTransition);
+	        this.zoomTo(obj.zoom, enableTransition);
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.dispose = function () {
+	        this._removeAllEventListeners();
+	    };
+	    CameraControls.prototype._encloseToBoundary = function (position, offset, friction) {
+	        var offsetLength2 = offset.lengthSq();
+	        if (offsetLength2 === 0.0) {
+	            return position;
+	        }
+	        var newTarget = _v3B.copy(offset).add(position);
+	        var clampedTarget = this._boundary.clampPoint(newTarget, _v3C);
+	        var deltaClampedTarget = clampedTarget.sub(newTarget);
+	        var deltaClampedTargetLength2 = deltaClampedTarget.lengthSq();
+	        if (deltaClampedTargetLength2 === 0.0) {
+	            return position.add(offset);
+	        }
+	        else if (deltaClampedTargetLength2 === offsetLength2) {
+	            return position;
+	        }
+	        else if (friction === 0.0) {
+	            return position.add(offset).add(deltaClampedTarget);
+	        }
+	        else {
+	            var offsetFactor = 1.0 + friction * deltaClampedTargetLength2 / offset.dot(deltaClampedTarget);
+	            return position
+	                .add(_v3B.copy(offset).multiplyScalar(offsetFactor))
+	                .add(deltaClampedTarget.multiplyScalar(1.0 - friction));
+	        }
+	    };
+	    CameraControls.prototype._updateNearPlaneCorners = function () {
+	        if (this._camera.isPerspectiveCamera) {
+	            var camera = this._camera;
+	            var near = camera.near;
+	            var fov = camera.getEffectiveFOV() * THREE.Math.DEG2RAD;
+	            var heightHalf = Math.tan(fov * 0.5) * near;
+	            var widthHalf = heightHalf * camera.aspect;
+	            this._nearPlaneCorners[0].set(-widthHalf, -heightHalf, 0);
+	            this._nearPlaneCorners[1].set(widthHalf, -heightHalf, 0);
+	            this._nearPlaneCorners[2].set(widthHalf, heightHalf, 0);
+	            this._nearPlaneCorners[3].set(-widthHalf, heightHalf, 0);
+	        }
+	        else if (this._camera.isOrthographicCamera) {
+	            var camera = this._camera;
+	            var zoomInv = 1 / camera.zoom;
+	            var left = camera.left * zoomInv;
+	            var right = camera.right * zoomInv;
+	            var top_1 = camera.top * zoomInv;
+	            var bottom = camera.bottom * zoomInv;
+	            this._nearPlaneCorners[0].set(left, top_1, 0);
+	            this._nearPlaneCorners[1].set(right, top_1, 0);
+	            this._nearPlaneCorners[2].set(right, bottom, 0);
+	            this._nearPlaneCorners[3].set(left, bottom, 0);
+	        }
+	    };
+	    CameraControls.prototype._collisionTest = function () {
+	        var distance = Infinity;
+	        var hasCollider = this.colliderMeshes.length >= 1;
+	        if (!hasCollider)
+	            return distance;
+	        if (notSupportedInOrthographicCamera(this._camera, '_collisionTest'))
+	            return distance;
+	        distance = this._spherical.radius;
+	        var direction = _v3A.setFromSpherical(this._spherical).divideScalar(distance);
+	        _rotationMatrix.lookAt(_ORIGIN, direction, this._camera.up);
+	        for (var i = 0; i < 4; i++) {
+	            var nearPlaneCorner = _v3B.copy(this._nearPlaneCorners[i]);
+	            nearPlaneCorner.applyMatrix4(_rotationMatrix);
+	            var origin_1 = _v3C.addVectors(this._target, nearPlaneCorner);
+	            _raycaster.set(origin_1, direction);
+	            _raycaster.far = distance;
+	            var intersects = _raycaster.intersectObjects(this.colliderMeshes);
+	            if (intersects.length !== 0 && intersects[0].distance < distance) {
+	                distance = intersects[0].distance;
+	            }
+	        }
+	        return distance;
+	    };
+	    CameraControls.prototype._getClientRect = function (target) {
+	        var rect = this._domElement.getBoundingClientRect();
+	        target.x = rect.left;
+	        target.y = rect.top;
+	        if (this._viewport) {
+	            target.x += this._viewport.x;
+	            target.y += rect.height - this._viewport.w - this._viewport.y;
+	            target.z = this._viewport.z;
+	            target.w = this._viewport.w;
+	        }
+	        else {
+	            target.z = rect.width;
+	            target.w = rect.height;
+	        }
+	        return target;
+	    };
+	    CameraControls.prototype._removeAllEventListeners = function () { };
+	    return CameraControls;
+	}(EventDispatcher));
+
+	return CameraControls;
+
+})));
+
+},{}],4:[function(require,module,exports){
+// https://github.com/d3/d3-delaunay v5.3.0 Copyright 2020 Mike Bostock
+// https://github.com/mapbox/delaunator v4.0.1. Copyright 2019 Mapbox, Inc.
+(function (global, factory) {
+typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
+typeof define === 'function' && define.amd ? define(['exports'], factory) :
+(global = global || self, factory(global.d3 = global.d3 || {}));
+}(this, function (exports) { 'use strict';
+
+const EPSILON = Math.pow(2, -52);
+const EDGE_STACK = new Uint32Array(512);
+
+class Delaunator {
+
+    static from(points, getX = defaultGetX, getY = defaultGetY) {
+        const n = points.length;
+        const coords = new Float64Array(n * 2);
+
+        for (let i = 0; i < n; i++) {
+            const p = points[i];
+            coords[2 * i] = getX(p);
+            coords[2 * i + 1] = getY(p);
+        }
+
+        return new Delaunator(coords);
+    }
+
+    constructor(coords) {
+        const n = coords.length >> 1;
+        if (n > 0 && typeof coords[0] !== 'number') throw new Error('Expected coords to contain numbers.');
+
+        this.coords = coords;
+
+        // arrays that will store the triangulation graph
+        const maxTriangles = Math.max(2 * n - 5, 0);
+        this._triangles = new Uint32Array(maxTriangles * 3);
+        this._halfedges = new Int32Array(maxTriangles * 3);
+
+        // temporary arrays for tracking the edges of the advancing convex hull
+        this._hashSize = Math.ceil(Math.sqrt(n));
+        this._hullPrev = new Uint32Array(n); // edge to prev edge
+        this._hullNext = new Uint32Array(n); // edge to next edge
+        this._hullTri = new Uint32Array(n); // edge to adjacent triangle
+        this._hullHash = new Int32Array(this._hashSize).fill(-1); // angular edge hash
+
+        // temporary arrays for sorting points
+        this._ids = new Uint32Array(n);
+        this._dists = new Float64Array(n);
+
+        this.update();
+    }
+
+    update() {
+        const {coords, _hullPrev: hullPrev, _hullNext: hullNext, _hullTri: hullTri, _hullHash: hullHash} =  this;
+        const n = coords.length >> 1;
+
+        // populate an array of point indices; calculate input data bbox
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+
+        for (let i = 0; i < n; i++) {
+            const x = coords[2 * i];
+            const y = coords[2 * i + 1];
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+            this._ids[i] = i;
+        }
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+
+        let minDist = Infinity;
+        let i0, i1, i2;
+
+        // pick a seed point close to the center
+        for (let i = 0; i < n; i++) {
+            const d = dist(cx, cy, coords[2 * i], coords[2 * i + 1]);
+            if (d < minDist) {
+                i0 = i;
+                minDist = d;
+            }
+        }
+        const i0x = coords[2 * i0];
+        const i0y = coords[2 * i0 + 1];
+
+        minDist = Infinity;
+
+        // find the point closest to the seed
+        for (let i = 0; i < n; i++) {
+            if (i === i0) continue;
+            const d = dist(i0x, i0y, coords[2 * i], coords[2 * i + 1]);
+            if (d < minDist && d > 0) {
+                i1 = i;
+                minDist = d;
+            }
+        }
+        let i1x = coords[2 * i1];
+        let i1y = coords[2 * i1 + 1];
+
+        let minRadius = Infinity;
+
+        // find the third point which forms the smallest circumcircle with the first two
+        for (let i = 0; i < n; i++) {
+            if (i === i0 || i === i1) continue;
+            const r = circumradius(i0x, i0y, i1x, i1y, coords[2 * i], coords[2 * i + 1]);
+            if (r < minRadius) {
+                i2 = i;
+                minRadius = r;
+            }
+        }
+        let i2x = coords[2 * i2];
+        let i2y = coords[2 * i2 + 1];
+
+        if (minRadius === Infinity) {
+            // order collinear points by dx (or dy if all x are identical)
+            // and return the list as a hull
+            for (let i = 0; i < n; i++) {
+                this._dists[i] = (coords[2 * i] - coords[0]) || (coords[2 * i + 1] - coords[1]);
+            }
+            quicksort(this._ids, this._dists, 0, n - 1);
+            const hull = new Uint32Array(n);
+            let j = 0;
+            for (let i = 0, d0 = -Infinity; i < n; i++) {
+                const id = this._ids[i];
+                if (this._dists[id] > d0) {
+                    hull[j++] = id;
+                    d0 = this._dists[id];
+                }
+            }
+            this.hull = hull.subarray(0, j);
+            this.triangles = new Uint32Array(0);
+            this.halfedges = new Uint32Array(0);
+            return;
+        }
+
+        // swap the order of the seed points for counter-clockwise orientation
+        if (orient(i0x, i0y, i1x, i1y, i2x, i2y)) {
+            const i = i1;
+            const x = i1x;
+            const y = i1y;
+            i1 = i2;
+            i1x = i2x;
+            i1y = i2y;
+            i2 = i;
+            i2x = x;
+            i2y = y;
+        }
+
+        const center = circumcenter(i0x, i0y, i1x, i1y, i2x, i2y);
+        this._cx = center.x;
+        this._cy = center.y;
+
+        for (let i = 0; i < n; i++) {
+            this._dists[i] = dist(coords[2 * i], coords[2 * i + 1], center.x, center.y);
+        }
+
+        // sort the points by distance from the seed triangle circumcenter
+        quicksort(this._ids, this._dists, 0, n - 1);
+
+        // set up the seed triangle as the starting hull
+        this._hullStart = i0;
+        let hullSize = 3;
+
+        hullNext[i0] = hullPrev[i2] = i1;
+        hullNext[i1] = hullPrev[i0] = i2;
+        hullNext[i2] = hullPrev[i1] = i0;
+
+        hullTri[i0] = 0;
+        hullTri[i1] = 1;
+        hullTri[i2] = 2;
+
+        hullHash.fill(-1);
+        hullHash[this._hashKey(i0x, i0y)] = i0;
+        hullHash[this._hashKey(i1x, i1y)] = i1;
+        hullHash[this._hashKey(i2x, i2y)] = i2;
+
+        this.trianglesLen = 0;
+        this._addTriangle(i0, i1, i2, -1, -1, -1);
+
+        for (let k = 0, xp, yp; k < this._ids.length; k++) {
+            const i = this._ids[k];
+            const x = coords[2 * i];
+            const y = coords[2 * i + 1];
+
+            // skip near-duplicate points
+            if (k > 0 && Math.abs(x - xp) <= EPSILON && Math.abs(y - yp) <= EPSILON) continue;
+            xp = x;
+            yp = y;
+
+            // skip seed triangle points
+            if (i === i0 || i === i1 || i === i2) continue;
+
+            // find a visible edge on the convex hull using edge hash
+            let start = 0;
+            for (let j = 0, key = this._hashKey(x, y); j < this._hashSize; j++) {
+                start = hullHash[(key + j) % this._hashSize];
+                if (start !== -1 && start !== hullNext[start]) break;
+            }
+
+            start = hullPrev[start];
+            let e = start, q;
+            while (q = hullNext[e], !orient(x, y, coords[2 * e], coords[2 * e + 1], coords[2 * q], coords[2 * q + 1])) {
+                e = q;
+                if (e === start) {
+                    e = -1;
+                    break;
+                }
+            }
+            if (e === -1) continue; // likely a near-duplicate point; skip it
+
+            // add the first triangle from the point
+            let t = this._addTriangle(e, i, hullNext[e], -1, -1, hullTri[e]);
+
+            // recursively flip triangles from the point until they satisfy the Delaunay condition
+            hullTri[i] = this._legalize(t + 2);
+            hullTri[e] = t; // keep track of boundary triangles on the hull
+            hullSize++;
+
+            // walk forward through the hull, adding more triangles and flipping recursively
+            let n = hullNext[e];
+            while (q = hullNext[n], orient(x, y, coords[2 * n], coords[2 * n + 1], coords[2 * q], coords[2 * q + 1])) {
+                t = this._addTriangle(n, i, q, hullTri[i], -1, hullTri[n]);
+                hullTri[i] = this._legalize(t + 2);
+                hullNext[n] = n; // mark as removed
+                hullSize--;
+                n = q;
+            }
+
+            // walk backward from the other side, adding more triangles and flipping
+            if (e === start) {
+                while (q = hullPrev[e], orient(x, y, coords[2 * q], coords[2 * q + 1], coords[2 * e], coords[2 * e + 1])) {
+                    t = this._addTriangle(q, i, e, -1, hullTri[e], hullTri[q]);
+                    this._legalize(t + 2);
+                    hullTri[q] = t;
+                    hullNext[e] = e; // mark as removed
+                    hullSize--;
+                    e = q;
+                }
+            }
+
+            // update the hull indices
+            this._hullStart = hullPrev[i] = e;
+            hullNext[e] = hullPrev[n] = i;
+            hullNext[i] = n;
+
+            // save the two new edges in the hash table
+            hullHash[this._hashKey(x, y)] = i;
+            hullHash[this._hashKey(coords[2 * e], coords[2 * e + 1])] = e;
+        }
+
+        this.hull = new Uint32Array(hullSize);
+        for (let i = 0, e = this._hullStart; i < hullSize; i++) {
+            this.hull[i] = e;
+            e = hullNext[e];
+        }
+
+        // trim typed triangle mesh arrays
+        this.triangles = this._triangles.subarray(0, this.trianglesLen);
+        this.halfedges = this._halfedges.subarray(0, this.trianglesLen);
+    }
+
+    _hashKey(x, y) {
+        return Math.floor(pseudoAngle(x - this._cx, y - this._cy) * this._hashSize) % this._hashSize;
+    }
+
+    _legalize(a) {
+        const {_triangles: triangles, _halfedges: halfedges, coords} = this;
+
+        let i = 0;
+        let ar = 0;
+
+        // recursion eliminated with a fixed-size stack
+        while (true) {
+            const b = halfedges[a];
+
+            /* if the pair of triangles doesn't satisfy the Delaunay condition
+             * (p1 is inside the circumcircle of [p0, pl, pr]), flip them,
+             * then do the same check/flip recursively for the new pair of triangles
+             *
+             *           pl                    pl
+             *          /||\                  /  \
+             *       al/ || \bl            al/    \a
+             *        /  ||  \              /      \
+             *       /  a||b  \    flip    /___ar___\
+             *     p0\   ||   /p1   =>   p0\---bl---/p1
+             *        \  ||  /              \      /
+             *       ar\ || /br             b\    /br
+             *          \||/                  \  /
+             *           pr                    pr
+             */
+            const a0 = a - a % 3;
+            ar = a0 + (a + 2) % 3;
+
+            if (b === -1) { // convex hull edge
+                if (i === 0) break;
+                a = EDGE_STACK[--i];
+                continue;
+            }
+
+            const b0 = b - b % 3;
+            const al = a0 + (a + 1) % 3;
+            const bl = b0 + (b + 2) % 3;
+
+            const p0 = triangles[ar];
+            const pr = triangles[a];
+            const pl = triangles[al];
+            const p1 = triangles[bl];
+
+            const illegal = inCircle(
+                coords[2 * p0], coords[2 * p0 + 1],
+                coords[2 * pr], coords[2 * pr + 1],
+                coords[2 * pl], coords[2 * pl + 1],
+                coords[2 * p1], coords[2 * p1 + 1]);
+
+            if (illegal) {
+                triangles[a] = p1;
+                triangles[b] = p0;
+
+                const hbl = halfedges[bl];
+
+                // edge swapped on the other side of the hull (rare); fix the halfedge reference
+                if (hbl === -1) {
+                    let e = this._hullStart;
+                    do {
+                        if (this._hullTri[e] === bl) {
+                            this._hullTri[e] = a;
+                            break;
+                        }
+                        e = this._hullPrev[e];
+                    } while (e !== this._hullStart);
+                }
+                this._link(a, hbl);
+                this._link(b, halfedges[ar]);
+                this._link(ar, bl);
+
+                const br = b0 + (b + 1) % 3;
+
+                // don't worry about hitting the cap: it can only happen on extremely degenerate input
+                if (i < EDGE_STACK.length) {
+                    EDGE_STACK[i++] = br;
+                }
+            } else {
+                if (i === 0) break;
+                a = EDGE_STACK[--i];
+            }
+        }
+
+        return ar;
+    }
+
+    _link(a, b) {
+        this._halfedges[a] = b;
+        if (b !== -1) this._halfedges[b] = a;
+    }
+
+    // add a new triangle given vertex indices and adjacent half-edge ids
+    _addTriangle(i0, i1, i2, a, b, c) {
+        const t = this.trianglesLen;
+
+        this._triangles[t] = i0;
+        this._triangles[t + 1] = i1;
+        this._triangles[t + 2] = i2;
+
+        this._link(t, a);
+        this._link(t + 1, b);
+        this._link(t + 2, c);
+
+        this.trianglesLen += 3;
+
+        return t;
+    }
+}
+
+// monotonically increases with real angle, but doesn't need expensive trigonometry
+function pseudoAngle(dx, dy) {
+    const p = dx / (Math.abs(dx) + Math.abs(dy));
+    return (dy > 0 ? 3 - p : 1 + p) / 4; // [0..1]
+}
+
+function dist(ax, ay, bx, by) {
+    const dx = ax - bx;
+    const dy = ay - by;
+    return dx * dx + dy * dy;
+}
+
+// return 2d orientation sign if we're confident in it through J. Shewchuk's error bound check
+function orientIfSure(px, py, rx, ry, qx, qy) {
+    const l = (ry - py) * (qx - px);
+    const r = (rx - px) * (qy - py);
+    return Math.abs(l - r) >= 3.3306690738754716e-16 * Math.abs(l + r) ? l - r : 0;
+}
+
+// a more robust orientation test that's stable in a given triangle (to fix robustness issues)
+function orient(rx, ry, qx, qy, px, py) {
+    const sign = orientIfSure(px, py, rx, ry, qx, qy) ||
+    orientIfSure(rx, ry, qx, qy, px, py) ||
+    orientIfSure(qx, qy, px, py, rx, ry);
+    return sign < 0;
+}
+
+function inCircle(ax, ay, bx, by, cx, cy, px, py) {
+    const dx = ax - px;
+    const dy = ay - py;
+    const ex = bx - px;
+    const ey = by - py;
+    const fx = cx - px;
+    const fy = cy - py;
+
+    const ap = dx * dx + dy * dy;
+    const bp = ex * ex + ey * ey;
+    const cp = fx * fx + fy * fy;
+
+    return dx * (ey * cp - bp * fy) -
+           dy * (ex * cp - bp * fx) +
+           ap * (ex * fy - ey * fx) < 0;
+}
+
+function circumradius(ax, ay, bx, by, cx, cy) {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const ex = cx - ax;
+    const ey = cy - ay;
+
+    const bl = dx * dx + dy * dy;
+    const cl = ex * ex + ey * ey;
+    const d = 0.5 / (dx * ey - dy * ex);
+
+    const x = (ey * bl - dy * cl) * d;
+    const y = (dx * cl - ex * bl) * d;
+
+    return x * x + y * y;
+}
+
+function circumcenter(ax, ay, bx, by, cx, cy) {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const ex = cx - ax;
+    const ey = cy - ay;
+
+    const bl = dx * dx + dy * dy;
+    const cl = ex * ex + ey * ey;
+    const d = 0.5 / (dx * ey - dy * ex);
+
+    const x = ax + (ey * bl - dy * cl) * d;
+    const y = ay + (dx * cl - ex * bl) * d;
+
+    return {x, y};
+}
+
+function quicksort(ids, dists, left, right) {
+    if (right - left <= 20) {
+        for (let i = left + 1; i <= right; i++) {
+            const temp = ids[i];
+            const tempDist = dists[temp];
+            let j = i - 1;
+            while (j >= left && dists[ids[j]] > tempDist) ids[j + 1] = ids[j--];
+            ids[j + 1] = temp;
+        }
+    } else {
+        const median = (left + right) >> 1;
+        let i = left + 1;
+        let j = right;
+        swap(ids, median, i);
+        if (dists[ids[left]] > dists[ids[right]]) swap(ids, left, right);
+        if (dists[ids[i]] > dists[ids[right]]) swap(ids, i, right);
+        if (dists[ids[left]] > dists[ids[i]]) swap(ids, left, i);
+
+        const temp = ids[i];
+        const tempDist = dists[temp];
+        while (true) {
+            do i++; while (dists[ids[i]] < tempDist);
+            do j--; while (dists[ids[j]] > tempDist);
+            if (j < i) break;
+            swap(ids, i, j);
+        }
+        ids[left + 1] = ids[j];
+        ids[j] = temp;
+
+        if (right - i + 1 >= j - left) {
+            quicksort(ids, dists, i, right);
+            quicksort(ids, dists, left, j - 1);
+        } else {
+            quicksort(ids, dists, left, j - 1);
+            quicksort(ids, dists, i, right);
+        }
+    }
+}
+
+function swap(arr, i, j) {
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+}
+
+function defaultGetX(p) {
+    return p[0];
+}
+function defaultGetY(p) {
+    return p[1];
+}
+
+const epsilon = 1e-6;
+
+class Path {
+  constructor() {
+    this._x0 = this._y0 = // start of current subpath
+    this._x1 = this._y1 = null; // end of current subpath
+    this._ = "";
+  }
+  moveTo(x, y) {
+    this._ += `M${this._x0 = this._x1 = +x},${this._y0 = this._y1 = +y}`;
+  }
+  closePath() {
+    if (this._x1 !== null) {
+      this._x1 = this._x0, this._y1 = this._y0;
+      this._ += "Z";
+    }
+  }
+  lineTo(x, y) {
+    this._ += `L${this._x1 = +x},${this._y1 = +y}`;
+  }
+  arc(x, y, r) {
+    x = +x, y = +y, r = +r;
+    const x0 = x + r;
+    const y0 = y;
+    if (r < 0) throw new Error("negative radius");
+    if (this._x1 === null) this._ += `M${x0},${y0}`;
+    else if (Math.abs(this._x1 - x0) > epsilon || Math.abs(this._y1 - y0) > epsilon) this._ += "L" + x0 + "," + y0;
+    if (!r) return;
+    this._ += `A${r},${r},0,1,1,${x - r},${y}A${r},${r},0,1,1,${this._x1 = x0},${this._y1 = y0}`;
+  }
+  rect(x, y, w, h) {
+    this._ += `M${this._x0 = this._x1 = +x},${this._y0 = this._y1 = +y}h${+w}v${+h}h${-w}Z`;
+  }
+  value() {
+    return this._ || null;
+  }
+}
+
+class Polygon {
+  constructor() {
+    this._ = [];
+  }
+  moveTo(x, y) {
+    this._.push([x, y]);
+  }
+  closePath() {
+    this._.push(this._[0].slice());
+  }
+  lineTo(x, y) {
+    this._.push([x, y]);
+  }
+  value() {
+    return this._.length ? this._ : null;
+  }
+}
+
+class Voronoi {
+  constructor(delaunay, [xmin, ymin, xmax, ymax] = [0, 0, 960, 500]) {
+    if (!((xmax = +xmax) >= (xmin = +xmin)) || !((ymax = +ymax) >= (ymin = +ymin))) throw new Error("invalid bounds");
+    this.delaunay = delaunay;
+    this._circumcenters = new Float64Array(delaunay.points.length * 2);
+    this.vectors = new Float64Array(delaunay.points.length * 2);
+    this.xmax = xmax, this.xmin = xmin;
+    this.ymax = ymax, this.ymin = ymin;
+    this._init();
+  }
+  update() {
+    this.delaunay.update();
+    this._init();
+    return this;
+  }
+  _init() {
+    const {delaunay: {points, hull, triangles}, vectors} = this;
+
+    // Compute circumcenters.
+    const circumcenters = this.circumcenters = this._circumcenters.subarray(0, triangles.length / 3 * 2);
+    for (let i = 0, j = 0, n = triangles.length, x, y; i < n; i += 3, j += 2) {
+      const t1 = triangles[i] * 2;
+      const t2 = triangles[i + 1] * 2;
+      const t3 = triangles[i + 2] * 2;
+      const x1 = points[t1];
+      const y1 = points[t1 + 1];
+      const x2 = points[t2];
+      const y2 = points[t2 + 1];
+      const x3 = points[t3];
+      const y3 = points[t3 + 1];
+
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const ex = x3 - x1;
+      const ey = y3 - y1;
+      const bl = dx * dx + dy * dy;
+      const cl = ex * ex + ey * ey;
+      const ab = (dx * ey - dy * ex) * 2;
+
+      if (!ab) {
+        // degenerate case (collinear diagram)
+        x = (x1 + x3) / 2 - 1e8 * ey;
+        y = (y1 + y3) / 2 + 1e8 * ex;
+      }
+      else if (Math.abs(ab) < 1e-8) {
+        // almost equal points (degenerate triangle)
+        x = (x1 + x3) / 2;
+        y = (y1 + y3) / 2;
+      } else {
+        const d = 1 / ab;
+        x = x1 + (ey * bl - dy * cl) * d;
+        y = y1 + (dx * cl - ex * bl) * d;
+      }
+      circumcenters[j] = x;
+      circumcenters[j + 1] = y;
+    }
+
+    // Compute exterior cell rays.
+    let h = hull[hull.length - 1];
+    let p0, p1 = h * 4;
+    let x0, x1 = points[2 * h];
+    let y0, y1 = points[2 * h + 1];
+    vectors.fill(0);
+    for (let i = 0; i < hull.length; ++i) {
+      h = hull[i];
+      p0 = p1, x0 = x1, y0 = y1;
+      p1 = h * 4, x1 = points[2 * h], y1 = points[2 * h + 1];
+      vectors[p0 + 2] = vectors[p1] = y0 - y1;
+      vectors[p0 + 3] = vectors[p1 + 1] = x1 - x0;
+    }
+  }
+  render(context) {
+    const buffer = context == null ? context = new Path : undefined;
+    const {delaunay: {halfedges, inedges, hull}, circumcenters, vectors} = this;
+    if (hull.length <= 1) return null;
+    for (let i = 0, n = halfedges.length; i < n; ++i) {
+      const j = halfedges[i];
+      if (j < i) continue;
+      const ti = Math.floor(i / 3) * 2;
+      const tj = Math.floor(j / 3) * 2;
+      const xi = circumcenters[ti];
+      const yi = circumcenters[ti + 1];
+      const xj = circumcenters[tj];
+      const yj = circumcenters[tj + 1];
+      this._renderSegment(xi, yi, xj, yj, context);
+    }
+    let h0, h1 = hull[hull.length - 1];
+    for (let i = 0; i < hull.length; ++i) {
+      h0 = h1, h1 = hull[i];
+      const t = Math.floor(inedges[h1] / 3) * 2;
+      const x = circumcenters[t];
+      const y = circumcenters[t + 1];
+      const v = h0 * 4;
+      const p = this._project(x, y, vectors[v + 2], vectors[v + 3]);
+      if (p) this._renderSegment(x, y, p[0], p[1], context);
+    }
+    return buffer && buffer.value();
+  }
+  renderBounds(context) {
+    const buffer = context == null ? context = new Path : undefined;
+    context.rect(this.xmin, this.ymin, this.xmax - this.xmin, this.ymax - this.ymin);
+    return buffer && buffer.value();
+  }
+  renderCell(i, context) {
+    const buffer = context == null ? context = new Path : undefined;
+    const points = this._clip(i);
+    if (points === null || !points.length) return;
+    context.moveTo(points[0], points[1]);
+    let n = points.length;
+    while (points[0] === points[n-2] && points[1] === points[n-1] && n > 1) n -= 2;
+    for (let i = 2; i < n; i += 2) {
+      if (points[i] !== points[i-2] || points[i+1] !== points[i-1])
+        context.lineTo(points[i], points[i + 1]);
+    }
+    context.closePath();
+    return buffer && buffer.value();
+  }
+  *cellPolygons() {
+    const {delaunay: {points}} = this;
+    for (let i = 0, n = points.length / 2; i < n; ++i) {
+      const cell = this.cellPolygon(i);
+      if (cell) cell.index = i, yield cell;
+    }
+  }
+  cellPolygon(i) {
+    const polygon = new Polygon;
+    this.renderCell(i, polygon);
+    return polygon.value();
+  }
+  _renderSegment(x0, y0, x1, y1, context) {
+    let S;
+    const c0 = this._regioncode(x0, y0);
+    const c1 = this._regioncode(x1, y1);
+    if (c0 === 0 && c1 === 0) {
+      context.moveTo(x0, y0);
+      context.lineTo(x1, y1);
+    } else if (S = this._clipSegment(x0, y0, x1, y1, c0, c1)) {
+      context.moveTo(S[0], S[1]);
+      context.lineTo(S[2], S[3]);
+    }
+  }
+  contains(i, x, y) {
+    if ((x = +x, x !== x) || (y = +y, y !== y)) return false;
+    return this.delaunay._step(i, x, y) === i;
+  }
+  *neighbors(i) {
+    const ci = this._clip(i);
+    if (ci) for (const j of this.delaunay.neighbors(i)) {
+      const cj = this._clip(j);
+      // find the common edge
+      if (cj) loop: for (let ai = 0, li = ci.length; ai < li; ai += 2) {
+        for (let aj = 0, lj = cj.length; aj < lj; aj += 2) {
+          if (ci[ai] == cj[aj]
+          && ci[ai + 1] == cj[aj + 1]
+          && ci[(ai + 2) % li] == cj[(aj + lj - 2) % lj]
+          && ci[(ai + 3) % li] == cj[(aj + lj - 1) % lj]
+          ) {
+            yield j;
+            break loop;
+          }
+        }
+      }
+    }
+  }
+  _cell(i) {
+    const {circumcenters, delaunay: {inedges, halfedges, triangles}} = this;
+    const e0 = inedges[i];
+    if (e0 === -1) return null; // coincident point
+    const points = [];
+    let e = e0;
+    do {
+      const t = Math.floor(e / 3);
+      points.push(circumcenters[t * 2], circumcenters[t * 2 + 1]);
+      e = e % 3 === 2 ? e - 2 : e + 1;
+      if (triangles[e] !== i) break; // bad triangulation
+      e = halfedges[e];
+    } while (e !== e0 && e !== -1);
+    return points;
+  }
+  _clip(i) {
+    // degenerate case (1 valid point: return the box)
+    if (i === 0 && this.delaunay.hull.length === 1) {
+      return [this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax, this.xmin, this.ymin];
+    }
+    const points = this._cell(i);
+    if (points === null) return null;
+    const {vectors: V} = this;
+    const v = i * 4;
+    return V[v] || V[v + 1]
+        ? this._clipInfinite(i, points, V[v], V[v + 1], V[v + 2], V[v + 3])
+        : this._clipFinite(i, points);
+  }
+  _clipFinite(i, points) {
+    const n = points.length;
+    let P = null;
+    let x0, y0, x1 = points[n - 2], y1 = points[n - 1];
+    let c0, c1 = this._regioncode(x1, y1);
+    let e0, e1;
+    for (let j = 0; j < n; j += 2) {
+      x0 = x1, y0 = y1, x1 = points[j], y1 = points[j + 1];
+      c0 = c1, c1 = this._regioncode(x1, y1);
+      if (c0 === 0 && c1 === 0) {
+        e0 = e1, e1 = 0;
+        if (P) P.push(x1, y1);
+        else P = [x1, y1];
+      } else {
+        let S, sx0, sy0, sx1, sy1;
+        if (c0 === 0) {
+          if ((S = this._clipSegment(x0, y0, x1, y1, c0, c1)) === null) continue;
+          [sx0, sy0, sx1, sy1] = S;
+        } else {
+          if ((S = this._clipSegment(x1, y1, x0, y0, c1, c0)) === null) continue;
+          [sx1, sy1, sx0, sy0] = S;
+          e0 = e1, e1 = this._edgecode(sx0, sy0);
+          if (e0 && e1) this._edge(i, e0, e1, P, P.length);
+          if (P) P.push(sx0, sy0);
+          else P = [sx0, sy0];
+        }
+        e0 = e1, e1 = this._edgecode(sx1, sy1);
+        if (e0 && e1) this._edge(i, e0, e1, P, P.length);
+        if (P) P.push(sx1, sy1);
+        else P = [sx1, sy1];
+      }
+    }
+    if (P) {
+      e0 = e1, e1 = this._edgecode(P[0], P[1]);
+      if (e0 && e1) this._edge(i, e0, e1, P, P.length);
+    } else if (this.contains(i, (this.xmin + this.xmax) / 2, (this.ymin + this.ymax) / 2)) {
+      return [this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax, this.xmin, this.ymin];
+    }
+    return P;
+  }
+  _clipSegment(x0, y0, x1, y1, c0, c1) {
+    while (true) {
+      if (c0 === 0 && c1 === 0) return [x0, y0, x1, y1];
+      if (c0 & c1) return null;
+      let x, y, c = c0 || c1;
+      if (c & 0b1000) x = x0 + (x1 - x0) * (this.ymax - y0) / (y1 - y0), y = this.ymax;
+      else if (c & 0b0100) x = x0 + (x1 - x0) * (this.ymin - y0) / (y1 - y0), y = this.ymin;
+      else if (c & 0b0010) y = y0 + (y1 - y0) * (this.xmax - x0) / (x1 - x0), x = this.xmax;
+      else y = y0 + (y1 - y0) * (this.xmin - x0) / (x1 - x0), x = this.xmin;
+      if (c0) x0 = x, y0 = y, c0 = this._regioncode(x0, y0);
+      else x1 = x, y1 = y, c1 = this._regioncode(x1, y1);
+    }
+  }
+  _clipInfinite(i, points, vx0, vy0, vxn, vyn) {
+    let P = Array.from(points), p;
+    if (p = this._project(P[0], P[1], vx0, vy0)) P.unshift(p[0], p[1]);
+    if (p = this._project(P[P.length - 2], P[P.length - 1], vxn, vyn)) P.push(p[0], p[1]);
+    if (P = this._clipFinite(i, P)) {
+      for (let j = 0, n = P.length, c0, c1 = this._edgecode(P[n - 2], P[n - 1]); j < n; j += 2) {
+        c0 = c1, c1 = this._edgecode(P[j], P[j + 1]);
+        if (c0 && c1) j = this._edge(i, c0, c1, P, j), n = P.length;
+      }
+    } else if (this.contains(i, (this.xmin + this.xmax) / 2, (this.ymin + this.ymax) / 2)) {
+      P = [this.xmin, this.ymin, this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax];
+    }
+    return P;
+  }
+  _edge(i, e0, e1, P, j) {
+    while (e0 !== e1) {
+      let x, y;
+      switch (e0) {
+        case 0b0101: e0 = 0b0100; continue; // top-left
+        case 0b0100: e0 = 0b0110, x = this.xmax, y = this.ymin; break; // top
+        case 0b0110: e0 = 0b0010; continue; // top-right
+        case 0b0010: e0 = 0b1010, x = this.xmax, y = this.ymax; break; // right
+        case 0b1010: e0 = 0b1000; continue; // bottom-right
+        case 0b1000: e0 = 0b1001, x = this.xmin, y = this.ymax; break; // bottom
+        case 0b1001: e0 = 0b0001; continue; // bottom-left
+        case 0b0001: e0 = 0b0101, x = this.xmin, y = this.ymin; break; // left
+      }
+      if ((P[j] !== x || P[j + 1] !== y) && this.contains(i, x, y)) {
+        P.splice(j, 0, x, y), j += 2;
+      }
+    }
+    if (P.length > 4) {
+      for (let i = 0; i < P.length; i+= 2) {
+        const j = (i + 2) % P.length, k = (i + 4) % P.length;
+        if (P[i] === P[j] && P[j] === P[k]
+        || P[i + 1] === P[j + 1] && P[j + 1] === P[k + 1])
+          P.splice(j, 2), i -= 2;
+      }
+    }
+    return j;
+  }
+  _project(x0, y0, vx, vy) {
+    let t = Infinity, c, x, y;
+    if (vy < 0) { // top
+      if (y0 <= this.ymin) return null;
+      if ((c = (this.ymin - y0) / vy) < t) y = this.ymin, x = x0 + (t = c) * vx;
+    } else if (vy > 0) { // bottom
+      if (y0 >= this.ymax) return null;
+      if ((c = (this.ymax - y0) / vy) < t) y = this.ymax, x = x0 + (t = c) * vx;
+    }
+    if (vx > 0) { // right
+      if (x0 >= this.xmax) return null;
+      if ((c = (this.xmax - x0) / vx) < t) x = this.xmax, y = y0 + (t = c) * vy;
+    } else if (vx < 0) { // left
+      if (x0 <= this.xmin) return null;
+      if ((c = (this.xmin - x0) / vx) < t) x = this.xmin, y = y0 + (t = c) * vy;
+    }
+    return [x, y];
+  }
+  _edgecode(x, y) {
+    return (x === this.xmin ? 0b0001
+        : x === this.xmax ? 0b0010 : 0b0000)
+        | (y === this.ymin ? 0b0100
+        : y === this.ymax ? 0b1000 : 0b0000);
+  }
+  _regioncode(x, y) {
+    return (x < this.xmin ? 0b0001
+        : x > this.xmax ? 0b0010 : 0b0000)
+        | (y < this.ymin ? 0b0100
+        : y > this.ymax ? 0b1000 : 0b0000);
+  }
+}
+
+const tau = 2 * Math.PI, pow = Math.pow;
+
+function pointX(p) {
+  return p[0];
+}
+
+function pointY(p) {
+  return p[1];
+}
+
+// A triangulation is collinear if all its triangles have a non-null area
+function collinear(d) {
+  const {triangles, coords} = d;
+  for (let i = 0; i < triangles.length; i += 3) {
+    const a = 2 * triangles[i],
+          b = 2 * triangles[i + 1],
+          c = 2 * triangles[i + 2],
+          cross = (coords[c] - coords[a]) * (coords[b + 1] - coords[a + 1])
+                - (coords[b] - coords[a]) * (coords[c + 1] - coords[a + 1]);
+    if (cross > 1e-10) return false;
+  }
+  return true;
+}
+
+function jitter(x, y, r) {
+  return [x + Math.sin(x + y) * r, y + Math.cos(x - y) * r];
+}
+
+class Delaunay {
+  static from(points, fx = pointX, fy = pointY, that) {
+    return new Delaunay("length" in points
+        ? flatArray(points, fx, fy, that)
+        : Float64Array.from(flatIterable(points, fx, fy, that)));
+  }
+  constructor(points) {
+    this._delaunator = new Delaunator(points);
+    this.inedges = new Int32Array(points.length / 2);
+    this._hullIndex = new Int32Array(points.length / 2);
+    this.points = this._delaunator.coords;
+    this._init();
+  }
+  update() {
+    this._delaunator.update();
+    this._init();
+    return this;
+  }
+  _init() {
+    const d = this._delaunator, points = this.points;
+
+    // check for collinear
+    if (d.hull && d.hull.length > 2 && collinear(d)) {
+      this.collinear = Int32Array.from({length: points.length/2}, (_,i) => i)
+        .sort((i, j) => points[2 * i] - points[2 * j] || points[2 * i + 1] - points[2 * j + 1]); // for exact neighbors
+      const e = this.collinear[0], f = this.collinear[this.collinear.length - 1],
+        bounds = [ points[2 * e], points[2 * e + 1], points[2 * f], points[2 * f + 1] ],
+        r = 1e-8 * Math.hypot(bounds[3] - bounds[1], bounds[2] - bounds[0]);
+      for (let i = 0, n = points.length / 2; i < n; ++i) {
+        const p = jitter(points[2 * i], points[2 * i + 1], r);
+        points[2 * i] = p[0];
+        points[2 * i + 1] = p[1];
+      }
+      this._delaunator = new Delaunator(points);
+    } else {
+      delete this.collinear;
+    }
+
+    const halfedges = this.halfedges = this._delaunator.halfedges;
+    const hull = this.hull = this._delaunator.hull;
+    const triangles = this.triangles = this._delaunator.triangles;
+    const inedges = this.inedges.fill(-1);
+    const hullIndex = this._hullIndex.fill(-1);
+
+    // Compute an index from each point to an (arbitrary) incoming halfedge
+    // Used to give the first neighbor of each point; for this reason,
+    // on the hull we give priority to exterior halfedges
+    for (let e = 0, n = halfedges.length; e < n; ++e) {
+      const p = triangles[e % 3 === 2 ? e - 2 : e + 1];
+      if (halfedges[e] === -1 || inedges[p] === -1) inedges[p] = e;
+    }
+    for (let i = 0, n = hull.length; i < n; ++i) {
+      hullIndex[hull[i]] = i;
+    }
+
+    // degenerate case: 1 or 2 (distinct) points
+    if (hull.length <= 2 && hull.length > 0) {
+      this.triangles = new Int32Array(3).fill(-1);
+      this.halfedges = new Int32Array(3).fill(-1);
+      this.triangles[0] = hull[0];
+      this.triangles[1] = hull[1];
+      this.triangles[2] = hull[1];
+      inedges[hull[0]] = 1;
+      if (hull.length === 2) inedges[hull[1]] = 0;
+    }
+  }
+  voronoi(bounds) {
+    return new Voronoi(this, bounds);
+  }
+  *neighbors(i) {
+    const {inedges, hull, _hullIndex, halfedges, triangles, collinear} = this;
+
+    // degenerate case with several collinear points
+    if (collinear) {
+      const l = collinear.indexOf(i);
+      if (l > 0) yield collinear[l - 1];
+      if (l < collinear.length - 1) yield collinear[l + 1];
+      return;
+    }
+
+    const e0 = inedges[i];
+    if (e0 === -1) return; // coincident point
+    let e = e0, p0 = -1;
+    do {
+      yield p0 = triangles[e];
+      e = e % 3 === 2 ? e - 2 : e + 1;
+      if (triangles[e] !== i) return; // bad triangulation
+      e = halfedges[e];
+      if (e === -1) {
+        const p = hull[(_hullIndex[i] + 1) % hull.length];
+        if (p !== p0) yield p;
+        return;
+      }
+    } while (e !== e0);
+  }
+  find(x, y, i = 0) {
+    if ((x = +x, x !== x) || (y = +y, y !== y)) return -1;
+    const i0 = i;
+    let c;
+    while ((c = this._step(i, x, y)) >= 0 && c !== i && c !== i0) i = c;
+    return c;
+  }
+  _step(i, x, y) {
+    const {inedges, hull, _hullIndex, halfedges, triangles, points} = this;
+    if (inedges[i] === -1 || !points.length) return (i + 1) % (points.length >> 1);
+    let c = i;
+    let dc = pow(x - points[i * 2], 2) + pow(y - points[i * 2 + 1], 2);
+    const e0 = inedges[i];
+    let e = e0;
+    do {
+      let t = triangles[e];
+      const dt = pow(x - points[t * 2], 2) + pow(y - points[t * 2 + 1], 2);
+      if (dt < dc) dc = dt, c = t;
+      e = e % 3 === 2 ? e - 2 : e + 1;
+      if (triangles[e] !== i) break; // bad triangulation
+      e = halfedges[e];
+      if (e === -1) {
+        e = hull[(_hullIndex[i] + 1) % hull.length];
+        if (e !== t) {
+          if (pow(x - points[e * 2], 2) + pow(y - points[e * 2 + 1], 2) < dc) return e;
+        }
+        break;
+      }
+    } while (e !== e0);
+    return c;
+  }
+  render(context) {
+    const buffer = context == null ? context = new Path : undefined;
+    const {points, halfedges, triangles} = this;
+    for (let i = 0, n = halfedges.length; i < n; ++i) {
+      const j = halfedges[i];
+      if (j < i) continue;
+      const ti = triangles[i] * 2;
+      const tj = triangles[j] * 2;
+      context.moveTo(points[ti], points[ti + 1]);
+      context.lineTo(points[tj], points[tj + 1]);
+    }
+    this.renderHull(context);
+    return buffer && buffer.value();
+  }
+  renderPoints(context, r = 2) {
+    const buffer = context == null ? context = new Path : undefined;
+    const {points} = this;
+    for (let i = 0, n = points.length; i < n; i += 2) {
+      const x = points[i], y = points[i + 1];
+      context.moveTo(x + r, y);
+      context.arc(x, y, r, 0, tau);
+    }
+    return buffer && buffer.value();
+  }
+  renderHull(context) {
+    const buffer = context == null ? context = new Path : undefined;
+    const {hull, points} = this;
+    const h = hull[0] * 2, n = hull.length;
+    context.moveTo(points[h], points[h + 1]);
+    for (let i = 1; i < n; ++i) {
+      const h = 2 * hull[i];
+      context.lineTo(points[h], points[h + 1]);
+    }
+    context.closePath();
+    return buffer && buffer.value();
+  }
+  hullPolygon() {
+    const polygon = new Polygon;
+    this.renderHull(polygon);
+    return polygon.value();
+  }
+  renderTriangle(i, context) {
+    const buffer = context == null ? context = new Path : undefined;
+    const {points, triangles} = this;
+    const t0 = triangles[i *= 3] * 2;
+    const t1 = triangles[i + 1] * 2;
+    const t2 = triangles[i + 2] * 2;
+    context.moveTo(points[t0], points[t0 + 1]);
+    context.lineTo(points[t1], points[t1 + 1]);
+    context.lineTo(points[t2], points[t2 + 1]);
+    context.closePath();
+    return buffer && buffer.value();
+  }
+  *trianglePolygons() {
+    const {triangles} = this;
+    for (let i = 0, n = triangles.length / 3; i < n; ++i) {
+      yield this.trianglePolygon(i);
+    }
+  }
+  trianglePolygon(i) {
+    const polygon = new Polygon;
+    this.renderTriangle(i, polygon);
+    return polygon.value();
+  }
+}
+
+function flatArray(points, fx, fy, that) {
+  const n = points.length;
+  const array = new Float64Array(n * 2);
+  for (let i = 0; i < n; ++i) {
+    const p = points[i];
+    array[i * 2] = fx.call(that, p, i, points);
+    array[i * 2 + 1] = fy.call(that, p, i, points);
+  }
+  return array;
+}
+
+function* flatIterable(points, fx, fy, that) {
+  let i = 0;
+  for (const p of points) {
+    yield fx.call(that, p, i, points);
+    yield fy.call(that, p, i, points);
+    ++i;
+  }
+}
+
+exports.Delaunay = Delaunay;
+exports.Voronoi = Voronoi;
+
+Object.defineProperty(exports, '__esModule', { value: true });
+
+}));
+
+},{}],5:[function(require,module,exports){
+// stats.js - http://github.com/mrdoob/stats.js
+(function(f,e){"object"===typeof exports&&"undefined"!==typeof module?module.exports=e():"function"===typeof define&&define.amd?define(e):f.Stats=e()})(this,function(){var f=function(){function e(a){c.appendChild(a.dom);return a}function u(a){for(var d=0;d<c.children.length;d++)c.children[d].style.display=d===a?"block":"none";l=a}var l=0,c=document.createElement("div");c.style.cssText="position:fixed;top:0;left:0;cursor:pointer;opacity:0.9;z-index:10000";c.addEventListener("click",function(a){a.preventDefault();
+u(++l%c.children.length)},!1);var k=(performance||Date).now(),g=k,a=0,r=e(new f.Panel("FPS","#0ff","#002")),h=e(new f.Panel("MS","#0f0","#020"));if(self.performance&&self.performance.memory)var t=e(new f.Panel("MB","#f08","#201"));u(0);return{REVISION:16,dom:c,addPanel:e,showPanel:u,begin:function(){k=(performance||Date).now()},end:function(){a++;var c=(performance||Date).now();h.update(c-k,200);if(c>g+1E3&&(r.update(1E3*a/(c-g),100),g=c,a=0,t)){var d=performance.memory;t.update(d.usedJSHeapSize/
+1048576,d.jsHeapSizeLimit/1048576)}return c},update:function(){k=this.end()},domElement:c,setMode:u}};f.Panel=function(e,f,l){var c=Infinity,k=0,g=Math.round,a=g(window.devicePixelRatio||1),r=80*a,h=48*a,t=3*a,v=2*a,d=3*a,m=15*a,n=74*a,p=30*a,q=document.createElement("canvas");q.width=r;q.height=h;q.style.cssText="width:80px;height:48px";var b=q.getContext("2d");b.font="bold "+9*a+"px Helvetica,Arial,sans-serif";b.textBaseline="top";b.fillStyle=l;b.fillRect(0,0,r,h);b.fillStyle=f;b.fillText(e,t,v);
+b.fillRect(d,m,n,p);b.fillStyle=l;b.globalAlpha=.9;b.fillRect(d,m,n,p);return{dom:q,update:function(h,w){c=Math.min(c,h);k=Math.max(k,h);b.fillStyle=l;b.globalAlpha=1;b.fillRect(0,0,r,m);b.fillStyle=f;b.fillText(g(h)+" "+e+" ("+g(c)+"-"+g(k)+")",t,v);b.drawImage(q,d+a,m,n-a,p,d,m,n-a,p);b.fillRect(d+n-a,m,a,p);b.fillStyle=l;b.globalAlpha=.9;b.fillRect(d+n-a,m,a,g((1-h/w)*p))}}};return f});
+
 },{}],6:[function(require,module,exports){
+arguments[4][2][0].apply(exports,arguments)
+},{"dup":2}],7:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -53603,7 +53605,7 @@ var EventDispatcherWithOptions = /*#__PURE__*/function (_EventDispatcher) {
 
 exports["default"] = EventDispatcherWithOptions;
 
-},{"@perry-rylance/event-dispatcher":1}],7:[function(require,module,exports){
+},{"@perry-rylance/event-dispatcher":1}],8:[function(require,module,exports){
 "use strict";
 
 function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
@@ -53712,9 +53714,11 @@ Payload.weapons = {
 };
 window.Payload = Payload;
 window.payload = Payload.createInstance();
-payload.init();
+$(window).on("load", function (event) {
+  payload.init();
+});
 
-},{"./assets/Assets":9,"./game/Game":12,"./game/Player":14,"./game/weapons/default/Set":22,"camera-controls":2,"stats.js":4,"three":5}],8:[function(require,module,exports){
+},{"./assets/Assets":10,"./game/Game":13,"./game/Player":15,"./game/weapons/default/Set":25,"camera-controls":3,"stats.js":5,"three":6}],9:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -53739,6 +53743,7 @@ var Asset = /*#__PURE__*/function () {
     this.loader = new constructor(payload.assets.manager);
     this.loader.load("/assets" + src, function (resource) {
       _this.resource = resource;
+      if (_this.loader instanceof THREE.MTLLoader) resource.preload();
     });
   }
 
@@ -53755,6 +53760,20 @@ var Asset = /*#__PURE__*/function () {
           return THREE.TextureLoader;
           break;
 
+        case ".mtl":
+          return THREE.MTLLoader;
+          break;
+
+        case ".obj":
+          return THREE.OBJLoader;
+          break;
+
+        case ".wav":
+        case ".ogg":
+        case ".mp3":
+          return THREE.AudioLoader;
+          return;
+
         default:
           throw new Error("Don't know how to load asset");
           break;
@@ -53767,7 +53786,7 @@ var Asset = /*#__PURE__*/function () {
 
 exports["default"] = Asset;
 
-},{}],9:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -53884,7 +53903,7 @@ var Assets = /*#__PURE__*/function (_EventDispatcher) {
 
 exports["default"] = Assets;
 
-},{"./Collection":10,"@perry-rylance/event-dispatcher":1}],10:[function(require,module,exports){
+},{"./Collection":11,"@perry-rylance/event-dispatcher":1}],11:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -53942,12 +53961,12 @@ var Collection = /*#__PURE__*/function () {
 
 exports["default"] = Collection;
 
-},{"./Asset":8}],11:[function(require,module,exports){
+},{"./Asset":9}],12:[function(require,module,exports){
 "use strict";
 
 require("./Payload");
 
-},{"./Payload":7}],12:[function(require,module,exports){
+},{"./Payload":8}],13:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -54021,7 +54040,6 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
     value: function start() {
       Payload.assert(this.players.length ? true : false);
       this.seed = new Date().getTime();
-      this.seed = 123;
       this.random = PRNG.Alea(this.seed);
       this.world = new _World["default"](this);
       this.weapons = Payload.weapons["default"];
@@ -54057,7 +54075,7 @@ Game.STATUS_LOBBY = "lobby";
 Game.STATUS_PLAYING = "playing";
 Game.STATUS_ENDED = "ended";
 
-},{"../EventDispatcherWithOptions":6,"./Player":14,"./UI":15,"./World":17}],13:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":7,"./Player":15,"./UI":16,"./World":18}],14:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -54104,7 +54122,7 @@ var Interaction = /*#__PURE__*/function () {
 
 exports["default"] = Interaction;
 
-},{"camera-controls":2}],14:[function(require,module,exports){
+},{"camera-controls":3}],15:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -54150,7 +54168,7 @@ var Player = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = Player;
 
-},{"../EventDispatcherWithOptions":6}],15:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":7}],16:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -54221,7 +54239,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = UI;
 
-},{"../EventDispatcherWithOptions":6}],16:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":7}],17:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -54244,7 +54262,7 @@ Units.g2p = Units.graphicsToPhysics;
 var _default = Units;
 exports["default"] = _default;
 
-},{}],17:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -54265,6 +54283,8 @@ var _Entity = _interopRequireDefault(require("./entities/Entity"));
 var _Planet = _interopRequireDefault(require("./entities/Planet"));
 
 var _Ship = _interopRequireDefault(require("./entities/Ship"));
+
+var _Emitter = _interopRequireDefault(require("./entities/particles/Emitter"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
@@ -54319,6 +54339,8 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
     _this.initShips(options); // this.enableDebugDraw();
 
 
+    _this.currentStep = 0;
+
     _this.step();
 
     return _this;
@@ -54353,9 +54375,9 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
 
       this.listener.PreSolve = function () {};
 
-      this.listener.PostSolve = function () {};
+      this.listener.PostSolve = function () {}; // this.b2World.SetContinuousPhysics(1);
 
-      this.b2World.SetContinuousPhysics(1);
+
       this.b2World.SetContactListener(this.listener);
     }
   }, {
@@ -54373,7 +54395,14 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       });
       this.renderer.setSize(width, height); // Add renderer DOM element
 
-      document.querySelector("#scene").appendChild(this.renderer.domElement); // And mouse interaction
+      document.querySelector("#scene").appendChild(this.renderer.domElement); // Add lighting
+
+      var light = new THREE.AmbientLight(0x7f7f7f); // soft white light
+
+      this.scene.add(light);
+      var light = new THREE.DirectionalLight(0xffffff, 1.0);
+      light.position.set(5, 0, 15);
+      this.scene.add(light); // And mouse interaction
 
       this.interaction = new _Interaction["default"](this.camera, this.renderer.domElement);
     }
@@ -54405,6 +54434,8 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
   }, {
     key: "initShipForPlayer",
     value: function initShipForPlayer(player, options) {
+      var _this3 = this;
+
       // A single debug ship
       // TODO: Move this to a spawn / teleport function on the ship ideally. It'll need to be reused for teleport.
       // NB: Maximum of 64 attempts to place the ship. Placing a ship inside a planet causes very odd behaviour with Box2D
@@ -54429,6 +54460,13 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       }));
       this.add(ship);
       player.ship = ship;
+      $(window).on("keydown", function (event) {
+        if (event.which == 69) {
+          var tempExplosion = new _Emitter["default"](_this3);
+
+          _this3.add(tempExplosion);
+        }
+      }); // tempExplosion.attachTo(ship);
     }
   }, {
     key: "add",
@@ -54447,7 +54485,7 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       var index = this.entities.indexOf(entity);
       Payload.assert(index != -1, "Not in entity list");
       this.entities.splice(index, 1);
-      this.entity.parent = null;
+      entity.parent = null;
 
       if (entity instanceof _Planet["default"]) {
         index = this.planets.indexOf(entity);
@@ -54459,7 +54497,7 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
         this.planets.splice(index, 1);
       }
 
-      this.entity.trigger("removed");
+      entity.trigger("removed");
     }
   }, {
     key: "getEntitiesAtPosition",
@@ -54533,6 +54571,7 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
         self.step();
       });
       if (window.stats) window.stats.end();
+      this.currentStep++;
     }
   }, {
     key: "enableDebugDraw",
@@ -54590,7 +54629,7 @@ World.defaults = {
   }
 };
 
-},{"../EventDispatcherWithOptions":6,"./Game":12,"./Interaction":13,"./Units":16,"./entities/Entity":18,"./entities/Planet":19,"./entities/Ship":20}],18:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":7,"./Game":13,"./Interaction":14,"./Units":17,"./entities/Entity":19,"./entities/Planet":20,"./entities/Ship":21,"./entities/particles/Emitter":23}],19:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -54641,6 +54680,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
     Payload.assert(world instanceof _World["default"]);
     _this = _super.call(this, options);
     _this.world = world;
+    _this.zIndex = 0;
 
     _this.initPhysics(options);
 
@@ -54663,6 +54703,11 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
     key: "initAudio",
     value: function initAudio() {}
   }, {
+    key: "_setAngle",
+    value: function _setAngle(angle) {
+      this.object3d.rotation.z = angle;
+    }
+  }, {
     key: "update",
     value: function update() {
       if (this.b2Body && this.object3d) {
@@ -54680,11 +54725,11 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
         } catch (e) {
           this.world.b2World.DestroyBody(this.b2Body);
           this.b2Body = null;
-          console.warn("Box2D encountered a NaN value", this);
+          console.warn("Box2D encountered a NaN value at step " + this.world.currentStep, this);
         }
 
-        if (!isNaN(x) && !isNaN(y)) this.object3d.position.set(x, y, 0);
-        if (!isNaN(angle)) this.object3d.rotation.set(0, 0, angle);
+        if (!isNaN(x) && !isNaN(y)) this.object3d.position.set(x, y, this.zIndex);
+        if (!isNaN(angle)) this._setAngle(angle);
       }
     }
   }, {
@@ -54752,7 +54797,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = Entity;
 
-},{"../../EventDispatcherWithOptions":6,"../Units":16,"../World":17}],19:[function(require,module,exports){
+},{"../../EventDispatcherWithOptions":7,"../Units":17,"../World":18}],20:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -54879,11 +54924,11 @@ var Planet = /*#__PURE__*/function (_Entity) {
 
       var power = 2; // Higher powers will bias points towards the surface, 2 will give an even distribution
 
-      var inner = Math.round(Math.sqrt(area) / 4); // * density;
+      var inner = Math.round(Math.sqrt(area) / 8); // * density;
 
       for (var i = 0; i < inner; i++) {
         var a = game.random() * 2 * Math.PI;
-        var r = radius * Math.pow(game.random(), 1 / power);
+        var r = radius * 0.9 * Math.pow(game.random(), 1 / power);
         sites.push([Math.sin(a) * r, Math.cos(a) * r]);
       }
     }
@@ -54964,7 +55009,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
       this._destructionGravityMultiplier = 1;
       this._fixtureDestructionQueue = [];
       this._fixturesByPolygonIndex = [];
-      this.b2CenterOfGravity = new Box2D.b2Vec2();
+      this.b2CenterOfGravity = new Box2D.b2Vec2(0, 0);
       this.b2BodyDef = new Box2D.b2BodyDef();
       this.b2Body = this.world.b2World.CreateBody(this.b2BodyDef);
 
@@ -55122,17 +55167,19 @@ var Planet = /*#__PURE__*/function (_Entity) {
       Payload.assert(entity.isAffectedByGravity);
       var radius = this._radius;
       var gravity = radius * this._destructionGravityMultiplier;
-      var center = this.b2Body.GetWorldCenter();
-      var target = entity.b2Body.GetWorldCenter();
+      var center = new Box2D.b2Vec2(this.b2Body.GetWorldCenter().get_x(), this.b2Body.GetWorldCenter().get_y());
+      var target = new Box2D.b2Vec2(entity.b2Body.GetWorldCenter().get_x(), entity.b2Body.GetWorldCenter().get_y());
       var delta = new Box2D.b2Vec2(0, 0);
+      var temp = new Box2D.b2Vec2(this.b2CenterOfGravity.get_x(), this.b2CenterOfGravity.get_y());
       delta.op_add(target);
       delta.op_sub(center);
-      delta.op_sub(this.b2CenterOfGravity);
+      delta.op_sub(temp);
       var distance = delta.Length(); // Skip distance check distance < 3 * radius
 
       delta.Set(-delta.get_x(), -delta.get_y());
       var sum = Math.abs(delta.get_x()) + Math.abs(delta.get_y());
-      delta.op_mul(1 / sum * gravity / distance);
+      var mult = 1 / sum * gravity / distance;
+      delta.op_mul(mult);
       entity.b2Body.ApplyForceToCenter(delta);
     }
   }, {
@@ -55147,6 +55194,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
     value: function handleMeshDestruction() {
       var _this3 = this;
 
+      return;
       var self = this;
       var updateMesh = this._fixtureDestructionQueue.length > 0;
 
@@ -55241,7 +55289,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Planet;
 
-},{"../Units":16,"./Entity":18,"d3-delaunay":3}],20:[function(require,module,exports){
+},{"../Units":17,"./Entity":19,"d3-delaunay":4}],21:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55315,12 +55363,42 @@ var Ship = /*#__PURE__*/function (_Entity) {
   }, {
     key: "initGraphics",
     value: function initGraphics(options) {
+      var _this = this;
+
+      _get(_getPrototypeOf(Ship.prototype), "initGraphics", this).call(this, options);
+
+      this.object3d = new THREE.Object3D();
       var radius = options.radius;
-      var geometry = new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2);
-      var material = new THREE.MeshBasicMaterial({
-        color: 0xff0000
+      var bbox = new THREE.Box3();
+      this.model = payload.assets.models.ships.assets["Low_poly_UFO.obj"].resource;
+      this.material = payload.assets.models.ships.assets["Low_poly_UFO.mtl"].resource.materials.UFO_texture;
+      this.material.alphaMap = null;
+      this.model.rotation.x = 90 * Math.PI / 180;
+      bbox.setFromObject(this.model);
+      var scale = radius / Math.abs(Math.max(bbox.min.x - bbox.max.x, bbox.min.y - bbox.max.y, bbox.min.z - bbox.max.z)) * 2;
+      this.model.scale.set(scale, scale, scale);
+      this.model.traverse(function (child) {
+        if (child.isMesh) child.material = _this.material;
       });
-      this.object3d = new THREE.Mesh(geometry, material);
+      var container = new THREE.Object3D();
+      container.position.y = -(bbox.min.z + bbox.max.z) / 2;
+      container.add(this.model);
+      this.modelContainer = container;
+      this.modelContainer.rotation.set(-60 * Math.PI / 180, 0, 0);
+      this.object3d.add(container); // Debugging...
+
+      /*var geometry = new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2);
+      var material = new THREE.MeshBasicMaterial({color: 0xff0000});
+      var mesh = new THREE.Mesh(geometry, material);
+      this.box = mesh;
+      this.object3d.add(mesh);*/
+
+      this.zIndex = 100;
+    }
+  }, {
+    key: "_setAngle",
+    value: function _setAngle(angle) {
+      this.modelContainer.rotation.z = angle; // this.box.rotation.z = angle;
     }
   }]);
 
@@ -55329,7 +55407,274 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Ship;
 
-},{"../Units":16,"./Entity":18}],21:[function(require,module,exports){
+},{"../Units":17,"./Entity":19}],22:[function(require,module,exports){
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+
+var _THREE = require("THREE");
+
+function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function"); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, writable: true, configurable: true } }); if (superClass) _setPrototypeOf(subClass, superClass); }
+
+function _setPrototypeOf(o, p) { _setPrototypeOf = Object.setPrototypeOf || function _setPrototypeOf(o, p) { o.__proto__ = p; return o; }; return _setPrototypeOf(o, p); }
+
+function _createSuper(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+
+function _possibleConstructorReturn(self, call) { if (call && (_typeof(call) === "object" || typeof call === "function")) { return call; } return _assertThisInitialized(self); }
+
+function _assertThisInitialized(self) { if (self === void 0) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return self; }
+
+function _isNativeReflectConstruct() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Date.prototype.toString.call(Reflect.construct(Date, [], function () {})); return true; } catch (e) { return false; } }
+
+function _getPrototypeOf(o) { _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf : function _getPrototypeOf(o) { return o.__proto__ || Object.getPrototypeOf(o); }; return _getPrototypeOf(o); }
+
+var AnimatedParticleGeometry = /*#__PURE__*/function (_PlaneGeometry) {
+  _inherits(AnimatedParticleGeometry, _PlaneGeometry);
+
+  var _super = _createSuper(AnimatedParticleGeometry);
+
+  function AnimatedParticleGeometry(size, cells, frames) {
+    var _this;
+
+    _classCallCheck(this, AnimatedParticleGeometry);
+
+    _this = _super.call(this, size, size);
+    Payload.assert(cells instanceof THREE.Vector2);
+    Payload.assert(Number.isInteger(frames));
+    _this._size = size;
+    _this._cells = cells;
+    _this._numFrames = frames;
+    _this._frame = 0;
+    return _this;
+  }
+
+  _createClass(AnimatedParticleGeometry, [{
+    key: "clone",
+    value: function clone() {
+      return new AnimatedParticleGeometry(this._size, this._cells, this._numFrames);
+    }
+  }, {
+    key: "frame",
+    get: function get() {
+      return this._frame;
+    },
+    set: function set(value) {
+      var frame = value % this._numFrames;
+      var column = frame % this._cells.x;
+      var row = Math.floor(frame / this._cells.x);
+      var faces = this.faceVertexUvs[0];
+      var w = 1 / this._cells.x;
+      var h = -1 / this._cells.y;
+      var x = w * column;
+      var y = 1 - -h * row;
+      faces[0][0].x = x;
+      faces[0][0].y = y + h;
+      faces[0][1].x = x;
+      faces[0][1].y = y;
+      faces[0][2].x = x + w;
+      faces[0][2].y = y + h;
+      faces[1][0].x = x;
+      faces[1][0].y = y;
+      faces[1][1].x = x + w;
+      faces[1][1].y = y;
+      faces[1][2].x = x + w;
+      faces[1][2].y = y + h;
+      this.uvsNeedUpdate = true;
+      this._frame = frame;
+    }
+  }]);
+
+  return AnimatedParticleGeometry;
+}(_THREE.PlaneGeometry);
+
+exports["default"] = AnimatedParticleGeometry;
+
+},{"THREE":2}],23:[function(require,module,exports){
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+
+var _Entity2 = _interopRequireDefault(require("../Entity"));
+
+var _AnimatedParticleGeometry = _interopRequireDefault(require("./AnimatedParticleGeometry"));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
+
+function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+function _get(target, property, receiver) { if (typeof Reflect !== "undefined" && Reflect.get) { _get = Reflect.get; } else { _get = function _get(target, property, receiver) { var base = _superPropBase(target, property); if (!base) return; var desc = Object.getOwnPropertyDescriptor(base, property); if (desc.get) { return desc.get.call(receiver); } return desc.value; }; } return _get(target, property, receiver || target); }
+
+function _superPropBase(object, property) { while (!Object.prototype.hasOwnProperty.call(object, property)) { object = _getPrototypeOf(object); if (object === null) break; } return object; }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function"); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, writable: true, configurable: true } }); if (superClass) _setPrototypeOf(subClass, superClass); }
+
+function _setPrototypeOf(o, p) { _setPrototypeOf = Object.setPrototypeOf || function _setPrototypeOf(o, p) { o.__proto__ = p; return o; }; return _setPrototypeOf(o, p); }
+
+function _createSuper(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+
+function _possibleConstructorReturn(self, call) { if (call && (_typeof(call) === "object" || typeof call === "function")) { return call; } return _assertThisInitialized(self); }
+
+function _assertThisInitialized(self) { if (self === void 0) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return self; }
+
+function _isNativeReflectConstruct() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Date.prototype.toString.call(Reflect.construct(Date, [], function () {})); return true; } catch (e) { return false; } }
+
+function _getPrototypeOf(o) { _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf : function _getPrototypeOf(o) { return o.__proto__ || Object.getPrototypeOf(o); }; return _getPrototypeOf(o); }
+
+var Emitter = /*#__PURE__*/function (_Entity) {
+  _inherits(Emitter, _Entity);
+
+  var _super = _createSuper(Emitter);
+
+  function Emitter(world, options) {
+    var _this;
+
+    _classCallCheck(this, Emitter);
+
+    var scale = 2;
+    if (!Emitter.defaultGeometry) Emitter.defaultGeometry = new _AnimatedParticleGeometry["default"](80 * scale, new THREE.Vector2(5, 5), 23);
+    if (!Emitter.defaultMaterial) Emitter.defaultMaterial = new THREE.MeshBasicMaterial({
+      depthWrite: false,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      map: payload.assets.sprites.assets["explosion.png"].resource
+    });
+    var defaults = {
+      geometry: Emitter.defaultGeometry,
+      material: Emitter.defaultMaterial,
+      maxParticleCount: 23,
+      life: 23 * 2,
+      fadeOverTime: false,
+      spawnRate: 0,
+      spawnPoint: new THREE.Vector3(0, 0, 0),
+      spawnInitial: 23,
+      callbacks: {
+        position: function position() {
+          return new THREE.Vector3(scale * 0.5 * (Math.random() - 0.5), scale * 0.5 * (Math.random() - 0.5), 0);
+        },
+        rotation: function rotation() {
+          return Math.random() * 2 * Math.PI;
+        },
+        scale: function scale() {
+          return new THREE.Vector3(1, 1, 1);
+        },
+        velocity: function velocity() {
+          return new THREE.Vector3(scale * 2 * (Math.random() - 0.5), scale * 2 * (Math.random() - 0.5), 0);
+        }
+      }
+    };
+    if (!options) options = {};
+    options = $.extend(true, defaults, options);
+    _this = _super.call(this, world, options);
+    _this._particles = [];
+    _this._nextParticle = 0;
+    _this._attachment = null;
+    _this._spawnAccumulator = _this.spawnInitial;
+    return _this;
+  }
+
+  _createClass(Emitter, [{
+    key: "initGraphics",
+    value: function initGraphics() {
+      this.object3d = new THREE.Object3D();
+    }
+  }, {
+    key: "detach",
+    value: function detach() {// TODO: Remove removal listener
+    }
+  }, {
+    key: "attachTo",
+    value: function attachTo(entity) {
+      Payload.assert(entity instanceof _Entity2["default"]);
+      this._attachment = entity; // TODO: Listen for removal, detach and remove self on removal
+    }
+  }, {
+    key: "spawn",
+    value: function spawn() {
+      var particle;
+      var index = this._nextParticle++;
+      this._nextParticle %= this.maxParticleCount;
+
+      if (this._particles[index]) {
+        particle = this._particles[index];
+        particle.visible = true;
+      } else {
+        particle = new THREE.Mesh(this.geometry.clone(), this.material.clone());
+
+        this._particles.push(particle);
+
+        this.object3d.add(particle);
+      }
+
+      particle.age = 0;
+      particle.position.copy(this.callbacks.position());
+      particle.position.add(this.spawnPoint);
+      particle.scale.copy(this.callbacks.scale());
+      particle.rotation.z = this.callbacks.rotation();
+      particle.velocity = this.callbacks.velocity();
+    }
+  }, {
+    key: "updateParticle",
+    value: function updateParticle(particle) {
+      if (this.fadeOverTime) particle.material.opacity = 1 - particle.age / this.life;
+      particle.position.add(particle.velocity);
+      particle.age++;
+      if (particle.geometry instanceof _AnimatedParticleGeometry["default"]) particle.geometry.frame = Math.floor(particle.age / 2); // NB: 30fps
+    }
+  }, {
+    key: "update",
+    value: function update() {
+      var i, spawnCount;
+      if (this._attachment) this.spawnPoint.copy(this._attachment.object3d.position);
+
+      _get(_getPrototypeOf(Emitter.prototype), "update", this).call(this);
+
+      if (--this.life <= 0) {
+        this.remove();
+        return;
+      }
+
+      this._spawnAccumulator += this.spawnRate;
+
+      if ((spawnCount = Math.floor(this._spawnAccumulator)) > 0) {
+        this._spawnAccumulator -= spawnCount;
+
+        for (i = 0; i < spawnCount; i++) {
+          this.spawn();
+        }
+      }
+
+      for (i = 0; i < this._particles.length; i++) {
+        this.updateParticle(this._particles[i]);
+      }
+    }
+  }]);
+
+  return Emitter;
+}(_Entity2["default"]);
+
+exports["default"] = Emitter;
+
+},{"../Entity":19,"./AnimatedParticleGeometry":22}],24:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55386,7 +55731,7 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
 
 exports["default"] = Bomb;
 
-},{"./Weapon":23}],22:[function(require,module,exports){
+},{"./Weapon":26}],25:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55426,7 +55771,7 @@ var _default = {
 };
 exports["default"] = _default;
 
-},{"./instantiatable/LargeBomb":24,"./instantiatable/MediumBomb":25,"./instantiatable/MegaBomb":26,"./instantiatable/SmallBomb":27}],23:[function(require,module,exports){
+},{"./instantiatable/LargeBomb":27,"./instantiatable/MediumBomb":28,"./instantiatable/MegaBomb":29,"./instantiatable/SmallBomb":30}],26:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55483,7 +55828,7 @@ var Weapon = /*#__PURE__*/function (_EventDispatcher) {
 
 exports["default"] = Weapon;
 
-},{"@perry-rylance/event-dispatcher":1}],24:[function(require,module,exports){
+},{"@perry-rylance/event-dispatcher":1}],27:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55545,7 +55890,7 @@ var LargeBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = LargeBomb;
 
-},{"../Bomb":21}],25:[function(require,module,exports){
+},{"../Bomb":24}],28:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55607,7 +55952,7 @@ var MediumBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MediumBomb;
 
-},{"../Bomb":21}],26:[function(require,module,exports){
+},{"../Bomb":24}],29:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55669,7 +56014,7 @@ var MegaBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MegaBomb;
 
-},{"../Bomb":21}],27:[function(require,module,exports){
+},{"../Bomb":24}],30:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55731,6 +56076,968 @@ var SmallBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = SmallBomb;
 
-},{"../Bomb":21}]},{},[11])
+},{"../Bomb":24}],31:[function(require,module,exports){
+"use strict";
+
+console.warn("THREE.MTLLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
+/**
+ * Loads a Wavefront .mtl file specifying materials
+ */
+
+THREE.MTLLoader = function (manager) {
+  THREE.Loader.call(this, manager);
+};
+
+THREE.MTLLoader.prototype = Object.assign(Object.create(THREE.Loader.prototype), {
+  constructor: THREE.MTLLoader,
+
+  /**
+   * Loads and parses a MTL asset from a URL.
+   *
+   * @param {String} url - URL to the MTL file.
+   * @param {Function} [onLoad] - Callback invoked with the loaded object.
+   * @param {Function} [onProgress] - Callback for download progress.
+   * @param {Function} [onError] - Callback for download errors.
+   *
+   * @see setPath setResourcePath
+   *
+   * @note In order for relative texture references to resolve correctly
+   * you must call setResourcePath() explicitly prior to load.
+   */
+  load: function load(url, onLoad, onProgress, onError) {
+    var scope = this;
+    var path = this.path === '' ? THREE.LoaderUtils.extractUrlBase(url) : this.path;
+    var loader = new THREE.FileLoader(this.manager);
+    loader.setPath(this.path);
+    loader.setRequestHeader(this.requestHeader);
+    loader.load(url, function (text) {
+      try {
+        onLoad(scope.parse(text, path));
+      } catch (e) {
+        if (onError) {
+          onError(e);
+        } else {
+          console.error(e);
+        }
+
+        scope.manager.itemError(url);
+      }
+    }, onProgress, onError);
+  },
+  setMaterialOptions: function setMaterialOptions(value) {
+    this.materialOptions = value;
+    return this;
+  },
+
+  /**
+   * Parses a MTL file.
+   *
+   * @param {String} text - Content of MTL file
+   * @return {THREE.MTLLoader.MaterialCreator}
+   *
+   * @see setPath setResourcePath
+   *
+   * @note In order for relative texture references to resolve correctly
+   * you must call setResourcePath() explicitly prior to parse.
+   */
+  parse: function parse(text, path) {
+    var lines = text.split('\n');
+    var info = {};
+    var delimiter_pattern = /\s+/;
+    var materialsInfo = {};
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      line = line.trim();
+
+      if (line.length === 0 || line.charAt(0) === '#') {
+        // Blank line or comment ignore
+        continue;
+      }
+
+      var pos = line.indexOf(' ');
+      var key = pos >= 0 ? line.substring(0, pos) : line;
+      key = key.toLowerCase();
+      var value = pos >= 0 ? line.substring(pos + 1) : '';
+      value = value.trim();
+
+      if (key === 'newmtl') {
+        // New material
+        info = {
+          name: value
+        };
+        materialsInfo[value] = info;
+      } else {
+        if (key === 'ka' || key === 'kd' || key === 'ks' || key === 'ke') {
+          var ss = value.split(delimiter_pattern, 3);
+          info[key] = [parseFloat(ss[0]), parseFloat(ss[1]), parseFloat(ss[2])];
+        } else {
+          info[key] = value;
+        }
+      }
+    }
+
+    var materialCreator = new THREE.MTLLoader.MaterialCreator(this.resourcePath || path, this.materialOptions);
+    materialCreator.setCrossOrigin(this.crossOrigin);
+    materialCreator.setManager(this.manager);
+    materialCreator.setMaterials(materialsInfo);
+    return materialCreator;
+  }
+});
+/**
+ * Create a new THREE.MTLLoader.MaterialCreator
+ * @param baseUrl - Url relative to which textures are loaded
+ * @param options - Set of options on how to construct the materials
+ *                  side: Which side to apply the material
+ *                        THREE.FrontSide (default), THREE.BackSide, THREE.DoubleSide
+ *                  wrap: What type of wrapping to apply for textures
+ *                        THREE.RepeatWrapping (default), THREE.ClampToEdgeWrapping, THREE.MirroredRepeatWrapping
+ *                  normalizeRGB: RGBs need to be normalized to 0-1 from 0-255
+ *                                Default: false, assumed to be already normalized
+ *                  ignoreZeroRGBs: Ignore values of RGBs (Ka,Kd,Ks) that are all 0's
+ *                                  Default: false
+ * @constructor
+ */
+
+THREE.MTLLoader.MaterialCreator = function (baseUrl, options) {
+  this.baseUrl = baseUrl || '';
+  this.options = options;
+  this.materialsInfo = {};
+  this.materials = {};
+  this.materialsArray = [];
+  this.nameLookup = {};
+  this.side = this.options && this.options.side ? this.options.side : THREE.FrontSide;
+  this.wrap = this.options && this.options.wrap ? this.options.wrap : THREE.RepeatWrapping;
+};
+
+THREE.MTLLoader.MaterialCreator.prototype = {
+  constructor: THREE.MTLLoader.MaterialCreator,
+  crossOrigin: 'anonymous',
+  setCrossOrigin: function setCrossOrigin(value) {
+    this.crossOrigin = value;
+    return this;
+  },
+  setManager: function setManager(value) {
+    this.manager = value;
+  },
+  setMaterials: function setMaterials(materialsInfo) {
+    this.materialsInfo = this.convert(materialsInfo);
+    this.materials = {};
+    this.materialsArray = [];
+    this.nameLookup = {};
+  },
+  convert: function convert(materialsInfo) {
+    if (!this.options) return materialsInfo;
+    var converted = {};
+
+    for (var mn in materialsInfo) {
+      // Convert materials info into normalized form based on options
+      var mat = materialsInfo[mn];
+      var covmat = {};
+      converted[mn] = covmat;
+
+      for (var prop in mat) {
+        var save = true;
+        var value = mat[prop];
+        var lprop = prop.toLowerCase();
+
+        switch (lprop) {
+          case 'kd':
+          case 'ka':
+          case 'ks':
+            // Diffuse color (color under white light) using RGB values
+            if (this.options && this.options.normalizeRGB) {
+              value = [value[0] / 255, value[1] / 255, value[2] / 255];
+            }
+
+            if (this.options && this.options.ignoreZeroRGBs) {
+              if (value[0] === 0 && value[1] === 0 && value[2] === 0) {
+                // ignore
+                save = false;
+              }
+            }
+
+            break;
+
+          default:
+            break;
+        }
+
+        if (save) {
+          covmat[lprop] = value;
+        }
+      }
+    }
+
+    return converted;
+  },
+  preload: function preload() {
+    for (var mn in this.materialsInfo) {
+      this.create(mn);
+    }
+  },
+  getIndex: function getIndex(materialName) {
+    return this.nameLookup[materialName];
+  },
+  getAsArray: function getAsArray() {
+    var index = 0;
+
+    for (var mn in this.materialsInfo) {
+      this.materialsArray[index] = this.create(mn);
+      this.nameLookup[mn] = index;
+      index++;
+    }
+
+    return this.materialsArray;
+  },
+  create: function create(materialName) {
+    if (this.materials[materialName] === undefined) {
+      this.createMaterial_(materialName);
+    }
+
+    return this.materials[materialName];
+  },
+  createMaterial_: function createMaterial_(materialName) {
+    // Create material
+    var scope = this;
+    var mat = this.materialsInfo[materialName];
+    var params = {
+      name: materialName,
+      side: this.side
+    };
+
+    function resolveURL(baseUrl, url) {
+      if (typeof url !== 'string' || url === '') return ''; // Absolute URL
+
+      if (/^https?:\/\//i.test(url)) return url;
+      return baseUrl + url;
+    }
+
+    function setMapForType(mapType, value) {
+      if (params[mapType]) return; // Keep the first encountered texture
+
+      var texParams = scope.getTextureParams(value, params);
+      var map = scope.loadTexture(resolveURL(scope.baseUrl, texParams.url));
+      map.repeat.copy(texParams.scale);
+      map.offset.copy(texParams.offset);
+      map.wrapS = scope.wrap;
+      map.wrapT = scope.wrap;
+      params[mapType] = map;
+    }
+
+    for (var prop in mat) {
+      var value = mat[prop];
+      var n;
+      if (value === '') continue;
+
+      switch (prop.toLowerCase()) {
+        // Ns is material specular exponent
+        case 'kd':
+          // Diffuse color (color under white light) using RGB values
+          params.color = new THREE.Color().fromArray(value);
+          break;
+
+        case 'ks':
+          // Specular color (color when light is reflected from shiny surface) using RGB values
+          params.specular = new THREE.Color().fromArray(value);
+          break;
+
+        case 'ke':
+          // Emissive using RGB values
+          params.emissive = new THREE.Color().fromArray(value);
+          break;
+
+        case 'map_kd':
+          // Diffuse texture map
+          setMapForType("map", value);
+          break;
+
+        case 'map_ks':
+          // Specular map
+          setMapForType("specularMap", value);
+          break;
+
+        case 'map_ke':
+          // Emissive map
+          setMapForType("emissiveMap", value);
+          break;
+
+        case 'norm':
+          setMapForType("normalMap", value);
+          break;
+
+        case 'map_bump':
+        case 'bump':
+          // Bump texture map
+          setMapForType("bumpMap", value);
+          break;
+
+        case 'map_d':
+          // Alpha map
+          setMapForType("alphaMap", value);
+          params.transparent = true;
+          break;
+
+        case 'ns':
+          // The specular exponent (defines the focus of the specular highlight)
+          // A high exponent results in a tight, concentrated highlight. Ns values normally range from 0 to 1000.
+          params.shininess = parseFloat(value);
+          break;
+
+        case 'd':
+          n = parseFloat(value);
+
+          if (n < 1) {
+            params.opacity = n;
+            params.transparent = true;
+          }
+
+          break;
+
+        case 'tr':
+          n = parseFloat(value);
+          if (this.options && this.options.invertTrProperty) n = 1 - n;
+
+          if (n > 0) {
+            params.opacity = 1 - n;
+            params.transparent = true;
+          }
+
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    this.materials[materialName] = new THREE.MeshPhongMaterial(params);
+    return this.materials[materialName];
+  },
+  getTextureParams: function getTextureParams(value, matParams) {
+    var texParams = {
+      scale: new THREE.Vector2(1, 1),
+      offset: new THREE.Vector2(0, 0)
+    };
+    var items = value.split(/\s+/);
+    var pos;
+    pos = items.indexOf('-bm');
+
+    if (pos >= 0) {
+      matParams.bumpScale = parseFloat(items[pos + 1]);
+      items.splice(pos, 2);
+    }
+
+    pos = items.indexOf('-s');
+
+    if (pos >= 0) {
+      texParams.scale.set(parseFloat(items[pos + 1]), parseFloat(items[pos + 2]));
+      items.splice(pos, 4); // we expect 3 parameters here!
+    }
+
+    pos = items.indexOf('-o');
+
+    if (pos >= 0) {
+      texParams.offset.set(parseFloat(items[pos + 1]), parseFloat(items[pos + 2]));
+      items.splice(pos, 4); // we expect 3 parameters here!
+    }
+
+    texParams.url = items.join(' ').trim();
+    return texParams;
+  },
+  loadTexture: function loadTexture(url, mapping, onLoad, onProgress, onError) {
+    var texture;
+    var manager = this.manager !== undefined ? this.manager : THREE.DefaultLoadingManager;
+    var loader = manager.getHandler(url);
+
+    if (loader === null) {
+      loader = new THREE.TextureLoader(manager);
+    }
+
+    if (loader.setCrossOrigin) loader.setCrossOrigin(this.crossOrigin);
+    texture = loader.load(url, onLoad, onProgress, onError);
+    if (mapping !== undefined) texture.mapping = mapping;
+    return texture;
+  }
+};
+
+},{}],32:[function(require,module,exports){
+"use strict";
+
+console.warn("THREE.OBJLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
+
+THREE.OBJLoader = function () {
+  // o object_name | g group_name
+  var object_pattern = /^[og]\s*(.+)?/; // mtllib file_reference
+
+  var material_library_pattern = /^mtllib /; // usemtl material_name
+
+  var material_use_pattern = /^usemtl /; // usemap map_name
+
+  var map_use_pattern = /^usemap /;
+  var vA = new THREE.Vector3();
+  var vB = new THREE.Vector3();
+  var vC = new THREE.Vector3();
+  var ab = new THREE.Vector3();
+  var cb = new THREE.Vector3();
+
+  function ParserState() {
+    var state = {
+      objects: [],
+      object: {},
+      vertices: [],
+      normals: [],
+      colors: [],
+      uvs: [],
+      materials: {},
+      materialLibraries: [],
+      startObject: function startObject(name, fromDeclaration) {
+        // If the current object (initial from reset) is not from a g/o declaration in the parsed
+        // file. We need to use it for the first parsed g/o to keep things in sync.
+        if (this.object && this.object.fromDeclaration === false) {
+          this.object.name = name;
+          this.object.fromDeclaration = fromDeclaration !== false;
+          return;
+        }
+
+        var previousMaterial = this.object && typeof this.object.currentMaterial === 'function' ? this.object.currentMaterial() : undefined;
+
+        if (this.object && typeof this.object._finalize === 'function') {
+          this.object._finalize(true);
+        }
+
+        this.object = {
+          name: name || '',
+          fromDeclaration: fromDeclaration !== false,
+          geometry: {
+            vertices: [],
+            normals: [],
+            colors: [],
+            uvs: [],
+            hasNormalIndices: false,
+            hasUVIndices: false
+          },
+          materials: [],
+          smooth: true,
+          startMaterial: function startMaterial(name, libraries) {
+            var previous = this._finalize(false); // New usemtl declaration overwrites an inherited material, except if faces were declared
+            // after the material, then it must be preserved for proper MultiMaterial continuation.
+
+
+            if (previous && (previous.inherited || previous.groupCount <= 0)) {
+              this.materials.splice(previous.index, 1);
+            }
+
+            var material = {
+              index: this.materials.length,
+              name: name || '',
+              mtllib: Array.isArray(libraries) && libraries.length > 0 ? libraries[libraries.length - 1] : '',
+              smooth: previous !== undefined ? previous.smooth : this.smooth,
+              groupStart: previous !== undefined ? previous.groupEnd : 0,
+              groupEnd: -1,
+              groupCount: -1,
+              inherited: false,
+              clone: function clone(index) {
+                var cloned = {
+                  index: typeof index === 'number' ? index : this.index,
+                  name: this.name,
+                  mtllib: this.mtllib,
+                  smooth: this.smooth,
+                  groupStart: 0,
+                  groupEnd: -1,
+                  groupCount: -1,
+                  inherited: false
+                };
+                cloned.clone = this.clone.bind(cloned);
+                return cloned;
+              }
+            };
+            this.materials.push(material);
+            return material;
+          },
+          currentMaterial: function currentMaterial() {
+            if (this.materials.length > 0) {
+              return this.materials[this.materials.length - 1];
+            }
+
+            return undefined;
+          },
+          _finalize: function _finalize(end) {
+            var lastMultiMaterial = this.currentMaterial();
+
+            if (lastMultiMaterial && lastMultiMaterial.groupEnd === -1) {
+              lastMultiMaterial.groupEnd = this.geometry.vertices.length / 3;
+              lastMultiMaterial.groupCount = lastMultiMaterial.groupEnd - lastMultiMaterial.groupStart;
+              lastMultiMaterial.inherited = false;
+            } // Ignore objects tail materials if no face declarations followed them before a new o/g started.
+
+
+            if (end && this.materials.length > 1) {
+              for (var mi = this.materials.length - 1; mi >= 0; mi--) {
+                if (this.materials[mi].groupCount <= 0) {
+                  this.materials.splice(mi, 1);
+                }
+              }
+            } // Guarantee at least one empty material, this makes the creation later more straight forward.
+
+
+            if (end && this.materials.length === 0) {
+              this.materials.push({
+                name: '',
+                smooth: this.smooth
+              });
+            }
+
+            return lastMultiMaterial;
+          }
+        }; // Inherit previous objects material.
+        // Spec tells us that a declared material must be set to all objects until a new material is declared.
+        // If a usemtl declaration is encountered while this new object is being parsed, it will
+        // overwrite the inherited material. Exception being that there was already face declarations
+        // to the inherited material, then it will be preserved for proper MultiMaterial continuation.
+
+        if (previousMaterial && previousMaterial.name && typeof previousMaterial.clone === 'function') {
+          var declared = previousMaterial.clone(0);
+          declared.inherited = true;
+          this.object.materials.push(declared);
+        }
+
+        this.objects.push(this.object);
+      },
+      finalize: function finalize() {
+        if (this.object && typeof this.object._finalize === 'function') {
+          this.object._finalize(true);
+        }
+      },
+      parseVertexIndex: function parseVertexIndex(value, len) {
+        var index = parseInt(value, 10);
+        return (index >= 0 ? index - 1 : index + len / 3) * 3;
+      },
+      parseNormalIndex: function parseNormalIndex(value, len) {
+        var index = parseInt(value, 10);
+        return (index >= 0 ? index - 1 : index + len / 3) * 3;
+      },
+      parseUVIndex: function parseUVIndex(value, len) {
+        var index = parseInt(value, 10);
+        return (index >= 0 ? index - 1 : index + len / 2) * 2;
+      },
+      addVertex: function addVertex(a, b, c) {
+        var src = this.vertices;
+        var dst = this.object.geometry.vertices;
+        dst.push(src[a + 0], src[a + 1], src[a + 2]);
+        dst.push(src[b + 0], src[b + 1], src[b + 2]);
+        dst.push(src[c + 0], src[c + 1], src[c + 2]);
+      },
+      addVertexPoint: function addVertexPoint(a) {
+        var src = this.vertices;
+        var dst = this.object.geometry.vertices;
+        dst.push(src[a + 0], src[a + 1], src[a + 2]);
+      },
+      addVertexLine: function addVertexLine(a) {
+        var src = this.vertices;
+        var dst = this.object.geometry.vertices;
+        dst.push(src[a + 0], src[a + 1], src[a + 2]);
+      },
+      addNormal: function addNormal(a, b, c) {
+        var src = this.normals;
+        var dst = this.object.geometry.normals;
+        dst.push(src[a + 0], src[a + 1], src[a + 2]);
+        dst.push(src[b + 0], src[b + 1], src[b + 2]);
+        dst.push(src[c + 0], src[c + 1], src[c + 2]);
+      },
+      addFaceNormal: function addFaceNormal(a, b, c) {
+        var src = this.vertices;
+        var dst = this.object.geometry.normals;
+        vA.fromArray(src, a);
+        vB.fromArray(src, b);
+        vC.fromArray(src, c);
+        cb.subVectors(vC, vB);
+        ab.subVectors(vA, vB);
+        cb.cross(ab);
+        cb.normalize();
+        dst.push(cb.x, cb.y, cb.z);
+        dst.push(cb.x, cb.y, cb.z);
+        dst.push(cb.x, cb.y, cb.z);
+      },
+      addColor: function addColor(a, b, c) {
+        var src = this.colors;
+        var dst = this.object.geometry.colors;
+        if (src[a] !== undefined) dst.push(src[a + 0], src[a + 1], src[a + 2]);
+        if (src[b] !== undefined) dst.push(src[b + 0], src[b + 1], src[b + 2]);
+        if (src[c] !== undefined) dst.push(src[c + 0], src[c + 1], src[c + 2]);
+      },
+      addUV: function addUV(a, b, c) {
+        var src = this.uvs;
+        var dst = this.object.geometry.uvs;
+        dst.push(src[a + 0], src[a + 1]);
+        dst.push(src[b + 0], src[b + 1]);
+        dst.push(src[c + 0], src[c + 1]);
+      },
+      addDefaultUV: function addDefaultUV() {
+        var dst = this.object.geometry.uvs;
+        dst.push(0, 0);
+        dst.push(0, 0);
+        dst.push(0, 0);
+      },
+      addUVLine: function addUVLine(a) {
+        var src = this.uvs;
+        var dst = this.object.geometry.uvs;
+        dst.push(src[a + 0], src[a + 1]);
+      },
+      addFace: function addFace(a, b, c, ua, ub, uc, na, nb, nc) {
+        var vLen = this.vertices.length;
+        var ia = this.parseVertexIndex(a, vLen);
+        var ib = this.parseVertexIndex(b, vLen);
+        var ic = this.parseVertexIndex(c, vLen);
+        this.addVertex(ia, ib, ic);
+        this.addColor(ia, ib, ic); // normals
+
+        if (na !== undefined && na !== '') {
+          var nLen = this.normals.length;
+          ia = this.parseNormalIndex(na, nLen);
+          ib = this.parseNormalIndex(nb, nLen);
+          ic = this.parseNormalIndex(nc, nLen);
+          this.addNormal(ia, ib, ic);
+          this.object.geometry.hasNormalIndices = true;
+        } else {
+          this.addFaceNormal(ia, ib, ic);
+        } // uvs
+
+
+        if (ua !== undefined && ua !== '') {
+          var uvLen = this.uvs.length;
+          ia = this.parseUVIndex(ua, uvLen);
+          ib = this.parseUVIndex(ub, uvLen);
+          ic = this.parseUVIndex(uc, uvLen);
+          this.addUV(ia, ib, ic);
+          this.object.geometry.hasUVIndices = true;
+        } else {
+          // add placeholder values (for inconsistent face definitions)
+          this.addDefaultUV();
+        }
+      },
+      addPointGeometry: function addPointGeometry(vertices) {
+        this.object.geometry.type = 'Points';
+        var vLen = this.vertices.length;
+
+        for (var vi = 0, l = vertices.length; vi < l; vi++) {
+          this.addVertexPoint(this.parseVertexIndex(vertices[vi], vLen));
+        }
+      },
+      addLineGeometry: function addLineGeometry(vertices, uvs) {
+        this.object.geometry.type = 'Line';
+        var vLen = this.vertices.length;
+        var uvLen = this.uvs.length;
+
+        for (var vi = 0, l = vertices.length; vi < l; vi++) {
+          this.addVertexLine(this.parseVertexIndex(vertices[vi], vLen));
+        }
+
+        for (var uvi = 0, l = uvs.length; uvi < l; uvi++) {
+          this.addUVLine(this.parseUVIndex(uvs[uvi], uvLen));
+        }
+      }
+    };
+    state.startObject('', false);
+    return state;
+  } //
+
+
+  function OBJLoader(manager) {
+    THREE.Loader.call(this, manager);
+    this.materials = null;
+  }
+
+  OBJLoader.prototype = Object.assign(Object.create(THREE.Loader.prototype), {
+    constructor: OBJLoader,
+    load: function load(url, onLoad, onProgress, onError) {
+      var scope = this;
+      var loader = new THREE.FileLoader(scope.manager);
+      loader.setPath(this.path);
+      loader.setRequestHeader(this.requestHeader);
+      loader.load(url, function (text) {
+        try {
+          onLoad(scope.parse(text));
+        } catch (e) {
+          if (onError) {
+            onError(e);
+          } else {
+            console.error(e);
+          }
+
+          scope.manager.itemError(url);
+        }
+      }, onProgress, onError);
+    },
+    setMaterials: function setMaterials(materials) {
+      this.materials = materials;
+      return this;
+    },
+    parse: function parse(text) {
+      var state = new ParserState();
+
+      if (text.indexOf('\r\n') !== -1) {
+        // This is faster than String.split with regex that splits on both
+        text = text.replace(/\r\n/g, '\n');
+      }
+
+      if (text.indexOf('\\\n') !== -1) {
+        // join lines separated by a line continuation character (\)
+        text = text.replace(/\\\n/g, '');
+      }
+
+      var lines = text.split('\n');
+      var line = '',
+          lineFirstChar = '';
+      var lineLength = 0;
+      var result = []; // Faster to just trim left side of the line. Use if available.
+
+      var trimLeft = typeof ''.trimLeft === 'function';
+
+      for (var i = 0, l = lines.length; i < l; i++) {
+        line = lines[i];
+        line = trimLeft ? line.trimLeft() : line.trim();
+        lineLength = line.length;
+        if (lineLength === 0) continue;
+        lineFirstChar = line.charAt(0); // @todo invoke passed in handler if any
+
+        if (lineFirstChar === '#') continue;
+
+        if (lineFirstChar === 'v') {
+          var data = line.split(/\s+/);
+
+          switch (data[0]) {
+            case 'v':
+              state.vertices.push(parseFloat(data[1]), parseFloat(data[2]), parseFloat(data[3]));
+
+              if (data.length >= 7) {
+                state.colors.push(parseFloat(data[4]), parseFloat(data[5]), parseFloat(data[6]));
+              } else {
+                // if no colors are defined, add placeholders so color and vertex indices match
+                state.colors.push(undefined, undefined, undefined);
+              }
+
+              break;
+
+            case 'vn':
+              state.normals.push(parseFloat(data[1]), parseFloat(data[2]), parseFloat(data[3]));
+              break;
+
+            case 'vt':
+              state.uvs.push(parseFloat(data[1]), parseFloat(data[2]));
+              break;
+          }
+        } else if (lineFirstChar === 'f') {
+          var lineData = line.substr(1).trim();
+          var vertexData = lineData.split(/\s+/);
+          var faceVertices = []; // Parse the face vertex data into an easy to work with format
+
+          for (var j = 0, jl = vertexData.length; j < jl; j++) {
+            var vertex = vertexData[j];
+
+            if (vertex.length > 0) {
+              var vertexParts = vertex.split('/');
+              faceVertices.push(vertexParts);
+            }
+          } // Draw an edge between the first vertex and all subsequent vertices to form an n-gon
+
+
+          var v1 = faceVertices[0];
+
+          for (var j = 1, jl = faceVertices.length - 1; j < jl; j++) {
+            var v2 = faceVertices[j];
+            var v3 = faceVertices[j + 1];
+            state.addFace(v1[0], v2[0], v3[0], v1[1], v2[1], v3[1], v1[2], v2[2], v3[2]);
+          }
+        } else if (lineFirstChar === 'l') {
+          var lineParts = line.substring(1).trim().split(" ");
+          var lineVertices = [],
+              lineUVs = [];
+
+          if (line.indexOf("/") === -1) {
+            lineVertices = lineParts;
+          } else {
+            for (var li = 0, llen = lineParts.length; li < llen; li++) {
+              var parts = lineParts[li].split("/");
+              if (parts[0] !== "") lineVertices.push(parts[0]);
+              if (parts[1] !== "") lineUVs.push(parts[1]);
+            }
+          }
+
+          state.addLineGeometry(lineVertices, lineUVs);
+        } else if (lineFirstChar === 'p') {
+          var lineData = line.substr(1).trim();
+          var pointData = lineData.split(" ");
+          state.addPointGeometry(pointData);
+        } else if ((result = object_pattern.exec(line)) !== null) {
+          // o object_name
+          // or
+          // g group_name
+          // WORKAROUND: https://bugs.chromium.org/p/v8/issues/detail?id=2869
+          // var name = result[ 0 ].substr( 1 ).trim();
+          var name = (" " + result[0].substr(1).trim()).substr(1);
+          state.startObject(name);
+        } else if (material_use_pattern.test(line)) {
+          // material
+          state.object.startMaterial(line.substring(7).trim(), state.materialLibraries);
+        } else if (material_library_pattern.test(line)) {
+          // mtl file
+          state.materialLibraries.push(line.substring(7).trim());
+        } else if (map_use_pattern.test(line)) {
+          // the line is parsed but ignored since the loader assumes textures are defined MTL files
+          // (according to https://www.okino.com/conv/imp_wave.htm, 'usemap' is the old-style Wavefront texture reference method)
+          console.warn('THREE.OBJLoader: Rendering identifier "usemap" not supported. Textures must be defined in MTL files.');
+        } else if (lineFirstChar === 's') {
+          result = line.split(' '); // smooth shading
+          // @todo Handle files that have varying smooth values for a set of faces inside one geometry,
+          // but does not define a usemtl for each face set.
+          // This should be detected and a dummy material created (later MultiMaterial and geometry groups).
+          // This requires some care to not create extra material on each smooth value for "normal" obj files.
+          // where explicit usemtl defines geometry groups.
+          // Example asset: examples/models/obj/cerberus/Cerberus.obj
+
+          /*
+           * http://paulbourke.net/dataformats/obj/
+           * or
+           * http://www.cs.utah.edu/~boulos/cs3505/obj_spec.pdf
+           *
+           * From chapter "Grouping" Syntax explanation "s group_number":
+           * "group_number is the smoothing group number. To turn off smoothing groups, use a value of 0 or off.
+           * Polygonal elements use group numbers to put elements in different smoothing groups. For free-form
+           * surfaces, smoothing groups are either turned on or off; there is no difference between values greater
+           * than 0."
+           */
+
+          if (result.length > 1) {
+            var value = result[1].trim().toLowerCase();
+            state.object.smooth = value !== '0' && value !== 'off';
+          } else {
+            // ZBrush can produce "s" lines #11707
+            state.object.smooth = true;
+          }
+
+          var material = state.object.currentMaterial();
+          if (material) material.smooth = state.object.smooth;
+        } else {
+          // Handle null terminated files without exception
+          if (line === '\0') continue;
+          console.warn('THREE.OBJLoader: Unexpected line: "' + line + '"');
+        }
+      }
+
+      state.finalize();
+      var container = new THREE.Group();
+      container.materialLibraries = [].concat(state.materialLibraries);
+
+      for (var i = 0, l = state.objects.length; i < l; i++) {
+        var object = state.objects[i];
+        var geometry = object.geometry;
+        var materials = object.materials;
+        var isLine = geometry.type === 'Line';
+        var isPoints = geometry.type === 'Points';
+        var hasVertexColors = false; // Skip o/g line declarations that did not follow with any faces
+
+        if (geometry.vertices.length === 0) continue;
+        var buffergeometry = new THREE.BufferGeometry();
+        buffergeometry.setAttribute('position', new THREE.Float32BufferAttribute(geometry.vertices, 3));
+
+        if (geometry.hasNormalIndices === true) {
+          buffergeometry.setAttribute('normal', new THREE.Float32BufferAttribute(geometry.normals, 3));
+        }
+
+        if (geometry.colors.length > 0) {
+          hasVertexColors = true;
+          buffergeometry.setAttribute('color', new THREE.Float32BufferAttribute(geometry.colors, 3));
+        }
+
+        if (geometry.hasUVIndices === true) {
+          buffergeometry.setAttribute('uv', new THREE.Float32BufferAttribute(geometry.uvs, 2));
+        } // Create materials
+
+
+        var createdMaterials = [];
+
+        for (var mi = 0, miLen = materials.length; mi < miLen; mi++) {
+          var sourceMaterial = materials[mi];
+          var materialHash = sourceMaterial.name + '_' + sourceMaterial.smooth + '_' + hasVertexColors;
+          var material = state.materials[materialHash];
+
+          if (this.materials !== null) {
+            material = this.materials.create(sourceMaterial.name); // mtl etc. loaders probably can't create line materials correctly, copy properties to a line material.
+
+            if (isLine && material && !(material instanceof THREE.LineBasicMaterial)) {
+              var materialLine = new THREE.LineBasicMaterial();
+              THREE.Material.prototype.copy.call(materialLine, material);
+              materialLine.color.copy(material.color);
+              material = materialLine;
+            } else if (isPoints && material && !(material instanceof THREE.PointsMaterial)) {
+              var materialPoints = new THREE.PointsMaterial({
+                size: 10,
+                sizeAttenuation: false
+              });
+              THREE.Material.prototype.copy.call(materialPoints, material);
+              materialPoints.color.copy(material.color);
+              materialPoints.map = material.map;
+              material = materialPoints;
+            }
+          }
+
+          if (material === undefined) {
+            if (isLine) {
+              material = new THREE.LineBasicMaterial();
+            } else if (isPoints) {
+              material = new THREE.PointsMaterial({
+                size: 1,
+                sizeAttenuation: false
+              });
+            } else {
+              material = new THREE.MeshPhongMaterial();
+            }
+
+            material.name = sourceMaterial.name;
+            material.flatShading = sourceMaterial.smooth ? false : true;
+            material.vertexColors = hasVertexColors;
+            state.materials[materialHash] = material;
+          }
+
+          createdMaterials.push(material);
+        } // Create mesh
+
+
+        var mesh;
+
+        if (createdMaterials.length > 1) {
+          for (var mi = 0, miLen = materials.length; mi < miLen; mi++) {
+            var sourceMaterial = materials[mi];
+            buffergeometry.addGroup(sourceMaterial.groupStart, sourceMaterial.groupCount, mi);
+          }
+
+          if (isLine) {
+            mesh = new THREE.LineSegments(buffergeometry, createdMaterials);
+          } else if (isPoints) {
+            mesh = new THREE.Points(buffergeometry, createdMaterials);
+          } else {
+            mesh = new THREE.Mesh(buffergeometry, createdMaterials);
+          }
+        } else {
+          if (isLine) {
+            mesh = new THREE.LineSegments(buffergeometry, createdMaterials[0]);
+          } else if (isPoints) {
+            mesh = new THREE.Points(buffergeometry, createdMaterials[0]);
+          } else {
+            mesh = new THREE.Mesh(buffergeometry, createdMaterials[0]);
+          }
+        }
+
+        mesh.name = object.name;
+        container.add(mesh);
+      }
+
+      return container;
+    }
+  });
+  return OBJLoader;
+}();
+
+},{}]},{},[12,31,32])
 
 });//# sourceMappingURL=entry.js.map

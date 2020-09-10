@@ -3,8 +3,11 @@ import Game from "./Game";
 import Units from "./Units";
 import Interaction from "./Interaction";
 import Entity from "./entities/Entity";
+
 import Planet from "./entities/Planet";
 import Ship from "./entities/Ship";
+
+import Emitter from "./entities/particles/Emitter";
 
 export default class World extends EventDispatcherWithOptions
 {
@@ -34,6 +37,7 @@ export default class World extends EventDispatcherWithOptions
 		
 		// this.enableDebugDraw();
 		
+		this.currentStep = 0;
 		this.step();
 	}
 	
@@ -73,7 +77,7 @@ export default class World extends EventDispatcherWithOptions
 		this.listener.PreSolve = function() {};
 		this.listener.PostSolve = function() {};
 		
-		this.b2World.SetContinuousPhysics(1);
+		// this.b2World.SetContinuousPhysics(1);
 		this.b2World.SetContactListener(this.listener);
 	}
 	
@@ -105,6 +109,14 @@ export default class World extends EventDispatcherWithOptions
 		
 		// Add renderer DOM element
 		document.querySelector("#scene").appendChild(this.renderer.domElement);
+		
+		// Add lighting
+		var light = new THREE.AmbientLight( 0x7f7f7f ); // soft white light
+		this.scene.add( light );
+		
+		var light = new THREE.DirectionalLight( 0xffffff, 1.0 );
+		light.position.set(5, 0, 15);
+		this.scene.add( light );
 		
 		// And mouse interaction
 		this.interaction = new Interaction(this.camera, this.renderer.domElement);
@@ -172,6 +184,18 @@ export default class World extends EventDispatcherWithOptions
 		
 		this.add(ship);
 		player.ship = ship;
+		
+		$(window).on("keydown", (event) => {
+			
+			if(event.which == 69)
+			{
+				var tempExplosion = new Emitter(this);
+				this.add(tempExplosion);
+			}
+			
+		});
+		
+		// tempExplosion.attachTo(ship);
 	}
 	
 	add(entity)
@@ -201,26 +225,23 @@ export default class World extends EventDispatcherWithOptions
 		Payload.assert(index != -1, "Not in entity list");
 		
 		this.entities.splice(index, 1);
-		this.entity.parent = null;
+		
+		entity.parent = null;
 		
 		if(entity instanceof Planet)
 		{
 			index = this.planets.indexOf(entity);
-			
 			Payload.assert(index != -1, "Not in planet list");
-			
 			this.planets.splice(index, 1);
 		}
 		else if(entity instanceof Ship)
 		{
 			index = this.planets.indexOf(entity);
-			
 			Payload.assert(index != -1, "Not in planet list");
-			
 			this.planets.splice(index, 1);
 		}
 		
-		this.entity.trigger("removed");
+		entity.trigger("removed");
 	}
 	
 	getEntitiesAtPosition(position, limit)
@@ -329,6 +350,8 @@ export default class World extends EventDispatcherWithOptions
 		
 		if(window.stats)
 			window.stats.end();
+		
+		this.currentStep++;
 	}
 	
 	enableDebugDraw()
