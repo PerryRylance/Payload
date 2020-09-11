@@ -72,3 +72,51 @@ dialog.loading
 	bottom: 1em;
 	right: 1em;
 }
+
+
+#actions li
+{
+    display: inline;
+}
+
+#actions button
+{
+    border: none;
+    background: none;
+    font-size: 32px;
+    cursor: pointer;
+}
+
+@keyframes ui-red-glow
+{
+    0%
+    {
+        text-shadow: 0 0 5px #fe0005;
+    }
+
+    50%
+    {
+        text-shadow: 0 0 20px #fe0005;
+    }
+
+    100%
+    {
+        text-shadow: 0 0 5px #fe0005;
+    }
+}
+
+#actions button:hover i
+{
+    animation-name: ui-red-glow;
+    animation-duration: 2.0s;
+}
+
+select.weapon
+{
+    background: black;
+    padding: 0.5em;
+    width: 100%;
+    font-size: 12pt;
+    border: 1px solid #fe0005;
+    box-shadow: 0 0 5px #fe0005;
+}

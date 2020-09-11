@@ -54217,6 +54217,12 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
 
     _this.initWeaponSelect();
 
+    $("#re-center").on("click", function (event) {
+      return _this.onReCenter(event);
+    });
+    $("#launch").on("click", function (event) {
+      return _this.onLaunch(event);
+    });
     return _this;
   }
 
@@ -54231,6 +54237,26 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
         $option.text(definition.name + " (" + definition.cost + ")");
         $select.append($option);
       });
+    }
+  }, {
+    key: "onReCenter",
+    value: function onReCenter(event) {
+      var ship = this.game.currentPlayer.ship;
+      var camera = this.game.world.interaction.camera;
+      var controls = this.game.world.interaction.controls;
+      controls.moveTo(ship.position.x, ship.position.y, camera.z, true);
+      controls.zoomTo(1, true);
+    }
+  }, {
+    key: "onLaunch",
+    value: function onLaunch(event) {
+      var ship = this.game.currentPlayer.ship;
+      var degrees = $("input[name='degrees']").val();
+      var power = this.game.world.options.ship.launchFullPower;
+      ship.launch({
+        degrees: degrees,
+        power: power
+      }); // TODO: Lock controls, wait for ship to become stationary
     }
   }]);
 
@@ -54621,7 +54647,7 @@ World.defaults = {
   },
   ship: {
     radius: 20,
-    launchFullPower: 5000,
+    launchFullPower: 2000,
     density: 1,
     friction: 0.9,
     restitution: 0.15,
@@ -54755,6 +54781,31 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
 
       this.world.remove(this);
       this.world = null;
+    }
+  }, {
+    key: "launch",
+    value: function launch(options) {
+      var impulse;
+      Payload.assert("b2Body" in this);
+      if (!options) options = {
+        degrees: Math.random() * 360,
+        power: 100
+      };
+      Payload.assert(options.degrees || options.impulse ? true : false);
+
+      if (options.impulse) {
+        Payload.assert(options.impulse instanceof THREE.Vector2);
+        impulse = options.impulse;
+      } else {
+        Payload.assert(!isNaN(options.degrees));
+        Payload.assert(!isNaN(options.power));
+        impulse = new THREE.Vector2(options.power * Math.cos(options.degrees * Math.PI / 180), options.power * Math.sin(options.degrees * Math.PI / 180));
+      } // Convert the impulse
+
+
+      impulse = new Box2D.b2Vec2(impulse.x * _Units["default"].GRAPHICS_TO_PHYSICS, impulse.y * _Units["default"].GRAPHICS_TO_PHYSICS);
+      this.b2Body.SetAwake(1);
+      this.b2Body.ApplyLinearImpulse(impulse, this.b2Body.GetWorldCenter());
     }
   }, {
     key: "position",
