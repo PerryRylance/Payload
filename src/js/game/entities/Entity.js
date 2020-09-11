@@ -182,6 +182,7 @@ export default class Entity extends EventDispatcherWithOptions
 			impulse.y * Units.GRAPHICS_TO_PHYSICS
 		);
 		
+		this.b2Body.SetAwake(1);
 		this.b2Body.ApplyLinearImpulse(impulse, this.b2Body.GetWorldCenter());
 	}
 }

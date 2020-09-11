@@ -54647,7 +54647,7 @@ World.defaults = {
   },
   ship: {
     radius: 20,
-    launchFullPower: 5000,
+    launchFullPower: 2000,
     density: 1,
     friction: 0.9,
     restitution: 0.15,
@@ -54804,6 +54804,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 
       impulse = new Box2D.b2Vec2(impulse.x * _Units["default"].GRAPHICS_TO_PHYSICS, impulse.y * _Units["default"].GRAPHICS_TO_PHYSICS);
+      this.b2Body.SetAwake(1);
       this.b2Body.ApplyLinearImpulse(impulse, this.b2Body.GetWorldCenter());
     }
   }, {
