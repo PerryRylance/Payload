@@ -9,6 +9,9 @@ export default class UI extends EventDispatcherWithOptions
 		this.game = game;
 		
 		this.initWeaponSelect();
+		
+		$("#re-center").on("click", (event) => this.onReCenter(event));
+		$("#launch").on("click", (event) => this.onLaunch(event));
 	}
 	
 	initWeaponSelect()
@@ -27,5 +30,29 @@ export default class UI extends EventDispatcherWithOptions
 			$select.append($option);
 			
 		} );
+	}
+	
+	onReCenter(event)
+	{
+		let ship		= this.game.currentPlayer.ship;
+		let camera		= this.game.world.interaction.camera;
+		let controls	= this.game.world.interaction.controls;
+		
+		controls.moveTo(ship.position.x, ship.position.y, camera.z, true);
+		controls.zoomTo(1, true);
+	}
+	
+	onLaunch(event)
+	{
+		let ship		= this.game.currentPlayer.ship;
+		let degrees		= $("input[name='degrees']").val();
+		let power		= this.game.world.options.ship.launchFullPower;
+		
+		ship.launch({
+			degrees:	degrees,
+			power:		power
+		});
+		
+		// TODO: Lock controls, wait for ship to become stationary
 	}
 }

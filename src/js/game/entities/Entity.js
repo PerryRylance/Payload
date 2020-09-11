@@ -144,4 +144,44 @@ export default class Entity extends EventDispatcherWithOptions
 		this.world.remove(this);
 		this.world = null;
 	}
+	
+	launch(options)
+	{
+		let impulse;
+		
+		Payload.assert("b2Body" in this);
+		
+		if(!options)
+			options = {
+				degrees:	Math.random() * 360,
+				power:		100
+			};
+		
+		Payload.assert((options.degrees || options.impulse ? true : false));
+		
+		if(options.impulse)
+		{
+			Payload.assert(options.impulse instanceof THREE.Vector2);
+			
+			impulse = options.impulse;
+		}
+		else
+		{
+			Payload.assert(!isNaN(options.degrees));
+			Payload.assert(!isNaN(options.power));
+			
+			impulse = new THREE.Vector2(
+				options.power * Math.cos(options.degrees * Math.PI / 180),
+				options.power * Math.sin(options.degrees * Math.PI / 180)
+			);
+		}
+		
+		// Convert the impulse
+		impulse = new Box2D.b2Vec2(
+			impulse.x * Units.GRAPHICS_TO_PHYSICS,
+			impulse.y * Units.GRAPHICS_TO_PHYSICS
+		);
+		
+		this.b2Body.ApplyLinearImpulse(impulse, this.b2Body.GetWorldCenter());
+	}
 }
