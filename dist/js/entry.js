@@ -53718,7 +53718,7 @@ $(window).on("load", function (event) {
   payload.init();
 });
 
-},{"./assets/Assets":10,"./game/Game":13,"./game/Player":15,"./game/weapons/default/Set":25,"camera-controls":3,"stats.js":5,"three":6}],9:[function(require,module,exports){
+},{"./assets/Assets":10,"./game/Game":13,"./game/Player":15,"./game/weapons/default/Set":26,"camera-controls":3,"stats.js":5,"three":6}],9:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -54178,6 +54178,8 @@ exports["default"] = void 0;
 
 var _EventDispatcherWithOptions = _interopRequireDefault(require("../EventDispatcherWithOptions"));
 
+var _Compass = _interopRequireDefault(require("./entities/Compass"));
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
 function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
@@ -54217,6 +54219,8 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
 
     _this.initWeaponSelect();
 
+    _this.initCompass();
+
     $("#re-center").on("click", function (event) {
       return _this.onReCenter(event);
     });
@@ -54237,6 +54241,12 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
         $option.text(definition.name + " (" + definition.cost + ")");
         $select.append($option);
       });
+    }
+  }, {
+    key: "initCompass",
+    value: function initCompass() {
+      this.compass = new _Compass["default"](this.game.world);
+      this.game.world.add(this.compass);
     }
   }, {
     key: "onReCenter",
@@ -54265,7 +54275,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = UI;
 
-},{"../EventDispatcherWithOptions":7}],17:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":7,"./entities/Compass":19}],17:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -54655,7 +54665,104 @@ World.defaults = {
   }
 };
 
-},{"../EventDispatcherWithOptions":7,"./Game":13,"./Interaction":14,"./Units":17,"./entities/Entity":19,"./entities/Planet":20,"./entities/Ship":21,"./entities/particles/Emitter":23}],19:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":7,"./Game":13,"./Interaction":14,"./Units":17,"./entities/Entity":20,"./entities/Planet":21,"./entities/Ship":22,"./entities/particles/Emitter":24}],19:[function(require,module,exports){
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+
+var _Entity2 = _interopRequireDefault(require("./Entity"));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
+
+function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+function _get(target, property, receiver) { if (typeof Reflect !== "undefined" && Reflect.get) { _get = Reflect.get; } else { _get = function _get(target, property, receiver) { var base = _superPropBase(target, property); if (!base) return; var desc = Object.getOwnPropertyDescriptor(base, property); if (desc.get) { return desc.get.call(receiver); } return desc.value; }; } return _get(target, property, receiver || target); }
+
+function _superPropBase(object, property) { while (!Object.prototype.hasOwnProperty.call(object, property)) { object = _getPrototypeOf(object); if (object === null) break; } return object; }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function"); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, writable: true, configurable: true } }); if (superClass) _setPrototypeOf(subClass, superClass); }
+
+function _setPrototypeOf(o, p) { _setPrototypeOf = Object.setPrototypeOf || function _setPrototypeOf(o, p) { o.__proto__ = p; return o; }; return _setPrototypeOf(o, p); }
+
+function _createSuper(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+
+function _possibleConstructorReturn(self, call) { if (call && (_typeof(call) === "object" || typeof call === "function")) { return call; } return _assertThisInitialized(self); }
+
+function _assertThisInitialized(self) { if (self === void 0) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return self; }
+
+function _isNativeReflectConstruct() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Date.prototype.toString.call(Reflect.construct(Date, [], function () {})); return true; } catch (e) { return false; } }
+
+function _getPrototypeOf(o) { _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf : function _getPrototypeOf(o) { return o.__proto__ || Object.getPrototypeOf(o); }; return _getPrototypeOf(o); }
+
+var Compass = /*#__PURE__*/function (_Entity) {
+  _inherits(Compass, _Entity);
+
+  var _super = _createSuper(Compass);
+
+  function Compass(world, options) {
+    _classCallCheck(this, Compass);
+
+    return _super.call(this, world, options);
+  }
+
+  _createClass(Compass, [{
+    key: "initGraphics",
+    value: function initGraphics() {
+      var radius = this.world.options.ship.radius * 16;
+      this.object3d = new THREE.Object3D();
+      this.outer = {
+        geom: new THREE.PlaneGeometry(radius, radius),
+        material: new THREE.MeshBasicMaterial({
+          map: payload.assets.sprites.compass.assets["outer.png"].resource,
+          transparent: true
+        })
+      };
+      this.inner = {
+        geom: new THREE.PlaneGeometry(radius * 0.7, radius * 0.7),
+        material: new THREE.MeshBasicMaterial({
+          map: payload.assets.sprites.compass.inner.random(this.world.game).resource,
+          transparent: true
+        })
+      };
+      this.outer.mesh = new THREE.Mesh(this.outer.geom, this.outer.material);
+      this.inner.mesh = new THREE.Mesh(this.inner.geom, this.inner.material);
+      this.object3d.add(this.outer.mesh);
+      this.object3d.add(this.inner.mesh);
+      this.innerAngularVelocity = 0;
+      this.innerRemainingFrames = 0;
+    }
+  }, {
+    key: "update",
+    value: function update() {
+      var player = this.world.game.currentPlayer;
+
+      if (--this.innerRemainingFrames <= 0) {
+        this.innerAngularVelocity = (Math.random() - 0.5) * 2 * Math.PI / 100;
+        this.innerRemainingFrames = 30 + Math.random() * 300;
+      }
+
+      this.inner.mesh.rotation.z += this.innerAngularVelocity;
+      if (player) this.object3d.position.copy(player.ship.object3d.position);
+
+      _get(_getPrototypeOf(Compass.prototype), "update", this).call(this);
+    }
+  }]);
+
+  return Compass;
+}(_Entity2["default"]);
+
+exports["default"] = Compass;
+
+},{"./Entity":20}],20:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -54848,7 +54955,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = Entity;
 
-},{"../../EventDispatcherWithOptions":7,"../Units":17,"../World":18}],20:[function(require,module,exports){
+},{"../../EventDispatcherWithOptions":7,"../Units":17,"../World":18}],21:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55340,7 +55447,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Planet;
 
-},{"../Units":17,"./Entity":19,"d3-delaunay":4}],21:[function(require,module,exports){
+},{"../Units":17,"./Entity":20,"d3-delaunay":4}],22:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55458,7 +55565,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Ship;
 
-},{"../Units":17,"./Entity":19}],22:[function(require,module,exports){
+},{"../Units":17,"./Entity":20}],23:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55551,7 +55658,7 @@ var AnimatedParticleGeometry = /*#__PURE__*/function (_PlaneGeometry) {
 
 exports["default"] = AnimatedParticleGeometry;
 
-},{"THREE":2}],23:[function(require,module,exports){
+},{"THREE":2}],24:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55725,7 +55832,7 @@ var Emitter = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Emitter;
 
-},{"../Entity":19,"./AnimatedParticleGeometry":22}],24:[function(require,module,exports){
+},{"../Entity":20,"./AnimatedParticleGeometry":23}],25:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55782,7 +55889,7 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
 
 exports["default"] = Bomb;
 
-},{"./Weapon":26}],25:[function(require,module,exports){
+},{"./Weapon":27}],26:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55822,7 +55929,7 @@ var _default = {
 };
 exports["default"] = _default;
 
-},{"./instantiatable/LargeBomb":27,"./instantiatable/MediumBomb":28,"./instantiatable/MegaBomb":29,"./instantiatable/SmallBomb":30}],26:[function(require,module,exports){
+},{"./instantiatable/LargeBomb":28,"./instantiatable/MediumBomb":29,"./instantiatable/MegaBomb":30,"./instantiatable/SmallBomb":31}],27:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55879,7 +55986,7 @@ var Weapon = /*#__PURE__*/function (_EventDispatcher) {
 
 exports["default"] = Weapon;
 
-},{"@perry-rylance/event-dispatcher":1}],27:[function(require,module,exports){
+},{"@perry-rylance/event-dispatcher":1}],28:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -55941,7 +56048,7 @@ var LargeBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = LargeBomb;
 
-},{"../Bomb":24}],28:[function(require,module,exports){
+},{"../Bomb":25}],29:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -56003,7 +56110,7 @@ var MediumBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MediumBomb;
 
-},{"../Bomb":24}],29:[function(require,module,exports){
+},{"../Bomb":25}],30:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -56065,7 +56172,7 @@ var MegaBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MegaBomb;
 
-},{"../Bomb":24}],30:[function(require,module,exports){
+},{"../Bomb":25}],31:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -56127,7 +56234,7 @@ var SmallBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = SmallBomb;
 
-},{"../Bomb":24}],31:[function(require,module,exports){
+},{"../Bomb":25}],32:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.MTLLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -56511,7 +56618,7 @@ THREE.MTLLoader.MaterialCreator.prototype = {
   }
 };
 
-},{}],32:[function(require,module,exports){
+},{}],33:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.OBJLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -57089,6 +57196,6 @@ THREE.OBJLoader = function () {
   return OBJLoader;
 }();
 
-},{}]},{},[12,31,32])
+},{}]},{},[12,32,33])
 
 });//# sourceMappingURL=entry.js.map

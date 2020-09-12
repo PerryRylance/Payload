@@ -1,4 +1,5 @@
 import EventDispatcherWithOptions from "../EventDispatcherWithOptions";
+import Compass from "./entities/Compass";
 
 export default class UI extends EventDispatcherWithOptions
 {
@@ -9,6 +10,7 @@ export default class UI extends EventDispatcherWithOptions
 		this.game = game;
 		
 		this.initWeaponSelect();
+		this.initCompass();
 		
 		$("#re-center").on("click", (event) => this.onReCenter(event));
 		$("#launch").on("click", (event) => this.onLaunch(event));
@@ -30,6 +32,13 @@ export default class UI extends EventDispatcherWithOptions
 			$select.append($option);
 			
 		} );
+	}
+	
+	initCompass()
+	{
+		this.compass = new Compass(this.game.world);
+		
+		this.game.world.add(this.compass);
 	}
 	
 	onReCenter(event)
