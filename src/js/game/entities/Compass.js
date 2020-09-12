@@ -9,7 +9,7 @@ export default class Compass extends Entity
 	
 	initGraphics()
 	{
-		let radius	= this.world.options.ship.radius * 16;
+		let radius	= this.world.options.ship.radius * 20;
 		
 		this.object3d			= new THREE.Object3D();
 			
@@ -44,11 +44,21 @@ export default class Compass extends Entity
 		// Compensate for sprite rotation
 		group.rotation.z = 45 * Math.PI / 180;
 		
+		// Get object ready`
 		this.object3d.add(this._makeIsometric(group));
+		this.object3d.entity = this;
 		
+		// Interaction
+		// TODO: Add touch support
+		this.object3d.on("mousedown", (event) => this.onMouseDown(event));
+		$(window).on("mouseup", (event) => this.onMouseUp(event));
+		$(window).on("mousemove", (event) => this.onMouseMove(event));
+		
+		// Animation
 		this.innerAngularVelocity = 0;
 		this.innerRemainingFrames = 0;
 		
+		// Z Index
 		this.zIndex = 200;
 	}
 	
@@ -68,5 +78,47 @@ export default class Compass extends Entity
 			this.object3d.position.copy(player.ship.object3d.position);
 		
 		super.update();
+	}
+	
+	onMouseDown(event)
+	{
+		this._isUserInteracting = true;
+		this.world.interaction.controls.enabled = false;
+	}
+	
+	onMouseUp(event)
+	{
+		this._isUserInteracting = false;
+		this.world.interaction.controls.enabled = true;
+	}
+	
+	onMouseMove(event)
+	{
+		if(!this._isUserInteracting)
+			return;
+		
+		let player		= this.world.game.currentPlayer;
+		
+		if(!player)
+			return;
+		
+		let screen		= player.ship.getScreenCoordinates();
+		let mouse		= new THREE.Vector2(event.clientX, event.clientY);
+		
+		// First orientate the compass
+		let delta		= new THREE.Vector2();
+		
+		delta.subVectors(mouse, screen);
+		// delta.normalize();
+		
+		this.angle		= Math.atan2(-delta.y, delta.x / 2);
+		
+		// Now populate the UI field
+		let degrees		= Math.atan2(-delta.y, delta.x) / Math.PI * 180;
+		
+		degrees			= (degrees + 360) % 360;
+		degrees			= Math.round(degrees);
+		
+		$("input[name='degrees']").val(degrees);
 	}
 }

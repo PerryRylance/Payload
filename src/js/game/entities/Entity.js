@@ -61,6 +61,21 @@ export default class Entity extends EventDispatcherWithOptions
 			this.object3d.position.set(x, y, 0);
 	}
 	
+	get angle()
+	{
+		if(!this.isIsometric)
+			return this.object3d.rotation.z;
+		else
+			return this._isometricContainer.rotation.z;
+	}
+	
+	set angle(value)
+	{
+		Payload.assert(!isNaN(value));
+		
+		this._setAngle(value);
+	}
+	
 	get isAffectedByGravity()
 	{
 		if(!this.b2Body)
@@ -72,6 +87,27 @@ export default class Entity extends EventDispatcherWithOptions
 	get isIsometric()
 	{
 		return this._isIsometric;
+	}
+	
+	getScreenCoordinates()
+	{
+		Payload.assert("object3d" in this);
+		
+		let size		= new THREE.Vector2();
+		let pos			= new THREE.Vector3();
+		
+		this.world.renderer.getSize(size);
+		
+		pos				= pos.setFromMatrixPosition(this.object3d.matrixWorld);
+		pos.project(this.world.camera);
+		
+		let widthHalf	= size.x / 2;
+		let heightHalf	= size.y / 2;
+		
+		return new THREE.Vector2(
+			(pos.x * widthHalf) + widthHalf,
+			-(pos.y * heightHalf) + heightHalf
+		);
 	}
 	
 	initPhysics()
