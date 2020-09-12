@@ -119,7 +119,7 @@ export default class World extends EventDispatcherWithOptions
 		this.scene.add( light );
 		
 		// And mouse interaction
-		this.interaction = new Interaction(this.camera, this.renderer.domElement);
+		this.interaction = new Interaction(this, this.renderer.domElement);
 	}
 	
 	initPlanets(options)
