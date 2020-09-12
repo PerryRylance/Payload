@@ -261,6 +261,6711 @@ EventDispatcher.domNamespaceSuffix = "ed";
 module.exports = Event;
 module.exports = EventDispatcher;
 },{}],2:[function(require,module,exports){
+/*!
+ * camera-controls
+ * https://github.com/yomotsu/camera-controls
+ * (c) 2017 @yomotsu
+ * Released under the MIT License.
+ */
+(function (global, factory) {
+	typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
+	typeof define === 'function' && define.amd ? define(factory) :
+	(global = global || self, global.CameraControls = factory());
+}(this, (function () { 'use strict';
+
+	/*! *****************************************************************************
+	Copyright (c) Microsoft Corporation. All rights reserved.
+	Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+	this file except in compliance with the License. You may obtain a copy of the
+	License at http://www.apache.org/licenses/LICENSE-2.0
+
+	THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+	KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED
+	WARRANTIES OR CONDITIONS OF TITLE, FITNESS FOR A PARTICULAR PURPOSE,
+	MERCHANTABLITY OR NON-INFRINGEMENT.
+
+	See the Apache Version 2.0 License for specific language governing permissions
+	and limitations under the License.
+	***************************************************************************** */
+	/* global Reflect, Promise */
+
+	var extendStatics = function(d, b) {
+	    extendStatics = Object.setPrototypeOf ||
+	        ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+	        function (d, b) { for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p]; };
+	    return extendStatics(d, b);
+	};
+
+	function __extends(d, b) {
+	    extendStatics(d, b);
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	}
+
+	var ACTION;
+	(function (ACTION) {
+	    ACTION[ACTION["NONE"] = 0] = "NONE";
+	    ACTION[ACTION["ROTATE"] = 1] = "ROTATE";
+	    ACTION[ACTION["TRUCK"] = 2] = "TRUCK";
+	    ACTION[ACTION["DOLLY"] = 3] = "DOLLY";
+	    ACTION[ACTION["ZOOM"] = 4] = "ZOOM";
+	    ACTION[ACTION["TOUCH_ROTATE"] = 5] = "TOUCH_ROTATE";
+	    ACTION[ACTION["TOUCH_TRUCK"] = 6] = "TOUCH_TRUCK";
+	    ACTION[ACTION["TOUCH_DOLLY"] = 7] = "TOUCH_DOLLY";
+	    ACTION[ACTION["TOUCH_ZOOM"] = 8] = "TOUCH_ZOOM";
+	    ACTION[ACTION["TOUCH_DOLLY_TRUCK"] = 9] = "TOUCH_DOLLY_TRUCK";
+	    ACTION[ACTION["TOUCH_ZOOM_TRUCK"] = 10] = "TOUCH_ZOOM_TRUCK";
+	})(ACTION || (ACTION = {}));
+
+	var PI_2 = Math.PI * 2;
+	var PI_HALF = Math.PI / 2;
+	var FPS_60 = 1 / 0.016;
+
+	var EPSILON = 1e-5;
+	function approxZero(number) {
+	    return Math.abs(number) < EPSILON;
+	}
+	function approxEquals(a, b) {
+	    return approxZero(a - b);
+	}
+	function roundToStep(value, step) {
+	    return Math.round(value / step) * step;
+	}
+	function infinityToMaxNumber(value) {
+	    if (isFinite(value))
+	        return value;
+	    if (value < 0)
+	        return -Number.MAX_VALUE;
+	    return Number.MAX_VALUE;
+	}
+	function maxNumberToInfinity(value) {
+	    if (Math.abs(value) < Number.MAX_VALUE)
+	        return value;
+	    return value * Infinity;
+	}
+
+	function isTouchEvent(event) {
+	    return 'TouchEvent' in window && event instanceof TouchEvent;
+	}
+
+	function extractClientCoordFromEvent(event, out) {
+	    out.set(0, 0);
+	    if (isTouchEvent(event)) {
+	        var touchEvent = event;
+	        for (var i = 0; i < touchEvent.touches.length; i++) {
+	            out.x += touchEvent.touches[i].clientX;
+	            out.y += touchEvent.touches[i].clientY;
+	        }
+	        out.x /= touchEvent.touches.length;
+	        out.y /= touchEvent.touches.length;
+	        return out;
+	    }
+	    else {
+	        var mouseEvent = event;
+	        out.set(mouseEvent.clientX, mouseEvent.clientY);
+	        return out;
+	    }
+	}
+
+	function notSupportedInOrthographicCamera(camera, message) {
+	    if (!camera.isPerspectiveCamera) {
+	        console.warn(message + " is not supported in OrthographicCamera");
+	        return true;
+	    }
+	    return false;
+	}
+
+	var EventDispatcher = (function () {
+	    function EventDispatcher() {
+	        this._listeners = {};
+	    }
+	    EventDispatcher.prototype.addEventListener = function (type, listener) {
+	        var listeners = this._listeners;
+	        if (listeners[type] === undefined)
+	            listeners[type] = [];
+	        if (listeners[type].indexOf(listener) === -1)
+	            listeners[type].push(listener);
+	    };
+	    EventDispatcher.prototype.removeEventListener = function (type, listener) {
+	        var listeners = this._listeners;
+	        var listenerArray = listeners[type];
+	        if (listenerArray !== undefined) {
+	            var index = listenerArray.indexOf(listener);
+	            if (index !== -1)
+	                listenerArray.splice(index, 1);
+	        }
+	    };
+	    EventDispatcher.prototype.removeAllEventListeners = function (type) {
+	        if (!type) {
+	            this._listeners = {};
+	            return;
+	        }
+	        if (Array.isArray(this._listeners[type]))
+	            this._listeners[type].length = 0;
+	    };
+	    EventDispatcher.prototype.dispatchEvent = function (event) {
+	        var listeners = this._listeners;
+	        var listenerArray = listeners[event.type];
+	        if (listenerArray !== undefined) {
+	            event.target = this;
+	            var array = listenerArray.slice(0);
+	            for (var i = 0, l = array.length; i < l; i++) {
+	                array[i].call(this, event);
+	            }
+	        }
+	    };
+	    return EventDispatcher;
+	}());
+
+	var isMac = /Mac/.test(navigator.platform);
+	var readonlyACTION = Object.freeze(ACTION);
+	var TOUCH_DOLLY_FACTOR = 1 / 8;
+	var THREE;
+	var _ORIGIN;
+	var _AXIS_Y;
+	var _AXIS_Z;
+	var _v2;
+	var _v3A;
+	var _v3B;
+	var _v3C;
+	var _xColumn;
+	var _yColumn;
+	var _sphericalA;
+	var _sphericalB;
+	var _box3A;
+	var _box3B;
+	var _quaternionA;
+	var _quaternionB;
+	var _rotationMatrix;
+	var _raycaster;
+	var CameraControls = (function (_super) {
+	    __extends(CameraControls, _super);
+	    function CameraControls(camera, domElement) {
+	        var _this = _super.call(this) || this;
+	        _this.enabled = true;
+	        _this.minPolarAngle = 0;
+	        _this.maxPolarAngle = Math.PI;
+	        _this.minAzimuthAngle = -Infinity;
+	        _this.maxAzimuthAngle = Infinity;
+	        _this.minDistance = 0;
+	        _this.maxDistance = Infinity;
+	        _this.minZoom = 0.01;
+	        _this.maxZoom = Infinity;
+	        _this.dampingFactor = 0.05;
+	        _this.draggingDampingFactor = 0.25;
+	        _this.azimuthRotateSpeed = 1.0;
+	        _this.polarRotateSpeed = 1.0;
+	        _this.dollySpeed = 1.0;
+	        _this.truckSpeed = 2.0;
+	        _this.dollyToCursor = false;
+	        _this.verticalDragToForward = false;
+	        _this.boundaryFriction = 0.0;
+	        _this.colliderMeshes = [];
+	        _this._state = ACTION.NONE;
+	        _this._viewport = null;
+	        _this._dollyControlAmount = 0;
+	        _this._boundaryEnclosesCamera = false;
+	        _this._needsUpdate = true;
+	        _this._updatedLastTime = false;
+	        _this._camera = camera;
+	        _this._yAxisUpSpace = new THREE.Quaternion().setFromUnitVectors(_this._camera.up, _AXIS_Y);
+	        _this._yAxisUpSpaceInverse = _this._yAxisUpSpace.clone().inverse();
+	        _this._state = ACTION.NONE;
+	        _this._domElement = domElement;
+	        _this._target = new THREE.Vector3();
+	        _this._targetEnd = _this._target.clone();
+	        _this._spherical = new THREE.Spherical().setFromVector3(_v3A.copy(_this._camera.position).applyQuaternion(_this._yAxisUpSpace));
+	        _this._sphericalEnd = _this._spherical.clone();
+	        _this._zoom = _this._camera.zoom;
+	        _this._zoomEnd = _this._zoom;
+	        _this._nearPlaneCorners = [
+	            new THREE.Vector3(),
+	            new THREE.Vector3(),
+	            new THREE.Vector3(),
+	            new THREE.Vector3(),
+	        ];
+	        _this._updateNearPlaneCorners();
+	        _this._boundary = new THREE.Box3(new THREE.Vector3(-Infinity, -Infinity, -Infinity), new THREE.Vector3(Infinity, Infinity, Infinity));
+	        _this._target0 = _this._target.clone();
+	        _this._position0 = _this._camera.position.clone();
+	        _this._zoom0 = _this._zoom;
+	        _this._dollyControlAmount = 0;
+	        _this._dollyControlCoord = new THREE.Vector2();
+	        _this.mouseButtons = {
+	            left: ACTION.ROTATE,
+	            middle: ACTION.DOLLY,
+	            right: ACTION.TRUCK,
+	            wheel: _this._camera.isPerspectiveCamera ? ACTION.DOLLY :
+	                _this._camera.isOrthographicCamera ? ACTION.ZOOM :
+	                    ACTION.NONE,
+	        };
+	        _this.touches = {
+	            one: ACTION.TOUCH_ROTATE,
+	            two: _this._camera.isPerspectiveCamera ? ACTION.TOUCH_DOLLY_TRUCK :
+	                _this._camera.isOrthographicCamera ? ACTION.TOUCH_ZOOM_TRUCK :
+	                    ACTION.NONE,
+	            three: ACTION.TOUCH_TRUCK,
+	        };
+	        if (_this._domElement) {
+	            var dragStartPosition_1 = new THREE.Vector2();
+	            var lastDragPosition_1 = new THREE.Vector2();
+	            var dollyStart_1 = new THREE.Vector2();
+	            var elementRect_1 = new THREE.Vector4();
+	            var truckInternal_1 = function (deltaX, deltaY) {
+	                if (_this._camera.isPerspectiveCamera) {
+	                    var camera_1 = _this._camera;
+	                    var offset = _v3A.copy(camera_1.position).sub(_this._target);
+	                    var fov = camera_1.getEffectiveFOV() * THREE.Math.DEG2RAD;
+	                    var targetDistance = offset.length() * Math.tan(fov * 0.5);
+	                    var truckX = (_this.truckSpeed * deltaX * targetDistance / elementRect_1.w);
+	                    var pedestalY = (_this.truckSpeed * deltaY * targetDistance / elementRect_1.w);
+	                    if (_this.verticalDragToForward) {
+	                        _this.truck(truckX, 0, true);
+	                        _this.forward(-pedestalY, true);
+	                    }
+	                    else {
+	                        _this.truck(truckX, pedestalY, true);
+	                    }
+	                }
+	                else if (_this._camera.isOrthographicCamera) {
+	                    var camera_2 = _this._camera;
+	                    var truckX = deltaX * (camera_2.right - camera_2.left) / camera_2.zoom / elementRect_1.z;
+	                    var pedestalY = deltaY * (camera_2.top - camera_2.bottom) / camera_2.zoom / elementRect_1.w;
+	                    _this.truck(truckX, pedestalY, true);
+	                }
+	            };
+	            var rotateInternal_1 = function (deltaX, deltaY) {
+	                var theta = PI_2 * _this.azimuthRotateSpeed * deltaX / elementRect_1.w;
+	                var phi = PI_2 * _this.polarRotateSpeed * deltaY / elementRect_1.w;
+	                _this.rotate(theta, phi, true);
+	            };
+	            var dollyInternal_1 = function (delta, x, y) {
+	                var dollyScale = Math.pow(0.95, -delta * _this.dollySpeed);
+	                var distance = _this._sphericalEnd.radius * dollyScale;
+	                var prevRadius = _this._sphericalEnd.radius;
+	                _this.dollyTo(distance);
+	                if (_this.dollyToCursor) {
+	                    _this._dollyControlAmount += _this._sphericalEnd.radius - prevRadius;
+	                    _this._dollyControlCoord.set(x, y);
+	                }
+	                return;
+	            };
+	            var zoomInternal_1 = function (delta) {
+	                var zoomScale = Math.pow(0.95, delta * _this.dollySpeed);
+	                _this.zoomTo(_this._zoom * zoomScale);
+	                return;
+	            };
+	            var onMouseDown_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                event.preventDefault();
+	                var prevState = _this._state;
+	                switch (event.button) {
+	                    case THREE.MOUSE.LEFT:
+	                        _this._state = _this.mouseButtons.left;
+	                        break;
+	                    case THREE.MOUSE.MIDDLE:
+	                        _this._state = _this.mouseButtons.middle;
+	                        break;
+	                    case THREE.MOUSE.RIGHT:
+	                        _this._state = _this.mouseButtons.right;
+	                        break;
+	                }
+	                if (prevState !== _this._state) {
+	                    startDragging_1(event);
+	                }
+	            };
+	            var onTouchStart_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                event.preventDefault();
+	                var prevState = _this._state;
+	                switch (event.touches.length) {
+	                    case 1:
+	                        _this._state = _this.touches.one;
+	                        break;
+	                    case 2:
+	                        _this._state = _this.touches.two;
+	                        break;
+	                    case 3:
+	                        _this._state = _this.touches.three;
+	                        break;
+	                }
+	                if (prevState !== _this._state) {
+	                    startDragging_1(event);
+	                }
+	            };
+	            var lastScrollTimeStamp_1 = -1;
+	            var onMouseWheel_1 = function (event) {
+	                if (!_this.enabled || _this.mouseButtons.wheel === ACTION.NONE)
+	                    return;
+	                event.preventDefault();
+	                if (_this.dollyToCursor ||
+	                    _this.mouseButtons.wheel === ACTION.ROTATE ||
+	                    _this.mouseButtons.wheel === ACTION.TRUCK) {
+	                    var now = performance.now();
+	                    if (lastScrollTimeStamp_1 - now < 1000)
+	                        _this._getClientRect(elementRect_1);
+	                    lastScrollTimeStamp_1 = now;
+	                }
+	                var deltaYFactor = isMac ? -1 : -3;
+	                var delta = (event.deltaMode === 1) ? event.deltaY / deltaYFactor : event.deltaY / (deltaYFactor * 10);
+	                var x = _this.dollyToCursor ? (event.clientX - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
+	                var y = _this.dollyToCursor ? (event.clientY - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
+	                switch (_this.mouseButtons.wheel) {
+	                    case ACTION.ROTATE: {
+	                        rotateInternal_1(event.deltaX, event.deltaY);
+	                        break;
+	                    }
+	                    case ACTION.TRUCK: {
+	                        truckInternal_1(event.deltaX, event.deltaY);
+	                        break;
+	                    }
+	                    case ACTION.DOLLY: {
+	                        dollyInternal_1(-delta, x, y);
+	                        break;
+	                    }
+	                    case ACTION.ZOOM: {
+	                        zoomInternal_1(-delta);
+	                        break;
+	                    }
+	                }
+	                _this.dispatchEvent({
+	                    type: 'control',
+	                    originalEvent: event,
+	                });
+	            };
+	            var onContextMenu_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                event.preventDefault();
+	            };
+	            var startDragging_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                event.preventDefault();
+	                extractClientCoordFromEvent(event, _v2);
+	                _this._getClientRect(elementRect_1);
+	                dragStartPosition_1.copy(_v2);
+	                lastDragPosition_1.copy(_v2);
+	                var isMultiTouch = isTouchEvent(event) && event.touches.length >= 2;
+	                if (isMultiTouch) {
+	                    var touchEvent = event;
+	                    var dx = _v2.x - touchEvent.touches[1].clientX;
+	                    var dy = _v2.y - touchEvent.touches[1].clientY;
+	                    var distance = Math.sqrt(dx * dx + dy * dy);
+	                    dollyStart_1.set(0, distance);
+	                    var x = (touchEvent.touches[0].clientX + touchEvent.touches[1].clientX) * 0.5;
+	                    var y = (touchEvent.touches[0].clientY + touchEvent.touches[1].clientY) * 0.5;
+	                    lastDragPosition_1.set(x, y);
+	                }
+	                document.addEventListener('mousemove', dragging_1);
+	                document.addEventListener('touchmove', dragging_1, { passive: false });
+	                document.addEventListener('mouseup', endDragging_1);
+	                document.addEventListener('touchend', endDragging_1);
+	                _this.dispatchEvent({
+	                    type: 'controlstart',
+	                    originalEvent: event,
+	                });
+	            };
+	            var dragging_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                event.preventDefault();
+	                extractClientCoordFromEvent(event, _v2);
+	                var deltaX = lastDragPosition_1.x - _v2.x;
+	                var deltaY = lastDragPosition_1.y - _v2.y;
+	                lastDragPosition_1.copy(_v2);
+	                switch (_this._state) {
+	                    case ACTION.ROTATE:
+	                    case ACTION.TOUCH_ROTATE: {
+	                        rotateInternal_1(deltaX, deltaY);
+	                        break;
+	                    }
+	                    case ACTION.DOLLY:
+	                    case ACTION.ZOOM: {
+	                        var dollyX = _this.dollyToCursor ? (dragStartPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
+	                        var dollyY = _this.dollyToCursor ? (dragStartPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
+	                        _this._state === ACTION.DOLLY ?
+	                            dollyInternal_1(deltaY * TOUCH_DOLLY_FACTOR, dollyX, dollyY) :
+	                            zoomInternal_1(deltaY * TOUCH_DOLLY_FACTOR);
+	                        break;
+	                    }
+	                    case ACTION.TOUCH_DOLLY:
+	                    case ACTION.TOUCH_ZOOM:
+	                    case ACTION.TOUCH_DOLLY_TRUCK:
+	                    case ACTION.TOUCH_ZOOM_TRUCK: {
+	                        var touchEvent = event;
+	                        var dx = _v2.x - touchEvent.touches[1].clientX;
+	                        var dy = _v2.y - touchEvent.touches[1].clientY;
+	                        var distance = Math.sqrt(dx * dx + dy * dy);
+	                        var dollyDelta = dollyStart_1.y - distance;
+	                        dollyStart_1.set(0, distance);
+	                        var dollyX = _this.dollyToCursor ? (lastDragPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
+	                        var dollyY = _this.dollyToCursor ? (lastDragPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
+	                        _this._state === ACTION.TOUCH_DOLLY ||
+	                            _this._state === ACTION.TOUCH_DOLLY_TRUCK ?
+	                            dollyInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR, dollyX, dollyY) :
+	                            zoomInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR);
+	                        if (_this._state === ACTION.TOUCH_DOLLY_TRUCK ||
+	                            _this._state === ACTION.TOUCH_ZOOM_TRUCK) {
+	                            truckInternal_1(deltaX, deltaY);
+	                        }
+	                        break;
+	                    }
+	                    case ACTION.TRUCK:
+	                    case ACTION.TOUCH_TRUCK: {
+	                        truckInternal_1(deltaX, deltaY);
+	                        break;
+	                    }
+	                }
+	                _this.dispatchEvent({
+	                    type: 'control',
+	                    originalEvent: event,
+	                });
+	            };
+	            var endDragging_1 = function (event) {
+	                if (!_this.enabled)
+	                    return;
+	                _this._state = ACTION.NONE;
+	                document.removeEventListener('mousemove', dragging_1);
+	                document.removeEventListener('touchmove', dragging_1, { passive: false });
+	                document.removeEventListener('mouseup', endDragging_1);
+	                document.removeEventListener('touchend', endDragging_1);
+	                _this.dispatchEvent({
+	                    type: 'controlend',
+	                    originalEvent: event,
+	                });
+	            };
+	            _this._domElement.addEventListener('mousedown', onMouseDown_1);
+	            _this._domElement.addEventListener('touchstart', onTouchStart_1);
+	            _this._domElement.addEventListener('wheel', onMouseWheel_1);
+	            _this._domElement.addEventListener('contextmenu', onContextMenu_1);
+	            _this._removeAllEventListeners = function () {
+	                _this._domElement.removeEventListener('mousedown', onMouseDown_1);
+	                _this._domElement.removeEventListener('touchstart', onTouchStart_1);
+	                _this._domElement.removeEventListener('wheel', onMouseWheel_1);
+	                _this._domElement.removeEventListener('contextmenu', onContextMenu_1);
+	                document.removeEventListener('mousemove', dragging_1);
+	                document.removeEventListener('touchmove', dragging_1, { passive: false });
+	                document.removeEventListener('mouseup', endDragging_1);
+	                document.removeEventListener('touchend', endDragging_1);
+	            };
+	        }
+	        _this.update(0);
+	        return _this;
+	    }
+	    CameraControls.install = function (libs) {
+	        THREE = libs.THREE;
+	        _ORIGIN = Object.freeze(new THREE.Vector3(0, 0, 0));
+	        _AXIS_Y = Object.freeze(new THREE.Vector3(0, 1, 0));
+	        _AXIS_Z = Object.freeze(new THREE.Vector3(0, 0, 1));
+	        _v2 = new THREE.Vector2();
+	        _v3A = new THREE.Vector3();
+	        _v3B = new THREE.Vector3();
+	        _v3C = new THREE.Vector3();
+	        _xColumn = new THREE.Vector3();
+	        _yColumn = new THREE.Vector3();
+	        _sphericalA = new THREE.Spherical();
+	        _sphericalB = new THREE.Spherical();
+	        _box3A = new THREE.Box3();
+	        _box3B = new THREE.Box3();
+	        _quaternionA = new THREE.Quaternion();
+	        _quaternionB = new THREE.Quaternion();
+	        _rotationMatrix = new THREE.Matrix4();
+	        _raycaster = new THREE.Raycaster();
+	    };
+	    Object.defineProperty(CameraControls, "ACTION", {
+	        get: function () {
+	            return readonlyACTION;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "currentAction", {
+	        get: function () {
+	            return this._state;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "distance", {
+	        get: function () {
+	            return this._spherical.radius;
+	        },
+	        set: function (distance) {
+	            if (this._spherical.radius === distance &&
+	                this._sphericalEnd.radius === distance)
+	                return;
+	            this._spherical.radius = distance;
+	            this._sphericalEnd.radius = distance;
+	            this._needsUpdate = true;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "azimuthAngle", {
+	        get: function () {
+	            return this._spherical.theta;
+	        },
+	        set: function (azimuthAngle) {
+	            if (this._spherical.theta === azimuthAngle &&
+	                this._sphericalEnd.theta === azimuthAngle)
+	                return;
+	            this._spherical.theta = azimuthAngle;
+	            this._sphericalEnd.theta = azimuthAngle;
+	            this._needsUpdate = true;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "polarAngle", {
+	        get: function () {
+	            return this._spherical.phi;
+	        },
+	        set: function (polarAngle) {
+	            if (this._spherical.phi === polarAngle &&
+	                this._sphericalEnd.phi === polarAngle)
+	                return;
+	            this._spherical.phi = polarAngle;
+	            this._sphericalEnd.phi = polarAngle;
+	            this._needsUpdate = true;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "phiSpeed", {
+	        set: function (speed) {
+	            console.warn('phiSpeed was renamed. use azimuthRotateSpeed instead');
+	            this.azimuthRotateSpeed = speed;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "thetaSpeed", {
+	        set: function (speed) {
+	            console.warn('thetaSpeed was renamed. use polarRotateSpeed instead');
+	            this.polarRotateSpeed = speed;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    Object.defineProperty(CameraControls.prototype, "boundaryEnclosesCamera", {
+	        get: function () {
+	            return this._boundaryEnclosesCamera;
+	        },
+	        set: function (boundaryEnclosesCamera) {
+	            this._boundaryEnclosesCamera = boundaryEnclosesCamera;
+	            this._needsUpdate = true;
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    CameraControls.prototype.rotate = function (azimuthAngle, polarAngle, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this.rotateTo(this._sphericalEnd.theta + azimuthAngle, this._sphericalEnd.phi + polarAngle, enableTransition);
+	    };
+	    CameraControls.prototype.rotateTo = function (azimuthAngle, polarAngle, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        var theta = THREE.Math.clamp(azimuthAngle, this.minAzimuthAngle, this.maxAzimuthAngle);
+	        var phi = THREE.Math.clamp(polarAngle, this.minPolarAngle, this.maxPolarAngle);
+	        this._sphericalEnd.theta = theta;
+	        this._sphericalEnd.phi = phi;
+	        this._sphericalEnd.makeSafe();
+	        if (!enableTransition) {
+	            this._spherical.theta = this._sphericalEnd.theta;
+	            this._spherical.phi = this._sphericalEnd.phi;
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.dolly = function (distance, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this.dollyTo(this._sphericalEnd.radius - distance, enableTransition);
+	    };
+	    CameraControls.prototype.dollyTo = function (distance, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        if (notSupportedInOrthographicCamera(this._camera, 'dolly'))
+	            return;
+	        this._sphericalEnd.radius = THREE.Math.clamp(distance, this.minDistance, this.maxDistance);
+	        if (!enableTransition) {
+	            this._spherical.radius = this._sphericalEnd.radius;
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.zoom = function (zoomStep, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this.zoomTo(this._zoomEnd + zoomStep, enableTransition);
+	    };
+	    CameraControls.prototype.zoomTo = function (zoom, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this._zoomEnd = THREE.Math.clamp(zoom, this.minZoom, this.maxZoom);
+	        if (!enableTransition) {
+	            this._zoom = this._zoomEnd;
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.pan = function (x, y, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        console.log('`pan` has been renamed to `truck`');
+	        this.truck(x, y, enableTransition);
+	    };
+	    CameraControls.prototype.truck = function (x, y, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this._camera.updateMatrix();
+	        _xColumn.setFromMatrixColumn(this._camera.matrix, 0);
+	        _yColumn.setFromMatrixColumn(this._camera.matrix, 1);
+	        _xColumn.multiplyScalar(x);
+	        _yColumn.multiplyScalar(-y);
+	        var offset = _v3A.copy(_xColumn).add(_yColumn);
+	        this._encloseToBoundary(this._targetEnd, offset, this.boundaryFriction);
+	        if (!enableTransition) {
+	            this._target.copy(this._targetEnd);
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.forward = function (distance, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        _v3A.setFromMatrixColumn(this._camera.matrix, 0);
+	        _v3A.crossVectors(this._camera.up, _v3A);
+	        _v3A.multiplyScalar(distance);
+	        this._encloseToBoundary(this._targetEnd, _v3A, this.boundaryFriction);
+	        if (!enableTransition) {
+	            this._target.copy(this._targetEnd);
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.moveTo = function (x, y, z, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this._targetEnd.set(x, y, z);
+	        if (!enableTransition) {
+	            this._target.copy(this._targetEnd);
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.fitTo = function (box3OrObject, enableTransition, _a) {
+	        var _b = _a === void 0 ? {} : _a, _c = _b.paddingLeft, paddingLeft = _c === void 0 ? 0 : _c, _d = _b.paddingRight, paddingRight = _d === void 0 ? 0 : _d, _e = _b.paddingBottom, paddingBottom = _e === void 0 ? 0 : _e, _f = _b.paddingTop, paddingTop = _f === void 0 ? 0 : _f;
+	        var aabb = box3OrObject.isBox3
+	            ? _box3A.copy(box3OrObject)
+	            : _box3A.setFromObject(box3OrObject);
+	        var theta = roundToStep(this._sphericalEnd.theta, PI_HALF);
+	        var phi = roundToStep(this._sphericalEnd.phi, PI_HALF);
+	        this.rotateTo(theta, phi, enableTransition);
+	        var normal = _v3A.setFromSpherical(this._sphericalEnd).normalize();
+	        var rotation = _quaternionA.setFromUnitVectors(normal, _AXIS_Z);
+	        var viewFromPolar = approxEquals(Math.abs(normal.y), 1);
+	        if (viewFromPolar) {
+	            rotation.multiply(_quaternionB.setFromAxisAngle(_AXIS_Y, theta));
+	        }
+	        var bb = _box3B.makeEmpty();
+	        _v3B.copy(aabb.min).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.min).setX(aabb.max.x).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.min).setY(aabb.max.y).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.max).setZ(aabb.min.z).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.min).setZ(aabb.max.z).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.max).setY(aabb.min.y).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.max).setX(aabb.min.x).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        _v3B.copy(aabb.max).applyQuaternion(rotation);
+	        bb.expandByPoint(_v3B);
+	        rotation.setFromUnitVectors(_AXIS_Z, normal);
+	        bb.min.x -= paddingLeft;
+	        bb.min.y -= paddingBottom;
+	        bb.max.x += paddingRight;
+	        bb.max.y += paddingTop;
+	        var bbSize = bb.getSize(_v3A);
+	        var center = bb.getCenter(_v3B).applyQuaternion(rotation);
+	        var isPerspectiveCamera = this._camera.isPerspectiveCamera;
+	        var isOrthographicCamera = this._camera.isOrthographicCamera;
+	        if (isPerspectiveCamera) {
+	            var distance = this.getDistanceToFit(bbSize.x, bbSize.y, bbSize.z);
+	            this.moveTo(center.x, center.y, center.z, enableTransition);
+	            this.dollyTo(distance, enableTransition);
+	            return;
+	        }
+	        else if (isOrthographicCamera) {
+	            var camera = this._camera;
+	            var width = camera.right - camera.left;
+	            var height = camera.top - camera.bottom;
+	            var zoom = Math.min(width / bbSize.x, height / bbSize.y);
+	            this.moveTo(center.x, center.y, center.z, enableTransition);
+	            this.zoomTo(zoom, enableTransition);
+	            return;
+	        }
+	    };
+	    CameraControls.prototype.setLookAt = function (positionX, positionY, positionZ, targetX, targetY, targetZ, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        var position = _v3A.set(positionX, positionY, positionZ);
+	        var target = _v3B.set(targetX, targetY, targetZ);
+	        this._targetEnd.copy(target);
+	        this._sphericalEnd.setFromVector3(position.sub(target).applyQuaternion(this._yAxisUpSpace));
+	        this.normalizeRotations();
+	        if (!enableTransition) {
+	            this._target.copy(this._targetEnd);
+	            this._spherical.copy(this._sphericalEnd);
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.lerpLookAt = function (positionAX, positionAY, positionAZ, targetAX, targetAY, targetAZ, positionBX, positionBY, positionBZ, targetBX, targetBY, targetBZ, t, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        var positionA = _v3A.set(positionAX, positionAY, positionAZ);
+	        var targetA = _v3B.set(targetAX, targetAY, targetAZ);
+	        _sphericalA.setFromVector3(positionA.sub(targetA).applyQuaternion(this._yAxisUpSpace));
+	        var targetB = _v3A.set(targetBX, targetBY, targetBZ);
+	        this._targetEnd.copy(targetA).lerp(targetB, t);
+	        var positionB = _v3B.set(positionBX, positionBY, positionBZ);
+	        _sphericalB.setFromVector3(positionB.sub(targetB).applyQuaternion(this._yAxisUpSpace));
+	        var deltaTheta = _sphericalB.theta - _sphericalA.theta;
+	        var deltaPhi = _sphericalB.phi - _sphericalA.phi;
+	        var deltaRadius = _sphericalB.radius - _sphericalA.radius;
+	        this._sphericalEnd.set(_sphericalA.radius + deltaRadius * t, _sphericalA.phi + deltaPhi * t, _sphericalA.theta + deltaTheta * t);
+	        this.normalizeRotations();
+	        if (!enableTransition) {
+	            this._target.copy(this._targetEnd);
+	            this._spherical.copy(this._sphericalEnd);
+	        }
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.setPosition = function (positionX, positionY, positionZ, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this.setLookAt(positionX, positionY, positionZ, this._targetEnd.x, this._targetEnd.y, this._targetEnd.z, enableTransition);
+	    };
+	    CameraControls.prototype.setTarget = function (targetX, targetY, targetZ, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        var pos = this.getPosition(_v3A);
+	        this.setLookAt(pos.x, pos.y, pos.z, targetX, targetY, targetZ, enableTransition);
+	    };
+	    CameraControls.prototype.setBoundary = function (box3) {
+	        if (!box3) {
+	            this._boundary.min.set(-Infinity, -Infinity, -Infinity);
+	            this._boundary.max.set(Infinity, Infinity, Infinity);
+	            this._needsUpdate = true;
+	            return;
+	        }
+	        this._boundary.copy(box3);
+	        this._boundary.clampPoint(this._targetEnd, this._targetEnd);
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.setViewport = function (viewportOrX, y, width, height) {
+	        if (viewportOrX === null) {
+	            this._viewport = null;
+	            return;
+	        }
+	        this._viewport = this._viewport || new THREE.Vector4();
+	        if (typeof viewportOrX === 'number') {
+	            this._viewport.set(viewportOrX, y, width, height);
+	        }
+	        else {
+	            this._viewport.copy(viewportOrX);
+	        }
+	    };
+	    CameraControls.prototype.getDistanceToFit = function (width, height, depth) {
+	        if (notSupportedInOrthographicCamera(this._camera, 'getDistanceToFit'))
+	            return this._spherical.radius;
+	        var camera = this._camera;
+	        var boundingRectAspect = width / height;
+	        var fov = camera.getEffectiveFOV() * THREE.Math.DEG2RAD;
+	        var aspect = camera.aspect;
+	        var heightToFit = boundingRectAspect < aspect ? height : width / aspect;
+	        return heightToFit * 0.5 / Math.tan(fov * 0.5) + depth * 0.5;
+	    };
+	    CameraControls.prototype.getTarget = function (out) {
+	        var _out = !!out && out.isVector3 ? out : new THREE.Vector3();
+	        return _out.copy(this._targetEnd);
+	    };
+	    CameraControls.prototype.getPosition = function (out) {
+	        var _out = !!out && out.isVector3 ? out : new THREE.Vector3();
+	        return _out.setFromSpherical(this._sphericalEnd).applyQuaternion(this._yAxisUpSpaceInverse).add(this._targetEnd);
+	    };
+	    CameraControls.prototype.normalizeRotations = function () {
+	        this._sphericalEnd.theta = this._sphericalEnd.theta % PI_2;
+	        if (this._sphericalEnd.theta < 0)
+	            this._sphericalEnd.theta += PI_2;
+	        this._spherical.theta += PI_2 * Math.round((this._sphericalEnd.theta - this._spherical.theta) / PI_2);
+	    };
+	    CameraControls.prototype.reset = function (enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        this.setLookAt(this._position0.x, this._position0.y, this._position0.z, this._target0.x, this._target0.y, this._target0.z, enableTransition);
+	        this.zoomTo(this._zoom0, enableTransition);
+	    };
+	    CameraControls.prototype.saveState = function () {
+	        this._target0.copy(this._target);
+	        this._position0.copy(this._camera.position);
+	        this._zoom0 = this._zoom;
+	    };
+	    CameraControls.prototype.updateCameraUp = function () {
+	        this._yAxisUpSpace.setFromUnitVectors(this._camera.up, _AXIS_Y);
+	        this._yAxisUpSpaceInverse.copy(this._yAxisUpSpace).inverse();
+	    };
+	    CameraControls.prototype.update = function (delta) {
+	        var dampingFactor = this._state === ACTION.NONE ? this.dampingFactor : this.draggingDampingFactor;
+	        var lerpRatio = 1.0 - Math.exp(-dampingFactor * delta * FPS_60);
+	        var deltaTheta = this._sphericalEnd.theta - this._spherical.theta;
+	        var deltaPhi = this._sphericalEnd.phi - this._spherical.phi;
+	        var deltaRadius = this._sphericalEnd.radius - this._spherical.radius;
+	        var deltaTarget = _v3A.subVectors(this._targetEnd, this._target);
+	        if (!approxZero(deltaTheta) ||
+	            !approxZero(deltaPhi) ||
+	            !approxZero(deltaRadius) ||
+	            !approxZero(deltaTarget.x) ||
+	            !approxZero(deltaTarget.y) ||
+	            !approxZero(deltaTarget.z)) {
+	            this._spherical.set(this._spherical.radius + deltaRadius * lerpRatio, this._spherical.phi + deltaPhi * lerpRatio, this._spherical.theta + deltaTheta * lerpRatio);
+	            this._target.add(deltaTarget.multiplyScalar(lerpRatio));
+	            this._needsUpdate = true;
+	        }
+	        else {
+	            this._spherical.copy(this._sphericalEnd);
+	            this._target.copy(this._targetEnd);
+	        }
+	        if (this._dollyControlAmount !== 0) {
+	            if (this._camera.isPerspectiveCamera) {
+	                var camera = this._camera;
+	                var direction = _v3A.setFromSpherical(this._sphericalEnd).applyQuaternion(this._yAxisUpSpaceInverse).normalize().negate();
+	                var planeX = _v3B.copy(direction).cross(camera.up).normalize();
+	                if (planeX.lengthSq() === 0)
+	                    planeX.x = 1.0;
+	                var planeY = _v3C.crossVectors(planeX, direction);
+	                var worldToScreen = this._sphericalEnd.radius * Math.tan(camera.getEffectiveFOV() * THREE.Math.DEG2RAD * 0.5);
+	                var prevRadius = this._sphericalEnd.radius - this._dollyControlAmount;
+	                var lerpRatio_1 = (prevRadius - this._sphericalEnd.radius) / this._sphericalEnd.radius;
+	                var cursor = _v3A.copy(this._targetEnd)
+	                    .add(planeX.multiplyScalar(this._dollyControlCoord.x * worldToScreen * camera.aspect))
+	                    .add(planeY.multiplyScalar(this._dollyControlCoord.y * worldToScreen));
+	                this._targetEnd.lerp(cursor, lerpRatio_1);
+	                this._target.copy(this._targetEnd);
+	            }
+	            this._dollyControlAmount = 0;
+	        }
+	        var maxDistance = this._collisionTest();
+	        this._spherical.radius = Math.min(this._spherical.radius, maxDistance);
+	        this._spherical.makeSafe();
+	        this._camera.position.setFromSpherical(this._spherical).applyQuaternion(this._yAxisUpSpaceInverse).add(this._target);
+	        this._camera.lookAt(this._target);
+	        if (this._boundaryEnclosesCamera) {
+	            this._encloseToBoundary(this._camera.position.copy(this._target), _v3A.setFromSpherical(this._spherical).applyQuaternion(this._yAxisUpSpaceInverse), 1.0);
+	        }
+	        var zoomDelta = this._zoomEnd - this._zoom;
+	        this._zoom += zoomDelta * lerpRatio;
+	        if (this._camera.zoom !== this._zoom) {
+	            if (approxZero(zoomDelta))
+	                this._zoom = this._zoomEnd;
+	            this._camera.zoom = this._zoom;
+	            this._camera.updateProjectionMatrix();
+	            this._updateNearPlaneCorners();
+	            this._needsUpdate = true;
+	        }
+	        var updated = this._needsUpdate;
+	        if (updated && !this._updatedLastTime) {
+	            this.dispatchEvent({ type: 'wake' });
+	            this.dispatchEvent({ type: 'update' });
+	        }
+	        else if (updated) {
+	            this.dispatchEvent({ type: 'update' });
+	        }
+	        else if (!updated && this._updatedLastTime) {
+	            this.dispatchEvent({ type: 'sleep' });
+	        }
+	        this._updatedLastTime = updated;
+	        this._needsUpdate = false;
+	        return updated;
+	    };
+	    CameraControls.prototype.toJSON = function () {
+	        return JSON.stringify({
+	            enabled: this.enabled,
+	            minDistance: this.minDistance,
+	            maxDistance: infinityToMaxNumber(this.maxDistance),
+	            minZoom: this.minZoom,
+	            maxZoom: infinityToMaxNumber(this.maxZoom),
+	            minPolarAngle: this.minPolarAngle,
+	            maxPolarAngle: infinityToMaxNumber(this.maxPolarAngle),
+	            minAzimuthAngle: infinityToMaxNumber(this.minAzimuthAngle),
+	            maxAzimuthAngle: infinityToMaxNumber(this.maxAzimuthAngle),
+	            dampingFactor: this.dampingFactor,
+	            draggingDampingFactor: this.draggingDampingFactor,
+	            dollySpeed: this.dollySpeed,
+	            truckSpeed: this.truckSpeed,
+	            dollyToCursor: this.dollyToCursor,
+	            verticalDragToForward: this.verticalDragToForward,
+	            target: this._targetEnd.toArray(),
+	            position: this._camera.position.toArray(),
+	            zoom: this._camera.zoom,
+	            target0: this._target0.toArray(),
+	            position0: this._position0.toArray(),
+	            zoom0: this._zoom0,
+	        });
+	    };
+	    CameraControls.prototype.fromJSON = function (json, enableTransition) {
+	        if (enableTransition === void 0) { enableTransition = false; }
+	        var obj = JSON.parse(json);
+	        var position = _v3A.fromArray(obj.position);
+	        this.enabled = obj.enabled;
+	        this.minDistance = obj.minDistance;
+	        this.maxDistance = maxNumberToInfinity(obj.maxDistance);
+	        this.minZoom = obj.minZoom;
+	        this.maxZoom = maxNumberToInfinity(obj.maxZoom);
+	        this.minPolarAngle = obj.minPolarAngle;
+	        this.maxPolarAngle = maxNumberToInfinity(obj.maxPolarAngle);
+	        this.minAzimuthAngle = maxNumberToInfinity(obj.minAzimuthAngle);
+	        this.maxAzimuthAngle = maxNumberToInfinity(obj.maxAzimuthAngle);
+	        this.dampingFactor = obj.dampingFactor;
+	        this.draggingDampingFactor = obj.draggingDampingFactor;
+	        this.dollySpeed = obj.dollySpeed;
+	        this.truckSpeed = obj.truckSpeed;
+	        this.dollyToCursor = obj.dollyToCursor;
+	        this.verticalDragToForward = obj.verticalDragToForward;
+	        this._target0.fromArray(obj.target0);
+	        this._position0.fromArray(obj.position0);
+	        this._zoom0 = obj.zoom0;
+	        this.moveTo(obj.target[0], obj.target[1], obj.target[2], enableTransition);
+	        _sphericalA.setFromVector3(position.sub(this._targetEnd).applyQuaternion(this._yAxisUpSpace));
+	        this.rotateTo(_sphericalA.theta, _sphericalA.phi, enableTransition);
+	        this.zoomTo(obj.zoom, enableTransition);
+	        this._needsUpdate = true;
+	    };
+	    CameraControls.prototype.dispose = function () {
+	        this._removeAllEventListeners();
+	    };
+	    CameraControls.prototype._encloseToBoundary = function (position, offset, friction) {
+	        var offsetLength2 = offset.lengthSq();
+	        if (offsetLength2 === 0.0) {
+	            return position;
+	        }
+	        var newTarget = _v3B.copy(offset).add(position);
+	        var clampedTarget = this._boundary.clampPoint(newTarget, _v3C);
+	        var deltaClampedTarget = clampedTarget.sub(newTarget);
+	        var deltaClampedTargetLength2 = deltaClampedTarget.lengthSq();
+	        if (deltaClampedTargetLength2 === 0.0) {
+	            return position.add(offset);
+	        }
+	        else if (deltaClampedTargetLength2 === offsetLength2) {
+	            return position;
+	        }
+	        else if (friction === 0.0) {
+	            return position.add(offset).add(deltaClampedTarget);
+	        }
+	        else {
+	            var offsetFactor = 1.0 + friction * deltaClampedTargetLength2 / offset.dot(deltaClampedTarget);
+	            return position
+	                .add(_v3B.copy(offset).multiplyScalar(offsetFactor))
+	                .add(deltaClampedTarget.multiplyScalar(1.0 - friction));
+	        }
+	    };
+	    CameraControls.prototype._updateNearPlaneCorners = function () {
+	        if (this._camera.isPerspectiveCamera) {
+	            var camera = this._camera;
+	            var near = camera.near;
+	            var fov = camera.getEffectiveFOV() * THREE.Math.DEG2RAD;
+	            var heightHalf = Math.tan(fov * 0.5) * near;
+	            var widthHalf = heightHalf * camera.aspect;
+	            this._nearPlaneCorners[0].set(-widthHalf, -heightHalf, 0);
+	            this._nearPlaneCorners[1].set(widthHalf, -heightHalf, 0);
+	            this._nearPlaneCorners[2].set(widthHalf, heightHalf, 0);
+	            this._nearPlaneCorners[3].set(-widthHalf, heightHalf, 0);
+	        }
+	        else if (this._camera.isOrthographicCamera) {
+	            var camera = this._camera;
+	            var zoomInv = 1 / camera.zoom;
+	            var left = camera.left * zoomInv;
+	            var right = camera.right * zoomInv;
+	            var top_1 = camera.top * zoomInv;
+	            var bottom = camera.bottom * zoomInv;
+	            this._nearPlaneCorners[0].set(left, top_1, 0);
+	            this._nearPlaneCorners[1].set(right, top_1, 0);
+	            this._nearPlaneCorners[2].set(right, bottom, 0);
+	            this._nearPlaneCorners[3].set(left, bottom, 0);
+	        }
+	    };
+	    CameraControls.prototype._collisionTest = function () {
+	        var distance = Infinity;
+	        var hasCollider = this.colliderMeshes.length >= 1;
+	        if (!hasCollider)
+	            return distance;
+	        if (notSupportedInOrthographicCamera(this._camera, '_collisionTest'))
+	            return distance;
+	        distance = this._spherical.radius;
+	        var direction = _v3A.setFromSpherical(this._spherical).divideScalar(distance);
+	        _rotationMatrix.lookAt(_ORIGIN, direction, this._camera.up);
+	        for (var i = 0; i < 4; i++) {
+	            var nearPlaneCorner = _v3B.copy(this._nearPlaneCorners[i]);
+	            nearPlaneCorner.applyMatrix4(_rotationMatrix);
+	            var origin_1 = _v3C.addVectors(this._target, nearPlaneCorner);
+	            _raycaster.set(origin_1, direction);
+	            _raycaster.far = distance;
+	            var intersects = _raycaster.intersectObjects(this.colliderMeshes);
+	            if (intersects.length !== 0 && intersects[0].distance < distance) {
+	                distance = intersects[0].distance;
+	            }
+	        }
+	        return distance;
+	    };
+	    CameraControls.prototype._getClientRect = function (target) {
+	        var rect = this._domElement.getBoundingClientRect();
+	        target.x = rect.left;
+	        target.y = rect.top;
+	        if (this._viewport) {
+	            target.x += this._viewport.x;
+	            target.y += rect.height - this._viewport.w - this._viewport.y;
+	            target.z = this._viewport.z;
+	            target.w = this._viewport.w;
+	        }
+	        else {
+	            target.z = rect.width;
+	            target.w = rect.height;
+	        }
+	        return target;
+	    };
+	    CameraControls.prototype._removeAllEventListeners = function () { };
+	    return CameraControls;
+	}(EventDispatcher));
+
+	return CameraControls;
+
+})));
+
+},{}],3:[function(require,module,exports){
+// https://github.com/d3/d3-delaunay v5.3.0 Copyright 2020 Mike Bostock
+// https://github.com/mapbox/delaunator v4.0.1. Copyright 2019 Mapbox, Inc.
+(function (global, factory) {
+typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
+typeof define === 'function' && define.amd ? define(['exports'], factory) :
+(global = global || self, factory(global.d3 = global.d3 || {}));
+}(this, function (exports) { 'use strict';
+
+const EPSILON = Math.pow(2, -52);
+const EDGE_STACK = new Uint32Array(512);
+
+class Delaunator {
+
+    static from(points, getX = defaultGetX, getY = defaultGetY) {
+        const n = points.length;
+        const coords = new Float64Array(n * 2);
+
+        for (let i = 0; i < n; i++) {
+            const p = points[i];
+            coords[2 * i] = getX(p);
+            coords[2 * i + 1] = getY(p);
+        }
+
+        return new Delaunator(coords);
+    }
+
+    constructor(coords) {
+        const n = coords.length >> 1;
+        if (n > 0 && typeof coords[0] !== 'number') throw new Error('Expected coords to contain numbers.');
+
+        this.coords = coords;
+
+        // arrays that will store the triangulation graph
+        const maxTriangles = Math.max(2 * n - 5, 0);
+        this._triangles = new Uint32Array(maxTriangles * 3);
+        this._halfedges = new Int32Array(maxTriangles * 3);
+
+        // temporary arrays for tracking the edges of the advancing convex hull
+        this._hashSize = Math.ceil(Math.sqrt(n));
+        this._hullPrev = new Uint32Array(n); // edge to prev edge
+        this._hullNext = new Uint32Array(n); // edge to next edge
+        this._hullTri = new Uint32Array(n); // edge to adjacent triangle
+        this._hullHash = new Int32Array(this._hashSize).fill(-1); // angular edge hash
+
+        // temporary arrays for sorting points
+        this._ids = new Uint32Array(n);
+        this._dists = new Float64Array(n);
+
+        this.update();
+    }
+
+    update() {
+        const {coords, _hullPrev: hullPrev, _hullNext: hullNext, _hullTri: hullTri, _hullHash: hullHash} =  this;
+        const n = coords.length >> 1;
+
+        // populate an array of point indices; calculate input data bbox
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+
+        for (let i = 0; i < n; i++) {
+            const x = coords[2 * i];
+            const y = coords[2 * i + 1];
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+            this._ids[i] = i;
+        }
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+
+        let minDist = Infinity;
+        let i0, i1, i2;
+
+        // pick a seed point close to the center
+        for (let i = 0; i < n; i++) {
+            const d = dist(cx, cy, coords[2 * i], coords[2 * i + 1]);
+            if (d < minDist) {
+                i0 = i;
+                minDist = d;
+            }
+        }
+        const i0x = coords[2 * i0];
+        const i0y = coords[2 * i0 + 1];
+
+        minDist = Infinity;
+
+        // find the point closest to the seed
+        for (let i = 0; i < n; i++) {
+            if (i === i0) continue;
+            const d = dist(i0x, i0y, coords[2 * i], coords[2 * i + 1]);
+            if (d < minDist && d > 0) {
+                i1 = i;
+                minDist = d;
+            }
+        }
+        let i1x = coords[2 * i1];
+        let i1y = coords[2 * i1 + 1];
+
+        let minRadius = Infinity;
+
+        // find the third point which forms the smallest circumcircle with the first two
+        for (let i = 0; i < n; i++) {
+            if (i === i0 || i === i1) continue;
+            const r = circumradius(i0x, i0y, i1x, i1y, coords[2 * i], coords[2 * i + 1]);
+            if (r < minRadius) {
+                i2 = i;
+                minRadius = r;
+            }
+        }
+        let i2x = coords[2 * i2];
+        let i2y = coords[2 * i2 + 1];
+
+        if (minRadius === Infinity) {
+            // order collinear points by dx (or dy if all x are identical)
+            // and return the list as a hull
+            for (let i = 0; i < n; i++) {
+                this._dists[i] = (coords[2 * i] - coords[0]) || (coords[2 * i + 1] - coords[1]);
+            }
+            quicksort(this._ids, this._dists, 0, n - 1);
+            const hull = new Uint32Array(n);
+            let j = 0;
+            for (let i = 0, d0 = -Infinity; i < n; i++) {
+                const id = this._ids[i];
+                if (this._dists[id] > d0) {
+                    hull[j++] = id;
+                    d0 = this._dists[id];
+                }
+            }
+            this.hull = hull.subarray(0, j);
+            this.triangles = new Uint32Array(0);
+            this.halfedges = new Uint32Array(0);
+            return;
+        }
+
+        // swap the order of the seed points for counter-clockwise orientation
+        if (orient(i0x, i0y, i1x, i1y, i2x, i2y)) {
+            const i = i1;
+            const x = i1x;
+            const y = i1y;
+            i1 = i2;
+            i1x = i2x;
+            i1y = i2y;
+            i2 = i;
+            i2x = x;
+            i2y = y;
+        }
+
+        const center = circumcenter(i0x, i0y, i1x, i1y, i2x, i2y);
+        this._cx = center.x;
+        this._cy = center.y;
+
+        for (let i = 0; i < n; i++) {
+            this._dists[i] = dist(coords[2 * i], coords[2 * i + 1], center.x, center.y);
+        }
+
+        // sort the points by distance from the seed triangle circumcenter
+        quicksort(this._ids, this._dists, 0, n - 1);
+
+        // set up the seed triangle as the starting hull
+        this._hullStart = i0;
+        let hullSize = 3;
+
+        hullNext[i0] = hullPrev[i2] = i1;
+        hullNext[i1] = hullPrev[i0] = i2;
+        hullNext[i2] = hullPrev[i1] = i0;
+
+        hullTri[i0] = 0;
+        hullTri[i1] = 1;
+        hullTri[i2] = 2;
+
+        hullHash.fill(-1);
+        hullHash[this._hashKey(i0x, i0y)] = i0;
+        hullHash[this._hashKey(i1x, i1y)] = i1;
+        hullHash[this._hashKey(i2x, i2y)] = i2;
+
+        this.trianglesLen = 0;
+        this._addTriangle(i0, i1, i2, -1, -1, -1);
+
+        for (let k = 0, xp, yp; k < this._ids.length; k++) {
+            const i = this._ids[k];
+            const x = coords[2 * i];
+            const y = coords[2 * i + 1];
+
+            // skip near-duplicate points
+            if (k > 0 && Math.abs(x - xp) <= EPSILON && Math.abs(y - yp) <= EPSILON) continue;
+            xp = x;
+            yp = y;
+
+            // skip seed triangle points
+            if (i === i0 || i === i1 || i === i2) continue;
+
+            // find a visible edge on the convex hull using edge hash
+            let start = 0;
+            for (let j = 0, key = this._hashKey(x, y); j < this._hashSize; j++) {
+                start = hullHash[(key + j) % this._hashSize];
+                if (start !== -1 && start !== hullNext[start]) break;
+            }
+
+            start = hullPrev[start];
+            let e = start, q;
+            while (q = hullNext[e], !orient(x, y, coords[2 * e], coords[2 * e + 1], coords[2 * q], coords[2 * q + 1])) {
+                e = q;
+                if (e === start) {
+                    e = -1;
+                    break;
+                }
+            }
+            if (e === -1) continue; // likely a near-duplicate point; skip it
+
+            // add the first triangle from the point
+            let t = this._addTriangle(e, i, hullNext[e], -1, -1, hullTri[e]);
+
+            // recursively flip triangles from the point until they satisfy the Delaunay condition
+            hullTri[i] = this._legalize(t + 2);
+            hullTri[e] = t; // keep track of boundary triangles on the hull
+            hullSize++;
+
+            // walk forward through the hull, adding more triangles and flipping recursively
+            let n = hullNext[e];
+            while (q = hullNext[n], orient(x, y, coords[2 * n], coords[2 * n + 1], coords[2 * q], coords[2 * q + 1])) {
+                t = this._addTriangle(n, i, q, hullTri[i], -1, hullTri[n]);
+                hullTri[i] = this._legalize(t + 2);
+                hullNext[n] = n; // mark as removed
+                hullSize--;
+                n = q;
+            }
+
+            // walk backward from the other side, adding more triangles and flipping
+            if (e === start) {
+                while (q = hullPrev[e], orient(x, y, coords[2 * q], coords[2 * q + 1], coords[2 * e], coords[2 * e + 1])) {
+                    t = this._addTriangle(q, i, e, -1, hullTri[e], hullTri[q]);
+                    this._legalize(t + 2);
+                    hullTri[q] = t;
+                    hullNext[e] = e; // mark as removed
+                    hullSize--;
+                    e = q;
+                }
+            }
+
+            // update the hull indices
+            this._hullStart = hullPrev[i] = e;
+            hullNext[e] = hullPrev[n] = i;
+            hullNext[i] = n;
+
+            // save the two new edges in the hash table
+            hullHash[this._hashKey(x, y)] = i;
+            hullHash[this._hashKey(coords[2 * e], coords[2 * e + 1])] = e;
+        }
+
+        this.hull = new Uint32Array(hullSize);
+        for (let i = 0, e = this._hullStart; i < hullSize; i++) {
+            this.hull[i] = e;
+            e = hullNext[e];
+        }
+
+        // trim typed triangle mesh arrays
+        this.triangles = this._triangles.subarray(0, this.trianglesLen);
+        this.halfedges = this._halfedges.subarray(0, this.trianglesLen);
+    }
+
+    _hashKey(x, y) {
+        return Math.floor(pseudoAngle(x - this._cx, y - this._cy) * this._hashSize) % this._hashSize;
+    }
+
+    _legalize(a) {
+        const {_triangles: triangles, _halfedges: halfedges, coords} = this;
+
+        let i = 0;
+        let ar = 0;
+
+        // recursion eliminated with a fixed-size stack
+        while (true) {
+            const b = halfedges[a];
+
+            /* if the pair of triangles doesn't satisfy the Delaunay condition
+             * (p1 is inside the circumcircle of [p0, pl, pr]), flip them,
+             * then do the same check/flip recursively for the new pair of triangles
+             *
+             *           pl                    pl
+             *          /||\                  /  \
+             *       al/ || \bl            al/    \a
+             *        /  ||  \              /      \
+             *       /  a||b  \    flip    /___ar___\
+             *     p0\   ||   /p1   =>   p0\---bl---/p1
+             *        \  ||  /              \      /
+             *       ar\ || /br             b\    /br
+             *          \||/                  \  /
+             *           pr                    pr
+             */
+            const a0 = a - a % 3;
+            ar = a0 + (a + 2) % 3;
+
+            if (b === -1) { // convex hull edge
+                if (i === 0) break;
+                a = EDGE_STACK[--i];
+                continue;
+            }
+
+            const b0 = b - b % 3;
+            const al = a0 + (a + 1) % 3;
+            const bl = b0 + (b + 2) % 3;
+
+            const p0 = triangles[ar];
+            const pr = triangles[a];
+            const pl = triangles[al];
+            const p1 = triangles[bl];
+
+            const illegal = inCircle(
+                coords[2 * p0], coords[2 * p0 + 1],
+                coords[2 * pr], coords[2 * pr + 1],
+                coords[2 * pl], coords[2 * pl + 1],
+                coords[2 * p1], coords[2 * p1 + 1]);
+
+            if (illegal) {
+                triangles[a] = p1;
+                triangles[b] = p0;
+
+                const hbl = halfedges[bl];
+
+                // edge swapped on the other side of the hull (rare); fix the halfedge reference
+                if (hbl === -1) {
+                    let e = this._hullStart;
+                    do {
+                        if (this._hullTri[e] === bl) {
+                            this._hullTri[e] = a;
+                            break;
+                        }
+                        e = this._hullPrev[e];
+                    } while (e !== this._hullStart);
+                }
+                this._link(a, hbl);
+                this._link(b, halfedges[ar]);
+                this._link(ar, bl);
+
+                const br = b0 + (b + 1) % 3;
+
+                // don't worry about hitting the cap: it can only happen on extremely degenerate input
+                if (i < EDGE_STACK.length) {
+                    EDGE_STACK[i++] = br;
+                }
+            } else {
+                if (i === 0) break;
+                a = EDGE_STACK[--i];
+            }
+        }
+
+        return ar;
+    }
+
+    _link(a, b) {
+        this._halfedges[a] = b;
+        if (b !== -1) this._halfedges[b] = a;
+    }
+
+    // add a new triangle given vertex indices and adjacent half-edge ids
+    _addTriangle(i0, i1, i2, a, b, c) {
+        const t = this.trianglesLen;
+
+        this._triangles[t] = i0;
+        this._triangles[t + 1] = i1;
+        this._triangles[t + 2] = i2;
+
+        this._link(t, a);
+        this._link(t + 1, b);
+        this._link(t + 2, c);
+
+        this.trianglesLen += 3;
+
+        return t;
+    }
+}
+
+// monotonically increases with real angle, but doesn't need expensive trigonometry
+function pseudoAngle(dx, dy) {
+    const p = dx / (Math.abs(dx) + Math.abs(dy));
+    return (dy > 0 ? 3 - p : 1 + p) / 4; // [0..1]
+}
+
+function dist(ax, ay, bx, by) {
+    const dx = ax - bx;
+    const dy = ay - by;
+    return dx * dx + dy * dy;
+}
+
+// return 2d orientation sign if we're confident in it through J. Shewchuk's error bound check
+function orientIfSure(px, py, rx, ry, qx, qy) {
+    const l = (ry - py) * (qx - px);
+    const r = (rx - px) * (qy - py);
+    return Math.abs(l - r) >= 3.3306690738754716e-16 * Math.abs(l + r) ? l - r : 0;
+}
+
+// a more robust orientation test that's stable in a given triangle (to fix robustness issues)
+function orient(rx, ry, qx, qy, px, py) {
+    const sign = orientIfSure(px, py, rx, ry, qx, qy) ||
+    orientIfSure(rx, ry, qx, qy, px, py) ||
+    orientIfSure(qx, qy, px, py, rx, ry);
+    return sign < 0;
+}
+
+function inCircle(ax, ay, bx, by, cx, cy, px, py) {
+    const dx = ax - px;
+    const dy = ay - py;
+    const ex = bx - px;
+    const ey = by - py;
+    const fx = cx - px;
+    const fy = cy - py;
+
+    const ap = dx * dx + dy * dy;
+    const bp = ex * ex + ey * ey;
+    const cp = fx * fx + fy * fy;
+
+    return dx * (ey * cp - bp * fy) -
+           dy * (ex * cp - bp * fx) +
+           ap * (ex * fy - ey * fx) < 0;
+}
+
+function circumradius(ax, ay, bx, by, cx, cy) {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const ex = cx - ax;
+    const ey = cy - ay;
+
+    const bl = dx * dx + dy * dy;
+    const cl = ex * ex + ey * ey;
+    const d = 0.5 / (dx * ey - dy * ex);
+
+    const x = (ey * bl - dy * cl) * d;
+    const y = (dx * cl - ex * bl) * d;
+
+    return x * x + y * y;
+}
+
+function circumcenter(ax, ay, bx, by, cx, cy) {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const ex = cx - ax;
+    const ey = cy - ay;
+
+    const bl = dx * dx + dy * dy;
+    const cl = ex * ex + ey * ey;
+    const d = 0.5 / (dx * ey - dy * ex);
+
+    const x = ax + (ey * bl - dy * cl) * d;
+    const y = ay + (dx * cl - ex * bl) * d;
+
+    return {x, y};
+}
+
+function quicksort(ids, dists, left, right) {
+    if (right - left <= 20) {
+        for (let i = left + 1; i <= right; i++) {
+            const temp = ids[i];
+            const tempDist = dists[temp];
+            let j = i - 1;
+            while (j >= left && dists[ids[j]] > tempDist) ids[j + 1] = ids[j--];
+            ids[j + 1] = temp;
+        }
+    } else {
+        const median = (left + right) >> 1;
+        let i = left + 1;
+        let j = right;
+        swap(ids, median, i);
+        if (dists[ids[left]] > dists[ids[right]]) swap(ids, left, right);
+        if (dists[ids[i]] > dists[ids[right]]) swap(ids, i, right);
+        if (dists[ids[left]] > dists[ids[i]]) swap(ids, left, i);
+
+        const temp = ids[i];
+        const tempDist = dists[temp];
+        while (true) {
+            do i++; while (dists[ids[i]] < tempDist);
+            do j--; while (dists[ids[j]] > tempDist);
+            if (j < i) break;
+            swap(ids, i, j);
+        }
+        ids[left + 1] = ids[j];
+        ids[j] = temp;
+
+        if (right - i + 1 >= j - left) {
+            quicksort(ids, dists, i, right);
+            quicksort(ids, dists, left, j - 1);
+        } else {
+            quicksort(ids, dists, left, j - 1);
+            quicksort(ids, dists, i, right);
+        }
+    }
+}
+
+function swap(arr, i, j) {
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+}
+
+function defaultGetX(p) {
+    return p[0];
+}
+function defaultGetY(p) {
+    return p[1];
+}
+
+const epsilon = 1e-6;
+
+class Path {
+  constructor() {
+    this._x0 = this._y0 = // start of current subpath
+    this._x1 = this._y1 = null; // end of current subpath
+    this._ = "";
+  }
+  moveTo(x, y) {
+    this._ += `M${this._x0 = this._x1 = +x},${this._y0 = this._y1 = +y}`;
+  }
+  closePath() {
+    if (this._x1 !== null) {
+      this._x1 = this._x0, this._y1 = this._y0;
+      this._ += "Z";
+    }
+  }
+  lineTo(x, y) {
+    this._ += `L${this._x1 = +x},${this._y1 = +y}`;
+  }
+  arc(x, y, r) {
+    x = +x, y = +y, r = +r;
+    const x0 = x + r;
+    const y0 = y;
+    if (r < 0) throw new Error("negative radius");
+    if (this._x1 === null) this._ += `M${x0},${y0}`;
+    else if (Math.abs(this._x1 - x0) > epsilon || Math.abs(this._y1 - y0) > epsilon) this._ += "L" + x0 + "," + y0;
+    if (!r) return;
+    this._ += `A${r},${r},0,1,1,${x - r},${y}A${r},${r},0,1,1,${this._x1 = x0},${this._y1 = y0}`;
+  }
+  rect(x, y, w, h) {
+    this._ += `M${this._x0 = this._x1 = +x},${this._y0 = this._y1 = +y}h${+w}v${+h}h${-w}Z`;
+  }
+  value() {
+    return this._ || null;
+  }
+}
+
+class Polygon {
+  constructor() {
+    this._ = [];
+  }
+  moveTo(x, y) {
+    this._.push([x, y]);
+  }
+  closePath() {
+    this._.push(this._[0].slice());
+  }
+  lineTo(x, y) {
+    this._.push([x, y]);
+  }
+  value() {
+    return this._.length ? this._ : null;
+  }
+}
+
+class Voronoi {
+  constructor(delaunay, [xmin, ymin, xmax, ymax] = [0, 0, 960, 500]) {
+    if (!((xmax = +xmax) >= (xmin = +xmin)) || !((ymax = +ymax) >= (ymin = +ymin))) throw new Error("invalid bounds");
+    this.delaunay = delaunay;
+    this._circumcenters = new Float64Array(delaunay.points.length * 2);
+    this.vectors = new Float64Array(delaunay.points.length * 2);
+    this.xmax = xmax, this.xmin = xmin;
+    this.ymax = ymax, this.ymin = ymin;
+    this._init();
+  }
+  update() {
+    this.delaunay.update();
+    this._init();
+    return this;
+  }
+  _init() {
+    const {delaunay: {points, hull, triangles}, vectors} = this;
+
+    // Compute circumcenters.
+    const circumcenters = this.circumcenters = this._circumcenters.subarray(0, triangles.length / 3 * 2);
+    for (let i = 0, j = 0, n = triangles.length, x, y; i < n; i += 3, j += 2) {
+      const t1 = triangles[i] * 2;
+      const t2 = triangles[i + 1] * 2;
+      const t3 = triangles[i + 2] * 2;
+      const x1 = points[t1];
+      const y1 = points[t1 + 1];
+      const x2 = points[t2];
+      const y2 = points[t2 + 1];
+      const x3 = points[t3];
+      const y3 = points[t3 + 1];
+
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const ex = x3 - x1;
+      const ey = y3 - y1;
+      const bl = dx * dx + dy * dy;
+      const cl = ex * ex + ey * ey;
+      const ab = (dx * ey - dy * ex) * 2;
+
+      if (!ab) {
+        // degenerate case (collinear diagram)
+        x = (x1 + x3) / 2 - 1e8 * ey;
+        y = (y1 + y3) / 2 + 1e8 * ex;
+      }
+      else if (Math.abs(ab) < 1e-8) {
+        // almost equal points (degenerate triangle)
+        x = (x1 + x3) / 2;
+        y = (y1 + y3) / 2;
+      } else {
+        const d = 1 / ab;
+        x = x1 + (ey * bl - dy * cl) * d;
+        y = y1 + (dx * cl - ex * bl) * d;
+      }
+      circumcenters[j] = x;
+      circumcenters[j + 1] = y;
+    }
+
+    // Compute exterior cell rays.
+    let h = hull[hull.length - 1];
+    let p0, p1 = h * 4;
+    let x0, x1 = points[2 * h];
+    let y0, y1 = points[2 * h + 1];
+    vectors.fill(0);
+    for (let i = 0; i < hull.length; ++i) {
+      h = hull[i];
+      p0 = p1, x0 = x1, y0 = y1;
+      p1 = h * 4, x1 = points[2 * h], y1 = points[2 * h + 1];
+      vectors[p0 + 2] = vectors[p1] = y0 - y1;
+      vectors[p0 + 3] = vectors[p1 + 1] = x1 - x0;
+    }
+  }
+  render(context) {
+    const buffer = context == null ? context = new Path : undefined;
+    const {delaunay: {halfedges, inedges, hull}, circumcenters, vectors} = this;
+    if (hull.length <= 1) return null;
+    for (let i = 0, n = halfedges.length; i < n; ++i) {
+      const j = halfedges[i];
+      if (j < i) continue;
+      const ti = Math.floor(i / 3) * 2;
+      const tj = Math.floor(j / 3) * 2;
+      const xi = circumcenters[ti];
+      const yi = circumcenters[ti + 1];
+      const xj = circumcenters[tj];
+      const yj = circumcenters[tj + 1];
+      this._renderSegment(xi, yi, xj, yj, context);
+    }
+    let h0, h1 = hull[hull.length - 1];
+    for (let i = 0; i < hull.length; ++i) {
+      h0 = h1, h1 = hull[i];
+      const t = Math.floor(inedges[h1] / 3) * 2;
+      const x = circumcenters[t];
+      const y = circumcenters[t + 1];
+      const v = h0 * 4;
+      const p = this._project(x, y, vectors[v + 2], vectors[v + 3]);
+      if (p) this._renderSegment(x, y, p[0], p[1], context);
+    }
+    return buffer && buffer.value();
+  }
+  renderBounds(context) {
+    const buffer = context == null ? context = new Path : undefined;
+    context.rect(this.xmin, this.ymin, this.xmax - this.xmin, this.ymax - this.ymin);
+    return buffer && buffer.value();
+  }
+  renderCell(i, context) {
+    const buffer = context == null ? context = new Path : undefined;
+    const points = this._clip(i);
+    if (points === null || !points.length) return;
+    context.moveTo(points[0], points[1]);
+    let n = points.length;
+    while (points[0] === points[n-2] && points[1] === points[n-1] && n > 1) n -= 2;
+    for (let i = 2; i < n; i += 2) {
+      if (points[i] !== points[i-2] || points[i+1] !== points[i-1])
+        context.lineTo(points[i], points[i + 1]);
+    }
+    context.closePath();
+    return buffer && buffer.value();
+  }
+  *cellPolygons() {
+    const {delaunay: {points}} = this;
+    for (let i = 0, n = points.length / 2; i < n; ++i) {
+      const cell = this.cellPolygon(i);
+      if (cell) cell.index = i, yield cell;
+    }
+  }
+  cellPolygon(i) {
+    const polygon = new Polygon;
+    this.renderCell(i, polygon);
+    return polygon.value();
+  }
+  _renderSegment(x0, y0, x1, y1, context) {
+    let S;
+    const c0 = this._regioncode(x0, y0);
+    const c1 = this._regioncode(x1, y1);
+    if (c0 === 0 && c1 === 0) {
+      context.moveTo(x0, y0);
+      context.lineTo(x1, y1);
+    } else if (S = this._clipSegment(x0, y0, x1, y1, c0, c1)) {
+      context.moveTo(S[0], S[1]);
+      context.lineTo(S[2], S[3]);
+    }
+  }
+  contains(i, x, y) {
+    if ((x = +x, x !== x) || (y = +y, y !== y)) return false;
+    return this.delaunay._step(i, x, y) === i;
+  }
+  *neighbors(i) {
+    const ci = this._clip(i);
+    if (ci) for (const j of this.delaunay.neighbors(i)) {
+      const cj = this._clip(j);
+      // find the common edge
+      if (cj) loop: for (let ai = 0, li = ci.length; ai < li; ai += 2) {
+        for (let aj = 0, lj = cj.length; aj < lj; aj += 2) {
+          if (ci[ai] == cj[aj]
+          && ci[ai + 1] == cj[aj + 1]
+          && ci[(ai + 2) % li] == cj[(aj + lj - 2) % lj]
+          && ci[(ai + 3) % li] == cj[(aj + lj - 1) % lj]
+          ) {
+            yield j;
+            break loop;
+          }
+        }
+      }
+    }
+  }
+  _cell(i) {
+    const {circumcenters, delaunay: {inedges, halfedges, triangles}} = this;
+    const e0 = inedges[i];
+    if (e0 === -1) return null; // coincident point
+    const points = [];
+    let e = e0;
+    do {
+      const t = Math.floor(e / 3);
+      points.push(circumcenters[t * 2], circumcenters[t * 2 + 1]);
+      e = e % 3 === 2 ? e - 2 : e + 1;
+      if (triangles[e] !== i) break; // bad triangulation
+      e = halfedges[e];
+    } while (e !== e0 && e !== -1);
+    return points;
+  }
+  _clip(i) {
+    // degenerate case (1 valid point: return the box)
+    if (i === 0 && this.delaunay.hull.length === 1) {
+      return [this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax, this.xmin, this.ymin];
+    }
+    const points = this._cell(i);
+    if (points === null) return null;
+    const {vectors: V} = this;
+    const v = i * 4;
+    return V[v] || V[v + 1]
+        ? this._clipInfinite(i, points, V[v], V[v + 1], V[v + 2], V[v + 3])
+        : this._clipFinite(i, points);
+  }
+  _clipFinite(i, points) {
+    const n = points.length;
+    let P = null;
+    let x0, y0, x1 = points[n - 2], y1 = points[n - 1];
+    let c0, c1 = this._regioncode(x1, y1);
+    let e0, e1;
+    for (let j = 0; j < n; j += 2) {
+      x0 = x1, y0 = y1, x1 = points[j], y1 = points[j + 1];
+      c0 = c1, c1 = this._regioncode(x1, y1);
+      if (c0 === 0 && c1 === 0) {
+        e0 = e1, e1 = 0;
+        if (P) P.push(x1, y1);
+        else P = [x1, y1];
+      } else {
+        let S, sx0, sy0, sx1, sy1;
+        if (c0 === 0) {
+          if ((S = this._clipSegment(x0, y0, x1, y1, c0, c1)) === null) continue;
+          [sx0, sy0, sx1, sy1] = S;
+        } else {
+          if ((S = this._clipSegment(x1, y1, x0, y0, c1, c0)) === null) continue;
+          [sx1, sy1, sx0, sy0] = S;
+          e0 = e1, e1 = this._edgecode(sx0, sy0);
+          if (e0 && e1) this._edge(i, e0, e1, P, P.length);
+          if (P) P.push(sx0, sy0);
+          else P = [sx0, sy0];
+        }
+        e0 = e1, e1 = this._edgecode(sx1, sy1);
+        if (e0 && e1) this._edge(i, e0, e1, P, P.length);
+        if (P) P.push(sx1, sy1);
+        else P = [sx1, sy1];
+      }
+    }
+    if (P) {
+      e0 = e1, e1 = this._edgecode(P[0], P[1]);
+      if (e0 && e1) this._edge(i, e0, e1, P, P.length);
+    } else if (this.contains(i, (this.xmin + this.xmax) / 2, (this.ymin + this.ymax) / 2)) {
+      return [this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax, this.xmin, this.ymin];
+    }
+    return P;
+  }
+  _clipSegment(x0, y0, x1, y1, c0, c1) {
+    while (true) {
+      if (c0 === 0 && c1 === 0) return [x0, y0, x1, y1];
+      if (c0 & c1) return null;
+      let x, y, c = c0 || c1;
+      if (c & 0b1000) x = x0 + (x1 - x0) * (this.ymax - y0) / (y1 - y0), y = this.ymax;
+      else if (c & 0b0100) x = x0 + (x1 - x0) * (this.ymin - y0) / (y1 - y0), y = this.ymin;
+      else if (c & 0b0010) y = y0 + (y1 - y0) * (this.xmax - x0) / (x1 - x0), x = this.xmax;
+      else y = y0 + (y1 - y0) * (this.xmin - x0) / (x1 - x0), x = this.xmin;
+      if (c0) x0 = x, y0 = y, c0 = this._regioncode(x0, y0);
+      else x1 = x, y1 = y, c1 = this._regioncode(x1, y1);
+    }
+  }
+  _clipInfinite(i, points, vx0, vy0, vxn, vyn) {
+    let P = Array.from(points), p;
+    if (p = this._project(P[0], P[1], vx0, vy0)) P.unshift(p[0], p[1]);
+    if (p = this._project(P[P.length - 2], P[P.length - 1], vxn, vyn)) P.push(p[0], p[1]);
+    if (P = this._clipFinite(i, P)) {
+      for (let j = 0, n = P.length, c0, c1 = this._edgecode(P[n - 2], P[n - 1]); j < n; j += 2) {
+        c0 = c1, c1 = this._edgecode(P[j], P[j + 1]);
+        if (c0 && c1) j = this._edge(i, c0, c1, P, j), n = P.length;
+      }
+    } else if (this.contains(i, (this.xmin + this.xmax) / 2, (this.ymin + this.ymax) / 2)) {
+      P = [this.xmin, this.ymin, this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax];
+    }
+    return P;
+  }
+  _edge(i, e0, e1, P, j) {
+    while (e0 !== e1) {
+      let x, y;
+      switch (e0) {
+        case 0b0101: e0 = 0b0100; continue; // top-left
+        case 0b0100: e0 = 0b0110, x = this.xmax, y = this.ymin; break; // top
+        case 0b0110: e0 = 0b0010; continue; // top-right
+        case 0b0010: e0 = 0b1010, x = this.xmax, y = this.ymax; break; // right
+        case 0b1010: e0 = 0b1000; continue; // bottom-right
+        case 0b1000: e0 = 0b1001, x = this.xmin, y = this.ymax; break; // bottom
+        case 0b1001: e0 = 0b0001; continue; // bottom-left
+        case 0b0001: e0 = 0b0101, x = this.xmin, y = this.ymin; break; // left
+      }
+      if ((P[j] !== x || P[j + 1] !== y) && this.contains(i, x, y)) {
+        P.splice(j, 0, x, y), j += 2;
+      }
+    }
+    if (P.length > 4) {
+      for (let i = 0; i < P.length; i+= 2) {
+        const j = (i + 2) % P.length, k = (i + 4) % P.length;
+        if (P[i] === P[j] && P[j] === P[k]
+        || P[i + 1] === P[j + 1] && P[j + 1] === P[k + 1])
+          P.splice(j, 2), i -= 2;
+      }
+    }
+    return j;
+  }
+  _project(x0, y0, vx, vy) {
+    let t = Infinity, c, x, y;
+    if (vy < 0) { // top
+      if (y0 <= this.ymin) return null;
+      if ((c = (this.ymin - y0) / vy) < t) y = this.ymin, x = x0 + (t = c) * vx;
+    } else if (vy > 0) { // bottom
+      if (y0 >= this.ymax) return null;
+      if ((c = (this.ymax - y0) / vy) < t) y = this.ymax, x = x0 + (t = c) * vx;
+    }
+    if (vx > 0) { // right
+      if (x0 >= this.xmax) return null;
+      if ((c = (this.xmax - x0) / vx) < t) x = this.xmax, y = y0 + (t = c) * vy;
+    } else if (vx < 0) { // left
+      if (x0 <= this.xmin) return null;
+      if ((c = (this.xmin - x0) / vx) < t) x = this.xmin, y = y0 + (t = c) * vy;
+    }
+    return [x, y];
+  }
+  _edgecode(x, y) {
+    return (x === this.xmin ? 0b0001
+        : x === this.xmax ? 0b0010 : 0b0000)
+        | (y === this.ymin ? 0b0100
+        : y === this.ymax ? 0b1000 : 0b0000);
+  }
+  _regioncode(x, y) {
+    return (x < this.xmin ? 0b0001
+        : x > this.xmax ? 0b0010 : 0b0000)
+        | (y < this.ymin ? 0b0100
+        : y > this.ymax ? 0b1000 : 0b0000);
+  }
+}
+
+const tau = 2 * Math.PI, pow = Math.pow;
+
+function pointX(p) {
+  return p[0];
+}
+
+function pointY(p) {
+  return p[1];
+}
+
+// A triangulation is collinear if all its triangles have a non-null area
+function collinear(d) {
+  const {triangles, coords} = d;
+  for (let i = 0; i < triangles.length; i += 3) {
+    const a = 2 * triangles[i],
+          b = 2 * triangles[i + 1],
+          c = 2 * triangles[i + 2],
+          cross = (coords[c] - coords[a]) * (coords[b + 1] - coords[a + 1])
+                - (coords[b] - coords[a]) * (coords[c + 1] - coords[a + 1]);
+    if (cross > 1e-10) return false;
+  }
+  return true;
+}
+
+function jitter(x, y, r) {
+  return [x + Math.sin(x + y) * r, y + Math.cos(x - y) * r];
+}
+
+class Delaunay {
+  static from(points, fx = pointX, fy = pointY, that) {
+    return new Delaunay("length" in points
+        ? flatArray(points, fx, fy, that)
+        : Float64Array.from(flatIterable(points, fx, fy, that)));
+  }
+  constructor(points) {
+    this._delaunator = new Delaunator(points);
+    this.inedges = new Int32Array(points.length / 2);
+    this._hullIndex = new Int32Array(points.length / 2);
+    this.points = this._delaunator.coords;
+    this._init();
+  }
+  update() {
+    this._delaunator.update();
+    this._init();
+    return this;
+  }
+  _init() {
+    const d = this._delaunator, points = this.points;
+
+    // check for collinear
+    if (d.hull && d.hull.length > 2 && collinear(d)) {
+      this.collinear = Int32Array.from({length: points.length/2}, (_,i) => i)
+        .sort((i, j) => points[2 * i] - points[2 * j] || points[2 * i + 1] - points[2 * j + 1]); // for exact neighbors
+      const e = this.collinear[0], f = this.collinear[this.collinear.length - 1],
+        bounds = [ points[2 * e], points[2 * e + 1], points[2 * f], points[2 * f + 1] ],
+        r = 1e-8 * Math.hypot(bounds[3] - bounds[1], bounds[2] - bounds[0]);
+      for (let i = 0, n = points.length / 2; i < n; ++i) {
+        const p = jitter(points[2 * i], points[2 * i + 1], r);
+        points[2 * i] = p[0];
+        points[2 * i + 1] = p[1];
+      }
+      this._delaunator = new Delaunator(points);
+    } else {
+      delete this.collinear;
+    }
+
+    const halfedges = this.halfedges = this._delaunator.halfedges;
+    const hull = this.hull = this._delaunator.hull;
+    const triangles = this.triangles = this._delaunator.triangles;
+    const inedges = this.inedges.fill(-1);
+    const hullIndex = this._hullIndex.fill(-1);
+
+    // Compute an index from each point to an (arbitrary) incoming halfedge
+    // Used to give the first neighbor of each point; for this reason,
+    // on the hull we give priority to exterior halfedges
+    for (let e = 0, n = halfedges.length; e < n; ++e) {
+      const p = triangles[e % 3 === 2 ? e - 2 : e + 1];
+      if (halfedges[e] === -1 || inedges[p] === -1) inedges[p] = e;
+    }
+    for (let i = 0, n = hull.length; i < n; ++i) {
+      hullIndex[hull[i]] = i;
+    }
+
+    // degenerate case: 1 or 2 (distinct) points
+    if (hull.length <= 2 && hull.length > 0) {
+      this.triangles = new Int32Array(3).fill(-1);
+      this.halfedges = new Int32Array(3).fill(-1);
+      this.triangles[0] = hull[0];
+      this.triangles[1] = hull[1];
+      this.triangles[2] = hull[1];
+      inedges[hull[0]] = 1;
+      if (hull.length === 2) inedges[hull[1]] = 0;
+    }
+  }
+  voronoi(bounds) {
+    return new Voronoi(this, bounds);
+  }
+  *neighbors(i) {
+    const {inedges, hull, _hullIndex, halfedges, triangles, collinear} = this;
+
+    // degenerate case with several collinear points
+    if (collinear) {
+      const l = collinear.indexOf(i);
+      if (l > 0) yield collinear[l - 1];
+      if (l < collinear.length - 1) yield collinear[l + 1];
+      return;
+    }
+
+    const e0 = inedges[i];
+    if (e0 === -1) return; // coincident point
+    let e = e0, p0 = -1;
+    do {
+      yield p0 = triangles[e];
+      e = e % 3 === 2 ? e - 2 : e + 1;
+      if (triangles[e] !== i) return; // bad triangulation
+      e = halfedges[e];
+      if (e === -1) {
+        const p = hull[(_hullIndex[i] + 1) % hull.length];
+        if (p !== p0) yield p;
+        return;
+      }
+    } while (e !== e0);
+  }
+  find(x, y, i = 0) {
+    if ((x = +x, x !== x) || (y = +y, y !== y)) return -1;
+    const i0 = i;
+    let c;
+    while ((c = this._step(i, x, y)) >= 0 && c !== i && c !== i0) i = c;
+    return c;
+  }
+  _step(i, x, y) {
+    const {inedges, hull, _hullIndex, halfedges, triangles, points} = this;
+    if (inedges[i] === -1 || !points.length) return (i + 1) % (points.length >> 1);
+    let c = i;
+    let dc = pow(x - points[i * 2], 2) + pow(y - points[i * 2 + 1], 2);
+    const e0 = inedges[i];
+    let e = e0;
+    do {
+      let t = triangles[e];
+      const dt = pow(x - points[t * 2], 2) + pow(y - points[t * 2 + 1], 2);
+      if (dt < dc) dc = dt, c = t;
+      e = e % 3 === 2 ? e - 2 : e + 1;
+      if (triangles[e] !== i) break; // bad triangulation
+      e = halfedges[e];
+      if (e === -1) {
+        e = hull[(_hullIndex[i] + 1) % hull.length];
+        if (e !== t) {
+          if (pow(x - points[e * 2], 2) + pow(y - points[e * 2 + 1], 2) < dc) return e;
+        }
+        break;
+      }
+    } while (e !== e0);
+    return c;
+  }
+  render(context) {
+    const buffer = context == null ? context = new Path : undefined;
+    const {points, halfedges, triangles} = this;
+    for (let i = 0, n = halfedges.length; i < n; ++i) {
+      const j = halfedges[i];
+      if (j < i) continue;
+      const ti = triangles[i] * 2;
+      const tj = triangles[j] * 2;
+      context.moveTo(points[ti], points[ti + 1]);
+      context.lineTo(points[tj], points[tj + 1]);
+    }
+    this.renderHull(context);
+    return buffer && buffer.value();
+  }
+  renderPoints(context, r = 2) {
+    const buffer = context == null ? context = new Path : undefined;
+    const {points} = this;
+    for (let i = 0, n = points.length; i < n; i += 2) {
+      const x = points[i], y = points[i + 1];
+      context.moveTo(x + r, y);
+      context.arc(x, y, r, 0, tau);
+    }
+    return buffer && buffer.value();
+  }
+  renderHull(context) {
+    const buffer = context == null ? context = new Path : undefined;
+    const {hull, points} = this;
+    const h = hull[0] * 2, n = hull.length;
+    context.moveTo(points[h], points[h + 1]);
+    for (let i = 1; i < n; ++i) {
+      const h = 2 * hull[i];
+      context.lineTo(points[h], points[h + 1]);
+    }
+    context.closePath();
+    return buffer && buffer.value();
+  }
+  hullPolygon() {
+    const polygon = new Polygon;
+    this.renderHull(polygon);
+    return polygon.value();
+  }
+  renderTriangle(i, context) {
+    const buffer = context == null ? context = new Path : undefined;
+    const {points, triangles} = this;
+    const t0 = triangles[i *= 3] * 2;
+    const t1 = triangles[i + 1] * 2;
+    const t2 = triangles[i + 2] * 2;
+    context.moveTo(points[t0], points[t0 + 1]);
+    context.lineTo(points[t1], points[t1 + 1]);
+    context.lineTo(points[t2], points[t2 + 1]);
+    context.closePath();
+    return buffer && buffer.value();
+  }
+  *trianglePolygons() {
+    const {triangles} = this;
+    for (let i = 0, n = triangles.length / 3; i < n; ++i) {
+      yield this.trianglePolygon(i);
+    }
+  }
+  trianglePolygon(i) {
+    const polygon = new Polygon;
+    this.renderTriangle(i, polygon);
+    return polygon.value();
+  }
+}
+
+function flatArray(points, fx, fy, that) {
+  const n = points.length;
+  const array = new Float64Array(n * 2);
+  for (let i = 0; i < n; ++i) {
+    const p = points[i];
+    array[i * 2] = fx.call(that, p, i, points);
+    array[i * 2 + 1] = fy.call(that, p, i, points);
+  }
+  return array;
+}
+
+function* flatIterable(points, fx, fy, that) {
+  let i = 0;
+  for (const p of points) {
+    yield fx.call(that, p, i, points);
+    yield fy.call(that, p, i, points);
+    ++i;
+  }
+}
+
+exports.Delaunay = Delaunay;
+exports.Voronoi = Voronoi;
+
+Object.defineProperty(exports, '__esModule', { value: true });
+
+}));
+
+},{}],4:[function(require,module,exports){
+// stats.js - http://github.com/mrdoob/stats.js
+(function(f,e){"object"===typeof exports&&"undefined"!==typeof module?module.exports=e():"function"===typeof define&&define.amd?define(e):f.Stats=e()})(this,function(){var f=function(){function e(a){c.appendChild(a.dom);return a}function u(a){for(var d=0;d<c.children.length;d++)c.children[d].style.display=d===a?"block":"none";l=a}var l=0,c=document.createElement("div");c.style.cssText="position:fixed;top:0;left:0;cursor:pointer;opacity:0.9;z-index:10000";c.addEventListener("click",function(a){a.preventDefault();
+u(++l%c.children.length)},!1);var k=(performance||Date).now(),g=k,a=0,r=e(new f.Panel("FPS","#0ff","#002")),h=e(new f.Panel("MS","#0f0","#020"));if(self.performance&&self.performance.memory)var t=e(new f.Panel("MB","#f08","#201"));u(0);return{REVISION:16,dom:c,addPanel:e,showPanel:u,begin:function(){k=(performance||Date).now()},end:function(){a++;var c=(performance||Date).now();h.update(c-k,200);if(c>g+1E3&&(r.update(1E3*a/(c-g),100),g=c,a=0,t)){var d=performance.memory;t.update(d.usedJSHeapSize/
+1048576,d.jsHeapSizeLimit/1048576)}return c},update:function(){k=this.end()},domElement:c,setMode:u}};f.Panel=function(e,f,l){var c=Infinity,k=0,g=Math.round,a=g(window.devicePixelRatio||1),r=80*a,h=48*a,t=3*a,v=2*a,d=3*a,m=15*a,n=74*a,p=30*a,q=document.createElement("canvas");q.width=r;q.height=h;q.style.cssText="width:80px;height:48px";var b=q.getContext("2d");b.font="bold "+9*a+"px Helvetica,Arial,sans-serif";b.textBaseline="top";b.fillStyle=l;b.fillRect(0,0,r,h);b.fillStyle=f;b.fillText(e,t,v);
+b.fillRect(d,m,n,p);b.fillStyle=l;b.globalAlpha=.9;b.fillRect(d,m,n,p);return{dom:q,update:function(h,w){c=Math.min(c,h);k=Math.max(k,h);b.fillStyle=l;b.globalAlpha=1;b.fillRect(0,0,r,m);b.fillStyle=f;b.fillText(g(h)+" "+e+" ("+g(c)+"-"+g(k)+")",t,v);b.drawImage(q,d+a,m,n-a,p,d,m,n-a,p);b.fillRect(d+n-a,m,a,p);b.fillStyle=l;b.globalAlpha=.9;b.fillRect(d+n-a,m,a,g((1-h/w)*p))}}};return f});
+
+},{}],5:[function(require,module,exports){
+(function (global, factory) {
+	typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports, require('three')) :
+	typeof define === 'function' && define.amd ? define(['exports', 'three'], factory) :
+	(factory((global.THREE = global.THREE || {}),global.THREE));
+}(this, (function (exports,three) { 'use strict';
+
+/**
+ * get variable type
+ * @param {*} val a variable which you want to get the type
+ * @return {String} variable-type
+ */
+function _rt(val) {
+  return Object.prototype.toString.call(val);
+}
+
+/**
+ * Utils tool box
+ *
+ * @namespace Utils
+ */
+var Utils = {
+  /**
+   * determine whether it is a `Function`
+   *
+   * @static
+   * @method
+   * @memberof Utils
+   * @param {*} variable a variable which you want to determine
+   * @return {Boolean} type result
+   */
+  isFunction: function () {
+    var ks = _rt(function () {});
+    return function (variable) {
+      return _rt(variable) === ks;
+    };
+  }(),
+
+  /**
+   * determine whether it is a `undefined`
+   *
+   * @static
+   * @method
+   * @memberof Utils
+   * @param {*} variable a variable which you want to determine
+   * @return {Boolean} type result
+   */
+  isUndefined: function isUndefined(variable) {
+    return typeof variable === 'undefined';
+  }
+};
+
+/**
+ * proxy `addEventListener` function
+ *
+ * @param {String} type event type, evnet name
+ * @param {Function} fn callback
+ * @return {this} this
+ */
+three.EventDispatcher.prototype.on = function (type, fn) {
+  if (!Utils.isFunction(fn)) return;
+  if (this instanceof three.Object3D) this.interactive = true;
+  this.addEventListener(type, fn);
+  return this;
+};
+
+/**
+ * proxy `removeEventListener` function
+ *
+ * @param {String} type event type, evnet name
+ * @param {Function} fn callback, which you had bind before
+ * @return {this} this
+ */
+three.EventDispatcher.prototype.off = function (type, fn) {
+  this.removeEventListener(type, fn);
+  return this;
+};
+
+/**
+ * binding a once event, just emit once time
+ *
+ * @param {String} type event type, evnet name
+ * @param {Function} fn callback
+ * @return {this} this
+ */
+three.EventDispatcher.prototype.once = function (type, fn) {
+  var _this = this;
+
+  if (!Utils.isFunction(fn)) return;
+  var cb = function cb(ev) {
+    fn(ev);
+    _this.off(type, cb);
+  };
+  this.on(type, cb);
+  return this;
+};
+
+/**
+ * emit a event
+ *
+ * @param {String} type event type, evnet name
+ * @return {this} this
+ */
+three.EventDispatcher.prototype.emit = function (type) {
+  if (this._listeners === undefined || Utils.isUndefined(this._listeners[type])) return;
+  var cbs = this._listeners[type] || [];
+  var cache = cbs.slice(0);
+
+  for (var _len = arguments.length, argument = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+    argument[_key - 1] = arguments[_key];
+  }
+
+  for (var i = 0; i < cache.length; i++) {
+    cache[i].apply(this, argument);
+  }
+  return this;
+};
+
+/**
+ * whether displayObject is interactively
+ */
+three.Object3D.prototype.interactive = false;
+
+/**
+ * whether displayObject's children is interactively
+ */
+three.Object3D.prototype.interactiveChildren = true;
+
+/**
+ * whether displayObject had touchstart
+ * @private
+ */
+three.Object3D.prototype.started = false;
+
+/**
+ * tracked event cache, like: touchend、mouseout、pointerout which decided by primary-event
+ */
+Object.defineProperty(three.Object3D.prototype, 'trackedPointers', {
+  get: function get() {
+    if (!this._trackedPointers) this._trackedPointers = {};
+    return this._trackedPointers;
+  }
+});
+
+/**
+ * dispatch a raycast
+ *
+ * @param {Raycaster} raycaster Raycaster object, get from THREE.Raycaster
+ * @return {Object|Boolean} had pass hit-test
+ */
+three.Object3D.prototype.raycastTest = function (raycaster) {
+  var result = [];
+  this.raycast(raycaster, result);
+
+  if (result.length > 0) {
+    return result[0];
+  }
+
+  return false;
+};
+
+var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) {
+  return typeof obj;
+} : function (obj) {
+  return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
+};
+
+
+
+
+
+
+
+
+
+
+
+var classCallCheck = function (instance, Constructor) {
+  if (!(instance instanceof Constructor)) {
+    throw new TypeError("Cannot call a class as a function");
+  }
+};
+
+var createClass = function () {
+  function defineProperties(target, props) {
+    for (var i = 0; i < props.length; i++) {
+      var descriptor = props[i];
+      descriptor.enumerable = descriptor.enumerable || false;
+      descriptor.configurable = true;
+      if ("value" in descriptor) descriptor.writable = true;
+      Object.defineProperty(target, descriptor.key, descriptor);
+    }
+  }
+
+  return function (Constructor, protoProps, staticProps) {
+    if (protoProps) defineProperties(Constructor.prototype, protoProps);
+    if (staticProps) defineProperties(Constructor, staticProps);
+    return Constructor;
+  };
+}();
+
+
+
+
+
+
+
+
+
+var inherits = function (subClass, superClass) {
+  if (typeof superClass !== "function" && superClass !== null) {
+    throw new TypeError("Super expression must either be null or a function, not " + typeof superClass);
+  }
+
+  subClass.prototype = Object.create(superClass && superClass.prototype, {
+    constructor: {
+      value: subClass,
+      enumerable: false,
+      writable: true,
+      configurable: true
+    }
+  });
+  if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass;
+};
+
+
+
+
+
+
+
+
+
+
+
+var possibleConstructorReturn = function (self, call) {
+  if (!self) {
+    throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+  }
+
+  return call && (typeof call === "object" || typeof call === "function") ? call : self;
+};
+
+/**
+ * Holds all information related to an Interaction event
+ *
+ * @class
+ */
+
+var InteractionData = function () {
+  /**
+   * InteractionData constructor
+   */
+  function InteractionData() {
+    classCallCheck(this, InteractionData);
+
+    /**
+     * This point stores the global coords of where the touch/mouse event happened
+     *
+     * @member {Vector2}
+     */
+    this.global = new three.Vector2();
+
+    /**
+     * The target DisplayObject that was interacted with
+     *
+     * @member {Object3D}
+     */
+    this.target = null;
+
+    /**
+     * When passed to an event handler, this will be the original DOM Event that was captured
+     *
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/TouchEvent
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent
+     * @member {MouseEvent|TouchEvent|PointerEvent}
+     */
+    this.originalEvent = null;
+
+    /**
+     * Unique identifier for this interaction
+     *
+     * @member {number}
+     */
+    this.identifier = null;
+
+    /**
+     * Indicates whether or not the pointer device that created the event is the primary pointer.
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/isPrimary
+     * @type {Boolean}
+     */
+    this.isPrimary = false;
+
+    /**
+     * Indicates which button was pressed on the mouse or pointer device to trigger the event.
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/button
+     * @type {number}
+     */
+    this.button = 0;
+
+    /**
+     * Indicates which buttons are pressed on the mouse or pointer device when the event is triggered.
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/buttons
+     * @type {number}
+     */
+    this.buttons = 0;
+
+    /**
+     * The width of the pointer's contact along the x-axis, measured in CSS pixels.
+     * radiusX of TouchEvents will be represented by this value.
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/width
+     * @type {number}
+     */
+    this.width = 0;
+
+    /**
+     * The height of the pointer's contact along the y-axis, measured in CSS pixels.
+     * radiusY of TouchEvents will be represented by this value.
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/height
+     * @type {number}
+     */
+    this.height = 0;
+
+    /**
+     * The angle, in degrees, between the pointer device and the screen.
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/tiltX
+     * @type {number}
+     */
+    this.tiltX = 0;
+
+    /**
+     * The angle, in degrees, between the pointer device and the screen.
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/tiltY
+     * @type {number}
+     */
+    this.tiltY = 0;
+
+    /**
+     * The type of pointer that triggered the event.
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/pointerType
+     * @type {string}
+     */
+    this.pointerType = null;
+
+    /**
+     * Pressure applied by the pointing device during the event. A Touch's force property
+     * will be represented by this value.
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/pressure
+     * @type {number}
+     */
+    this.pressure = 0;
+
+    /**
+     * From TouchEvents (not PointerEvents triggered by touches), the rotationAngle of the Touch.
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/Touch/rotationAngle
+     * @type {number}
+     */
+    this.rotationAngle = 0;
+
+    /**
+     * Twist of a stylus pointer.
+     * @see https://w3c.github.io/pointerevents/#pointerevent-interface
+     * @type {number}
+     */
+    this.twist = 0;
+
+    /**
+     * Barrel pressure on a stylus pointer.
+     * @see https://w3c.github.io/pointerevents/#pointerevent-interface
+     * @type {number}
+     */
+    this.tangentialPressure = 0;
+  }
+
+  /**
+   * The unique identifier of the pointer. It will be the same as `identifier`.
+   * @readonly
+   * @member {number}
+   * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/pointerId
+   */
+
+
+  createClass(InteractionData, [{
+    key: '_copyEvent',
+
+
+    /**
+     * Copies properties from normalized event data.
+     *
+     * @param {Touch|MouseEvent|PointerEvent} event The normalized event data
+     * @private
+     */
+    value: function _copyEvent(event) {
+      // isPrimary should only change on touchstart/pointerdown, so we don't want to overwrite
+      // it with "false" on later events when our shim for it on touch events might not be
+      // accurate
+      if (event.isPrimary) {
+        this.isPrimary = true;
+      }
+      this.button = event.button;
+      this.buttons = event.buttons;
+      this.width = event.width;
+      this.height = event.height;
+      this.tiltX = event.tiltX;
+      this.tiltY = event.tiltY;
+      this.pointerType = event.pointerType;
+      this.pressure = event.pressure;
+      this.rotationAngle = event.rotationAngle;
+      this.twist = event.twist || 0;
+      this.tangentialPressure = event.tangentialPressure || 0;
+    }
+
+    /**
+     * Resets the data for pooling.
+     *
+     * @private
+     */
+
+  }, {
+    key: '_reset',
+    value: function _reset() {
+      // isPrimary is the only property that we really need to reset - everything else is
+      // guaranteed to be overwritten
+      this.isPrimary = false;
+    }
+  }, {
+    key: 'pointerId',
+    get: function get$$1() {
+      return this.identifier;
+    }
+  }]);
+  return InteractionData;
+}();
+
+/**
+ * Event class that mimics native DOM events.
+ *
+ * @class
+ */
+var InteractionEvent = function () {
+  /**
+   * InteractionEvent constructor
+   */
+  function InteractionEvent() {
+    classCallCheck(this, InteractionEvent);
+
+    /**
+     * Whether this event will continue propagating in the tree
+     *
+     * @member {boolean}
+     */
+    this.stopped = false;
+
+    /**
+     * The object which caused this event to be dispatched.
+     *
+     * @member {Object3D}
+     */
+    this.target = null;
+
+    /**
+     * The object whose event listener’s callback is currently being invoked.
+     *
+     * @member {Object3D}
+     */
+    this.currentTarget = null;
+
+    /**
+     * Type of the event
+     *
+     * @member {string}
+     */
+    this.type = null;
+
+    /**
+     * InteractionData related to this event
+     *
+     * @member {InteractionData}
+     */
+    this.data = null;
+
+    /**
+     * ray caster detial from 3d-mesh
+     *
+     * @member {Intersects}
+     */
+    this.intersects = [];
+  }
+
+  /**
+   * Prevents event from reaching any objects other than the current object.
+   *
+   */
+
+
+  createClass(InteractionEvent, [{
+    key: "stopPropagation",
+    value: function stopPropagation() {
+      this.stopped = true;
+    }
+
+    /**
+     * Resets the event.
+     *
+     * @private
+     */
+
+  }, {
+    key: "_reset",
+    value: function _reset() {
+      this.stopped = false;
+      this.currentTarget = null;
+      this.target = null;
+      this.intersects = [];
+    }
+  }]);
+  return InteractionEvent;
+}();
+
+/**
+ * DisplayObjects with the `trackedPointers` property use this class to track interactions
+ *
+ * @class
+ * @private
+ */
+var InteractionTrackingData = function () {
+  /**
+   * @param {number} pointerId - Unique pointer id of the event
+   */
+  function InteractionTrackingData(pointerId) {
+    classCallCheck(this, InteractionTrackingData);
+
+    this._pointerId = pointerId;
+    this._flags = InteractionTrackingData.FLAGS.NONE;
+  }
+
+  /**
+   *
+   * @private
+   * @param {number} flag - The interaction flag to set
+   * @param {boolean} yn - Should the flag be set or unset
+   */
+
+
+  createClass(InteractionTrackingData, [{
+    key: "_doSet",
+    value: function _doSet(flag, yn) {
+      if (yn) {
+        this._flags = this._flags | flag;
+      } else {
+        this._flags = this._flags & ~flag;
+      }
+    }
+
+    /**
+     * Unique pointer id of the event
+     *
+     * @readonly
+     * @member {number}
+     */
+
+  }, {
+    key: "pointerId",
+    get: function get$$1() {
+      return this._pointerId;
+    }
+
+    /**
+     * State of the tracking data, expressed as bit flags
+     *
+     * @member {number}
+     */
+
+  }, {
+    key: "flags",
+    get: function get$$1() {
+      return this._flags;
+    }
+
+    /**
+     * Set the flags for the tracking data
+     *
+     * @param {number} flags - Flags to set
+     */
+    ,
+    set: function set$$1(flags) {
+      this._flags = flags;
+    }
+
+    /**
+     * Is the tracked event inactive (not over or down)?
+     *
+     * @member {number}
+     */
+
+  }, {
+    key: "none",
+    get: function get$$1() {
+      return this._flags === this.constructor.FLAGS.NONE;
+    }
+
+    /**
+     * Is the tracked event over the DisplayObject?
+     *
+     * @member {boolean}
+     */
+
+  }, {
+    key: "over",
+    get: function get$$1() {
+      return (this._flags & this.constructor.FLAGS.OVER) !== 0;
+    }
+
+    /**
+     * Set the over flag
+     *
+     * @param {boolean} yn - Is the event over?
+     */
+    ,
+    set: function set$$1(yn) {
+      this._doSet(this.constructor.FLAGS.OVER, yn);
+    }
+
+    /**
+     * Did the right mouse button come down in the DisplayObject?
+     *
+     * @member {boolean}
+     */
+
+  }, {
+    key: "rightDown",
+    get: function get$$1() {
+      return (this._flags & this.constructor.FLAGS.RIGHT_DOWN) !== 0;
+    }
+
+    /**
+     * Set the right down flag
+     *
+     * @param {boolean} yn - Is the right mouse button down?
+     */
+    ,
+    set: function set$$1(yn) {
+      this._doSet(this.constructor.FLAGS.RIGHT_DOWN, yn);
+    }
+
+    /**
+     * Did the left mouse button come down in the DisplayObject?
+     *
+     * @member {boolean}
+     */
+
+  }, {
+    key: "leftDown",
+    get: function get$$1() {
+      return (this._flags & this.constructor.FLAGS.LEFT_DOWN) !== 0;
+    }
+
+    /**
+     * Set the left down flag
+     *
+     * @param {boolean} yn - Is the left mouse button down?
+     */
+    ,
+    set: function set$$1(yn) {
+      this._doSet(this.constructor.FLAGS.LEFT_DOWN, yn);
+    }
+  }]);
+  return InteractionTrackingData;
+}();
+
+InteractionTrackingData.FLAGS = Object.freeze({
+  NONE: 0,
+  OVER: 1 << 0,
+  LEFT_DOWN: 1 << 1,
+  RIGHT_DOWN: 1 << 2
+});
+
+var MOUSE_POINTER_ID = 'MOUSE';
+
+// helpers for hitTest() - only used inside hitTest()
+var hitTestEvent = {
+  target: null,
+  data: {
+    global: null
+  }
+};
+
+/**
+ * The interaction manager deals with mouse, touch and pointer events. Any DisplayObject can be interactive
+ * if its interactive parameter is set to true
+ * This manager also supports multitouch.
+ *
+ * reference to [pixi.js](http://www.pixijs.com/) impl
+ *
+ * @private
+ * @class
+ * @extends EventDispatcher
+ */
+
+var InteractionManager = function (_EventDispatcher) {
+  inherits(InteractionManager, _EventDispatcher);
+
+  /**
+   * @param {WebGLRenderer} renderer - A reference to the current renderer
+   * @param {Scene} scene - A reference to the current scene
+   * @param {Camera} camera - A reference to the current camera
+   * @param {Object} [options] - The options for the manager.
+   * @param {Boolean} [options.autoPreventDefault=false] - Should the manager automatically prevent default browser actions.
+   * @param {Boolean} [options.autoAttach=true] - Should the manager automatically attach target element.
+   * @param {Number} [options.interactionFrequency=10] - Frequency increases the interaction events will be checked.
+   */
+  function InteractionManager(renderer, scene, camera, options) {
+    classCallCheck(this, InteractionManager);
+
+    var _this = possibleConstructorReturn(this, (InteractionManager.__proto__ || Object.getPrototypeOf(InteractionManager)).call(this));
+
+    options = options || {};
+
+    /**
+     * The renderer this interaction manager works for.
+     *
+     * @member {WebGLRenderer}
+     */
+    _this.renderer = renderer;
+
+    /**
+     * The renderer this interaction manager works for.
+     *
+     * @member {Scene}
+     */
+    _this.scene = scene;
+
+    /**
+     * The renderer this interaction manager works for.
+     *
+     * @member {Camera}
+     */
+    _this.camera = camera;
+
+    /**
+     * Should default browser actions automatically be prevented.
+     * Does not apply to pointer events for backwards compatibility
+     * preventDefault on pointer events stops mouse events from firing
+     * Thus, for every pointer event, there will always be either a mouse of touch event alongside it.
+     *
+     * @member {boolean}
+     * @default false
+     */
+    _this.autoPreventDefault = options.autoPreventDefault || false;
+
+    /**
+     * Frequency in milliseconds that the mousemove, moveover & mouseout interaction events will be checked.
+     *
+     * @member {number}
+     * @default 10
+     */
+    _this.interactionFrequency = options.interactionFrequency || 10;
+
+    /**
+     * The mouse data
+     *
+     * @member {InteractionData}
+     */
+    _this.mouse = new InteractionData();
+    _this.mouse.identifier = MOUSE_POINTER_ID;
+
+    // setting the mouse to start off far off screen will mean that mouse over does
+    //  not get called before we even move the mouse.
+    _this.mouse.global.set(-999999);
+
+    /**
+     * Actively tracked InteractionData
+     *
+     * @private
+     * @member {Object.<number,InteractionData>}
+     */
+    _this.activeInteractionData = {};
+    _this.activeInteractionData[MOUSE_POINTER_ID] = _this.mouse;
+
+    /**
+     * Pool of unused InteractionData
+     *
+     * @private
+     * @member {InteractionData[]}
+     */
+    _this.interactionDataPool = [];
+
+    /**
+     * An event data object to handle all the event tracking/dispatching
+     *
+     * @member {object}
+     */
+    _this.eventData = new InteractionEvent();
+
+    /**
+     * The DOM element to bind to.
+     *
+     * @private
+     * @member {HTMLElement}
+     */
+    _this.interactionDOMElement = null;
+
+    /**
+     * This property determines if mousemove and touchmove events are fired only when the cursor
+     * is over the object.
+     * Setting to true will make things work more in line with how the DOM verison works.
+     * Setting to false can make things easier for things like dragging
+     * It is currently set to false as this is how three.js used to work.
+     *
+     * @member {boolean}
+     * @default true
+     */
+    _this.moveWhenInside = true;
+
+    /**
+     * Have events been attached to the dom element?
+     *
+     * @private
+     * @member {boolean}
+     */
+    _this.eventsAdded = false;
+
+    /**
+     * Is the mouse hovering over the renderer?
+     *
+     * @private
+     * @member {boolean}
+     */
+    _this.mouseOverRenderer = false;
+
+    /**
+     * Does the device support touch events
+     * https://www.w3.org/TR/touch-events/
+     *
+     * @readonly
+     * @member {boolean}
+     */
+    _this.supportsTouchEvents = 'ontouchstart' in window;
+
+    /**
+     * Does the device support pointer events
+     * https://www.w3.org/Submission/pointer-events/
+     *
+     * @readonly
+     * @member {boolean}
+     */
+    _this.supportsPointerEvents = !!window.PointerEvent;
+
+    // this will make it so that you don't have to call bind all the time
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onClick = _this.onClick.bind(_this);
+    _this.processClick = _this.processClick.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerUp = _this.onPointerUp.bind(_this);
+    _this.processPointerUp = _this.processPointerUp.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerCancel = _this.onPointerCancel.bind(_this);
+    _this.processPointerCancel = _this.processPointerCancel.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerDown = _this.onPointerDown.bind(_this);
+    _this.processPointerDown = _this.processPointerDown.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerMove = _this.onPointerMove.bind(_this);
+    _this.processPointerMove = _this.processPointerMove.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerOut = _this.onPointerOut.bind(_this);
+    _this.processPointerOverOut = _this.processPointerOverOut.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerOver = _this.onPointerOver.bind(_this);
+
+    /**
+     * Dictionary of how different cursor modes are handled. Strings are handled as CSS cursor
+     * values, objects are handled as dictionaries of CSS values for interactionDOMElement,
+     * and functions are called instead of changing the CSS.
+     * Default CSS cursor values are provided for 'default' and 'pointer' modes.
+     * @member {Object.<string, (string|Function|Object.<string, string>)>}
+     */
+    _this.cursorStyles = {
+      default: 'inherit',
+      pointer: 'pointer'
+    };
+
+    /**
+     * The mode of the cursor that is being used.
+     * The value of this is a key from the cursorStyles dictionary.
+     *
+     * @member {string}
+     */
+    _this.currentCursorMode = null;
+
+    /**
+     * Internal cached let.
+     *
+     * @private
+     * @member {string}
+     */
+    _this.cursor = null;
+
+    /**
+     * ray caster, for survey intersects from 3d-scene
+     *
+     * @private
+     * @member {Raycaster}
+     */
+    _this.raycaster = new three.Raycaster();
+
+    /**
+     * snippet time
+     *
+     * @private
+     * @member {Number}
+     */
+    _this._deltaTime = 0;
+
+    _this.setTargetElement(_this.renderer.domElement);
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is pressed on the display
+     * object.
+     *
+     * @event InteractionManager#mousedown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
+     * on the display object.
+     *
+     * @event InteractionManager#rightdown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is released over the display
+     * object.
+     *
+     * @event InteractionManager#mouseup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is released
+     * over the display object.
+     *
+     * @event InteractionManager#rightup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is pressed and released on
+     * the display object.
+     *
+     * @event InteractionManager#click
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
+     * and released on the display object.
+     *
+     * @event InteractionManager#rightclick
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is released outside the
+     * display object that initially registered a
+     * [mousedown]{@link InteractionManager#event:mousedown}.
+     *
+     * @event InteractionManager#mouseupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is released
+     * outside the display object that initially registered a
+     * [rightdown]{@link InteractionManager#event:rightdown}.
+     *
+     * @event InteractionManager#rightupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved while over the display object
+     *
+     * @event InteractionManager#mousemove
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved onto the display object
+     *
+     * @event InteractionManager#mouseover
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved off the display object
+     *
+     * @event InteractionManager#mouseout
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is pressed on the display object.
+     *
+     * @event InteractionManager#pointerdown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is released over the display object.
+     *
+     * @event InteractionManager#pointerup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when the operating system cancels a pointer event
+     *
+     * @event InteractionManager#pointercancel
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is pressed and released on the display object.
+     *
+     * @event InteractionManager#pointertap
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is released outside the display object that initially
+     * registered a [pointerdown]{@link InteractionManager#event:pointerdown}.
+     *
+     * @event InteractionManager#pointerupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved while over the display object
+     *
+     * @event InteractionManager#pointermove
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved onto the display object
+     *
+     * @event InteractionManager#pointerover
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved off the display object
+     *
+     * @event InteractionManager#pointerout
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is placed on the display object.
+     *
+     * @event InteractionManager#touchstart
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is removed from the display object.
+     *
+     * @event InteractionManager#touchend
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when the operating system cancels a touch
+     *
+     * @event InteractionManager#touchcancel
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is placed and removed from the display object.
+     *
+     * @event InteractionManager#tap
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is removed outside of the display object that initially
+     * registered a [touchstart]{@link InteractionManager#event:touchstart}.
+     *
+     * @event InteractionManager#touchendoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is moved along the display object.
+     *
+     * @event InteractionManager#touchmove
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is pressed on the display.
+     * object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mousedown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
+     * on the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#rightdown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is released over the display
+     * object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mouseup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is released
+     * over the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#rightup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is pressed and released on
+     * the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#click
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
+     * and released on the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#rightclick
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is released outside the
+     * display object that initially registered a
+     * [mousedown]{@link Object3D#event:mousedown}.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mouseupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is released
+     * outside the display object that initially registered a
+     * [rightdown]{@link Object3D#event:rightdown}.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#rightupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved while over the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mousemove
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved onto the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mouseover
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved off the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mouseout
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is pressed on the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointerdown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is released over the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointerup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when the operating system cancels a pointer event.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointercancel
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is pressed and released on the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointertap
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is released outside the display object that initially
+     * registered a [pointerdown]{@link Object3D#event:pointerdown}.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointerupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved while over the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointermove
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved onto the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointerover
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved off the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointerout
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is placed on the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#touchstart
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is removed from the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#touchend
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when the operating system cancels a touch.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#touchcancel
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is placed and removed from the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#tap
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is removed outside of the display object that initially
+     * registered a [touchstart]{@link Object3D#event:touchstart}.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#touchendoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is moved along the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#touchmove
+     * @param {InteractionEvent} event - Interaction event
+     */
+    return _this;
+  }
+
+  /**
+   * Hit tests a point against the display tree, returning the first interactive object that is hit.
+   *
+   * @param {Point} globalPoint - A point to hit test with, in global space.
+   * @param {Object3D} [root] - The root display object to start from. If omitted, defaults
+   * to the last rendered root of the associated renderer.
+   * @return {Object3D} The hit display object, if any.
+   */
+
+
+  createClass(InteractionManager, [{
+    key: 'hitTest',
+    value: function hitTest(globalPoint, root) {
+      // clear the target for our hit test
+      hitTestEvent.target = null;
+      // assign the global point
+      hitTestEvent.data.global = globalPoint;
+      // ensure safety of the root
+      if (!root) {
+        root = this.scene;
+      }
+      // run the hit test
+      this.processInteractive(hitTestEvent, root, null, true);
+      // return our found object - it'll be null if we didn't hit anything
+
+      return hitTestEvent.target;
+    }
+
+    /**
+     * Sets the DOM element which will receive mouse/touch events. This is useful for when you have
+     * other DOM elements on top of the renderers Canvas element. With this you'll be bale to deletegate
+     * another DOM element to receive those events.
+     *
+     * @param {HTMLCanvasElement} element - the DOM element which will receive mouse and touch events.
+     */
+
+  }, {
+    key: 'setTargetElement',
+    value: function setTargetElement(element) {
+      this.removeEvents();
+
+      this.interactionDOMElement = element;
+
+      this.addEvents();
+    }
+
+    /**
+     * Registers all the DOM events
+     *
+     * @private
+     */
+
+  }, {
+    key: 'addEvents',
+    value: function addEvents() {
+      if (!this.interactionDOMElement || this.eventsAdded) {
+        return;
+      }
+
+      this.emit('addevents');
+
+      this.interactionDOMElement.addEventListener('click', this.onClick, true);
+
+      if (window.navigator.msPointerEnabled) {
+        this.interactionDOMElement.style['-ms-content-zooming'] = 'none';
+        this.interactionDOMElement.style['-ms-touch-action'] = 'none';
+      } else if (this.supportsPointerEvents) {
+        this.interactionDOMElement.style['touch-action'] = 'none';
+      }
+
+      /**
+       * These events are added first, so that if pointer events are normalised, they are fired
+       * in the same order as non-normalised events. ie. pointer event 1st, mouse / touch 2nd
+       */
+      if (this.supportsPointerEvents) {
+        window.document.addEventListener('pointermove', this.onPointerMove, true);
+        this.interactionDOMElement.addEventListener('pointerdown', this.onPointerDown, true);
+        // pointerout is fired in addition to pointerup (for touch events) and pointercancel
+        // we already handle those, so for the purposes of what we do in onPointerOut, we only
+        // care about the pointerleave event
+        this.interactionDOMElement.addEventListener('pointerleave', this.onPointerOut, true);
+        this.interactionDOMElement.addEventListener('pointerover', this.onPointerOver, true);
+        window.addEventListener('pointercancel', this.onPointerCancel, true);
+        window.addEventListener('pointerup', this.onPointerUp, true);
+      } else {
+        window.document.addEventListener('mousemove', this.onPointerMove, true);
+        this.interactionDOMElement.addEventListener('mousedown', this.onPointerDown, true);
+        this.interactionDOMElement.addEventListener('mouseout', this.onPointerOut, true);
+        this.interactionDOMElement.addEventListener('mouseover', this.onPointerOver, true);
+        window.addEventListener('mouseup', this.onPointerUp, true);
+      }
+
+      // always look directly for touch events so that we can provide original data
+      // In a future version we should change this to being just a fallback and rely solely on
+      // PointerEvents whenever available
+      if (this.supportsTouchEvents) {
+        this.interactionDOMElement.addEventListener('touchstart', this.onPointerDown, true);
+        this.interactionDOMElement.addEventListener('touchcancel', this.onPointerCancel, true);
+        this.interactionDOMElement.addEventListener('touchend', this.onPointerUp, true);
+        this.interactionDOMElement.addEventListener('touchmove', this.onPointerMove, true);
+      }
+
+      this.eventsAdded = true;
+    }
+
+    /**
+     * Removes all the DOM events that were previously registered
+     *
+     * @private
+     */
+
+  }, {
+    key: 'removeEvents',
+    value: function removeEvents() {
+      if (!this.interactionDOMElement) {
+        return;
+      }
+
+      this.emit('removeevents');
+
+      this.interactionDOMElement.removeEventListener('click', this.onClick, true);
+
+      if (window.navigator.msPointerEnabled) {
+        this.interactionDOMElement.style['-ms-content-zooming'] = '';
+        this.interactionDOMElement.style['-ms-touch-action'] = '';
+      } else if (this.supportsPointerEvents) {
+        this.interactionDOMElement.style['touch-action'] = '';
+      }
+
+      if (this.supportsPointerEvents) {
+        window.document.removeEventListener('pointermove', this.onPointerMove, true);
+        this.interactionDOMElement.removeEventListener('pointerdown', this.onPointerDown, true);
+        this.interactionDOMElement.removeEventListener('pointerleave', this.onPointerOut, true);
+        this.interactionDOMElement.removeEventListener('pointerover', this.onPointerOver, true);
+        window.removeEventListener('pointercancel', this.onPointerCancel, true);
+        window.removeEventListener('pointerup', this.onPointerUp, true);
+      } else {
+        window.document.removeEventListener('mousemove', this.onPointerMove, true);
+        this.interactionDOMElement.removeEventListener('mousedown', this.onPointerDown, true);
+        this.interactionDOMElement.removeEventListener('mouseout', this.onPointerOut, true);
+        this.interactionDOMElement.removeEventListener('mouseover', this.onPointerOver, true);
+        window.removeEventListener('mouseup', this.onPointerUp, true);
+      }
+
+      if (this.supportsTouchEvents) {
+        this.interactionDOMElement.removeEventListener('touchstart', this.onPointerDown, true);
+        this.interactionDOMElement.removeEventListener('touchcancel', this.onPointerCancel, true);
+        this.interactionDOMElement.removeEventListener('touchend', this.onPointerUp, true);
+        this.interactionDOMElement.removeEventListener('touchmove', this.onPointerMove, true);
+      }
+
+      this.interactionDOMElement = null;
+
+      this.eventsAdded = false;
+    }
+
+    /**
+     * Updates the state of interactive objects.
+     * Invoked by a throttled ticker.
+     *
+     * @param {number} deltaTime - time delta since last tick
+     */
+
+  }, {
+    key: 'update',
+    value: function update(_ref) {
+      var snippet = _ref.snippet;
+
+      this._deltaTime += snippet;
+
+      if (this._deltaTime < this.interactionFrequency) {
+        return;
+      }
+
+      this._deltaTime = 0;
+
+      if (!this.interactionDOMElement) {
+        return;
+      }
+
+      // if the user move the mouse this check has already been done using the mouse move!
+      if (this.didMove) {
+        this.didMove = false;
+
+        return;
+      }
+
+      this.cursor = null;
+
+      // Resets the flag as set by a stopPropagation call. This flag is usually reset by a user interaction of any kind,
+      // but there was a scenario of a display object moving under a static mouse cursor.
+      // In this case, mouseover and mouseevents would not pass the flag test in triggerEvent function
+      for (var k in this.activeInteractionData) {
+        // eslint-disable-next-line no-prototype-builtins
+        if (this.activeInteractionData.hasOwnProperty(k)) {
+          var interactionData = this.activeInteractionData[k];
+
+          if (interactionData.originalEvent && interactionData.pointerType !== 'touch') {
+            var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, interactionData.originalEvent, interactionData);
+
+            this.processInteractive(interactionEvent, this.scene, this.processPointerOverOut, true);
+          }
+        }
+      }
+
+      this.setCursorMode(this.cursor);
+
+      // TODO
+    }
+
+    /**
+     * Sets the current cursor mode, handling any callbacks or CSS style changes.
+     *
+     * @param {string} mode - cursor mode, a key from the cursorStyles dictionary
+     */
+
+  }, {
+    key: 'setCursorMode',
+    value: function setCursorMode(mode) {
+      mode = mode || 'default';
+      // if the mode didn't actually change, bail early
+      if (this.currentCursorMode === mode) {
+        return;
+      }
+      this.currentCursorMode = mode;
+      var style = this.cursorStyles[mode];
+
+      // only do things if there is a cursor style for it
+      if (style) {
+        switch (typeof style === 'undefined' ? 'undefined' : _typeof(style)) {
+          case 'string':
+            // string styles are handled as cursor CSS
+            this.interactionDOMElement.style.cursor = style;
+            break;
+          case 'function':
+            // functions are just called, and passed the cursor mode
+            style(mode);
+            break;
+          case 'object':
+            // if it is an object, assume that it is a dictionary of CSS styles,
+            // apply it to the interactionDOMElement
+            Object.assign(this.interactionDOMElement.style, style);
+            break;
+          default:
+            break;
+        }
+      } else if (typeof mode === 'string' && !Object.prototype.hasOwnProperty.call(this.cursorStyles, mode)) {
+        // if it mode is a string (not a Symbol) and cursorStyles doesn't have any entry
+        // for the mode, then assume that the dev wants it to be CSS for the cursor.
+        this.interactionDOMElement.style.cursor = mode;
+      }
+    }
+
+    /**
+     * Dispatches an event on the display object that was interacted with
+     *
+     * @param {Object3D} displayObject - the display object in question
+     * @param {string} eventString - the name of the event (e.g, mousedown)
+     * @param {object} eventData - the event data object
+     * @private
+     */
+
+  }, {
+    key: 'triggerEvent',
+    value: function triggerEvent(displayObject, eventString, eventData) {
+      if (!eventData.stopped) {
+        eventData.currentTarget = displayObject;
+        eventData.type = eventString;
+
+        displayObject.emit(eventString, eventData);
+
+        if (displayObject[eventString]) {
+          displayObject[eventString](eventData);
+        }
+      }
+    }
+
+    /**
+     * This function is provides a neat way of crawling through the scene graph and running a
+     * specified function on all interactive objects it finds. It will also take care of hit
+     * testing the interactive objects and passes the hit across in the function.
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - event containing the point that
+     *  is tested for collision
+     * @param {Object3D} displayObject - the displayObject
+     *  that will be hit test (recursively crawls its children)
+     * @param {Function} [func] - the function that will be called on each interactive object. The
+     *  interactionEvent, displayObject and hit will be passed to the function
+     * @param {boolean} [hitTest] - this indicates if the objects inside should be hit test against the point
+     * @param {boolean} [interactive] - Whether the displayObject is interactive
+     * @return {boolean} returns true if the displayObject hit the point
+     */
+
+  }, {
+    key: 'processInteractive',
+    value: function processInteractive(interactionEvent, displayObject, func, hitTest, interactive) {
+      if (!displayObject || !displayObject.visible) {
+        return false;
+      }
+
+      // Took a little while to rework this function correctly! But now it is done and nice and optimised. ^_^
+      //
+      // This function will now loop through all objects and then only hit test the objects it HAS
+      // to, not all of them. MUCH faster..
+      // An object will be hit test if the following is true:
+      //
+      // 1: It is interactive.
+      // 2: It belongs to a parent that is interactive AND one of the parents children have not already been hit.
+      //
+      // As another little optimisation once an interactive object has been hit we can carry on
+      // through the scenegraph, but we know that there will be no more hits! So we can avoid extra hit tests
+      // A final optimisation is that an object is not hit test directly if a child has already been hit.
+
+      interactive = displayObject.interactive || interactive;
+
+      var hit = false;
+      var interactiveParent = interactive;
+
+      if (displayObject.interactiveChildren && displayObject.children) {
+        var children = displayObject.children;
+
+        for (var i = children.length - 1; i >= 0; i--) {
+          var child = children[i];
+
+          // time to get recursive.. if this function will return if something is hit..
+          var childHit = this.processInteractive(interactionEvent, child, func, hitTest, interactiveParent);
+
+          if (childHit) {
+            // its a good idea to check if a child has lost its parent.
+            // this means it has been removed whilst looping so its best
+            if (!child.parent) {
+              continue;
+            }
+
+            // we no longer need to hit test any more objects in this container as we we
+            // now know the parent has been hit
+            interactiveParent = false;
+
+            // If the child is interactive , that means that the object hit was actually
+            // interactive and not just the child of an interactive object.
+            // This means we no longer need to hit test anything else. We still need to run
+            // through all objects, but we don't need to perform any hit tests.
+
+            if (childHit) {
+              if (interactionEvent.target) {
+                hitTest = false;
+              }
+              hit = true;
+            }
+          }
+        }
+      }
+
+      // no point running this if the item is not interactive or does not have an interactive parent.
+      if (interactive) {
+        // if we are hit testing (as in we have no hit any objects yet)
+        // We also don't need to worry about hit testing if once of the displayObjects children
+        // has already been hit - but only if it was interactive, otherwise we need to keep
+        // looking for an interactive child, just in case we hit one
+        if (hitTest && !interactionEvent.target) {
+          if (interactionEvent.intersects[0] && interactionEvent.intersects[0].object === displayObject) {
+            hit = true;
+          }
+        }
+
+        if (displayObject.interactive) {
+          if (hit && !interactionEvent.target) {
+            interactionEvent.data.target = interactionEvent.target = displayObject;
+          }
+
+          if (func) {
+            func(interactionEvent, displayObject, !!hit);
+          }
+        }
+      }
+
+      return hit;
+    }
+
+    /**
+     * Is called when the click is pressed down on the renderer element
+     *
+     * @private
+     * @param {MouseEvent} originalEvent - The DOM event of a click being pressed down
+     */
+
+  }, {
+    key: 'onClick',
+    value: function onClick(originalEvent) {
+      if (originalEvent.type !== 'click') return;
+
+      var events = this.normalizeToPointerData(originalEvent);
+
+      if (this.autoPreventDefault && events[0].isNormalized) {
+        originalEvent.preventDefault();
+      }
+
+      var interactionData = this.getInteractionDataForPointerId(events[0]);
+
+      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, events[0], interactionData);
+
+      interactionEvent.data.originalEvent = originalEvent;
+
+      this.processInteractive(interactionEvent, this.scene, this.processClick, true);
+
+      this.emit('click', interactionEvent);
+    }
+
+    /**
+     * Processes the result of the click check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     * @param {boolean} hit - the result of the hit test on the display object
+     */
+
+  }, {
+    key: 'processClick',
+    value: function processClick(interactionEvent, displayObject, hit) {
+      if (hit) {
+        this.triggerEvent(displayObject, 'click', interactionEvent);
+      }
+    }
+
+    /**
+     * Is called when the pointer button is pressed down on the renderer element
+     *
+     * @private
+     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being pressed down
+     */
+
+  }, {
+    key: 'onPointerDown',
+    value: function onPointerDown(originalEvent) {
+      // if we support touch events, then only use those for touch events, not pointer events
+      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
+
+      var events = this.normalizeToPointerData(originalEvent);
+
+      /**
+       * No need to prevent default on natural pointer events, as there are no side effects
+       * Normalized events, however, may have the double mousedown/touchstart issue on the native android browser,
+       * so still need to be prevented.
+       */
+
+      // Guaranteed that there will be at least one event in events, and all events must have the same pointer type
+
+      if (this.autoPreventDefault && events[0].isNormalized) {
+        originalEvent.preventDefault();
+      }
+
+      var eventLen = events.length;
+
+      for (var i = 0; i < eventLen; i++) {
+        var event = events[i];
+
+        var interactionData = this.getInteractionDataForPointerId(event);
+
+        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+
+        interactionEvent.data.originalEvent = originalEvent;
+
+        this.processInteractive(interactionEvent, this.scene, this.processPointerDown, true);
+
+        this.emit('pointerdown', interactionEvent);
+        if (event.pointerType === 'touch') {
+          this.emit('touchstart', interactionEvent);
+        } else if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
+          var isRightButton = event.button === 2;
+
+          this.emit(isRightButton ? 'rightdown' : 'mousedown', this.eventData);
+        }
+      }
+    }
+
+    /**
+     * Processes the result of the pointer down check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     * @param {boolean} hit - the result of the hit test on the display object
+     */
+
+  }, {
+    key: 'processPointerDown',
+    value: function processPointerDown(interactionEvent, displayObject, hit) {
+      var data = interactionEvent.data;
+      var id = interactionEvent.data.identifier;
+
+      if (hit) {
+        if (!displayObject.trackedPointers[id]) {
+          displayObject.trackedPointers[id] = new InteractionTrackingData(id);
+        }
+        this.triggerEvent(displayObject, 'pointerdown', interactionEvent);
+
+        if (data.pointerType === 'touch') {
+          displayObject.started = true;
+          this.triggerEvent(displayObject, 'touchstart', interactionEvent);
+        } else if (data.pointerType === 'mouse' || data.pointerType === 'pen') {
+          var isRightButton = data.button === 2;
+
+          if (isRightButton) {
+            displayObject.trackedPointers[id].rightDown = true;
+          } else {
+            displayObject.trackedPointers[id].leftDown = true;
+          }
+
+          this.triggerEvent(displayObject, isRightButton ? 'rightdown' : 'mousedown', interactionEvent);
+        }
+      }
+    }
+
+    /**
+     * Is called when the pointer button is released on the renderer element
+     *
+     * @private
+     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being released
+     * @param {boolean} cancelled - true if the pointer is cancelled
+     * @param {Function} func - Function passed to {@link processInteractive}
+     */
+
+  }, {
+    key: 'onPointerComplete',
+    value: function onPointerComplete(originalEvent, cancelled, func) {
+      var events = this.normalizeToPointerData(originalEvent);
+
+      var eventLen = events.length;
+
+      // if the event wasn't targeting our canvas, then consider it to be pointerupoutside
+      // in all cases (unless it was a pointercancel)
+      var eventAppend = originalEvent.target !== this.interactionDOMElement ? 'outside' : '';
+
+      for (var i = 0; i < eventLen; i++) {
+        var event = events[i];
+
+        var interactionData = this.getInteractionDataForPointerId(event);
+
+        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+
+        interactionEvent.data.originalEvent = originalEvent;
+
+        // perform hit testing for events targeting our canvas or cancel events
+        this.processInteractive(interactionEvent, this.scene, func, cancelled || !eventAppend);
+
+        this.emit(cancelled ? 'pointercancel' : 'pointerup' + eventAppend, interactionEvent);
+
+        if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
+          var isRightButton = event.button === 2;
+
+          this.emit(isRightButton ? 'rightup' + eventAppend : 'mouseup' + eventAppend, interactionEvent);
+        } else if (event.pointerType === 'touch') {
+          this.emit(cancelled ? 'touchcancel' : 'touchend' + eventAppend, interactionEvent);
+          this.releaseInteractionDataForPointerId(event.pointerId, interactionData);
+        }
+      }
+    }
+
+    /**
+     * Is called when the pointer button is cancelled
+     *
+     * @private
+     * @param {PointerEvent} event - The DOM event of a pointer button being released
+     */
+
+  }, {
+    key: 'onPointerCancel',
+    value: function onPointerCancel(event) {
+      // if we support touch events, then only use those for touch events, not pointer events
+      if (this.supportsTouchEvents && event.pointerType === 'touch') return;
+
+      this.onPointerComplete(event, true, this.processPointerCancel);
+    }
+
+    /**
+     * Processes the result of the pointer cancel check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     */
+
+  }, {
+    key: 'processPointerCancel',
+    value: function processPointerCancel(interactionEvent, displayObject) {
+      var data = interactionEvent.data;
+
+      var id = interactionEvent.data.identifier;
+
+      if (displayObject.trackedPointers[id] !== undefined) {
+        delete displayObject.trackedPointers[id];
+        this.triggerEvent(displayObject, 'pointercancel', interactionEvent);
+
+        if (data.pointerType === 'touch') {
+          this.triggerEvent(displayObject, 'touchcancel', interactionEvent);
+        }
+      }
+    }
+
+    /**
+     * Is called when the pointer button is released on the renderer element
+     *
+     * @private
+     * @param {PointerEvent} event - The DOM event of a pointer button being released
+     */
+
+  }, {
+    key: 'onPointerUp',
+    value: function onPointerUp(event) {
+      // if we support touch events, then only use those for touch events, not pointer events
+      if (this.supportsTouchEvents && event.pointerType === 'touch') return;
+
+      this.onPointerComplete(event, false, this.processPointerUp);
+    }
+
+    /**
+     * Processes the result of the pointer up check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     * @param {boolean} hit - the result of the hit test on the display object
+     */
+
+  }, {
+    key: 'processPointerUp',
+    value: function processPointerUp(interactionEvent, displayObject, hit) {
+      var data = interactionEvent.data;
+
+      var id = interactionEvent.data.identifier;
+
+      var trackingData = displayObject.trackedPointers[id];
+
+      var isTouch = data.pointerType === 'touch';
+
+      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
+
+      // Mouse only
+      if (isMouse) {
+        var isRightButton = data.button === 2;
+
+        var flags = InteractionTrackingData.FLAGS;
+
+        var test = isRightButton ? flags.RIGHT_DOWN : flags.LEFT_DOWN;
+
+        var isDown = trackingData !== undefined && trackingData.flags & test;
+
+        if (hit) {
+          this.triggerEvent(displayObject, isRightButton ? 'rightup' : 'mouseup', interactionEvent);
+
+          if (isDown) {
+            this.triggerEvent(displayObject, isRightButton ? 'rightclick' : 'leftclick', interactionEvent);
+          }
+        } else if (isDown) {
+          this.triggerEvent(displayObject, isRightButton ? 'rightupoutside' : 'mouseupoutside', interactionEvent);
+        }
+        // update the down state of the tracking data
+        if (trackingData) {
+          if (isRightButton) {
+            trackingData.rightDown = false;
+          } else {
+            trackingData.leftDown = false;
+          }
+        }
+      }
+
+      // Pointers and Touches, and Mouse
+      if (isTouch && displayObject.started) {
+        displayObject.started = false;
+        this.triggerEvent(displayObject, 'touchend', interactionEvent);
+      }
+      if (hit) {
+        this.triggerEvent(displayObject, 'pointerup', interactionEvent);
+
+        if (trackingData) {
+          this.triggerEvent(displayObject, 'pointertap', interactionEvent);
+          if (isTouch) {
+            this.triggerEvent(displayObject, 'tap', interactionEvent);
+            // touches are no longer over (if they ever were) when we get the touchend
+            // so we should ensure that we don't keep pretending that they are
+            trackingData.over = false;
+          }
+        }
+      } else if (trackingData) {
+        this.triggerEvent(displayObject, 'pointerupoutside', interactionEvent);
+        if (isTouch) this.triggerEvent(displayObject, 'touchendoutside', interactionEvent);
+      }
+      // Only remove the tracking data if there is no over/down state still associated with it
+      if (trackingData && trackingData.none) {
+        delete displayObject.trackedPointers[id];
+      }
+    }
+
+    /**
+     * Is called when the pointer moves across the renderer element
+     *
+     * @private
+     * @param {PointerEvent} originalEvent - The DOM event of a pointer moving
+     */
+
+  }, {
+    key: 'onPointerMove',
+    value: function onPointerMove(originalEvent) {
+      // if we support touch events, then only use those for touch events, not pointer events
+      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
+
+      var events = this.normalizeToPointerData(originalEvent);
+
+      if (events[0].pointerType === 'mouse') {
+        this.didMove = true;
+
+        this.cursor = null;
+      }
+
+      var eventLen = events.length;
+
+      for (var i = 0; i < eventLen; i++) {
+        var event = events[i];
+
+        var interactionData = this.getInteractionDataForPointerId(event);
+
+        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+
+        interactionEvent.data.originalEvent = originalEvent;
+
+        var interactive = event.pointerType === 'touch' ? this.moveWhenInside : true;
+
+        this.processInteractive(interactionEvent, this.scene, this.processPointerMove, interactive);
+        this.emit('pointermove', interactionEvent);
+        if (event.pointerType === 'touch') this.emit('touchmove', interactionEvent);
+        if (event.pointerType === 'mouse' || event.pointerType === 'pen') this.emit('mousemove', interactionEvent);
+      }
+
+      if (events[0].pointerType === 'mouse') {
+        this.setCursorMode(this.cursor);
+
+        // TODO BUG for parents interactive object (border order issue)
+      }
+    }
+
+    /**
+     * Processes the result of the pointer move check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     * @param {boolean} hit - the result of the hit test on the display object
+     */
+
+  }, {
+    key: 'processPointerMove',
+    value: function processPointerMove(interactionEvent, displayObject, hit) {
+      var data = interactionEvent.data;
+
+      var isTouch = data.pointerType === 'touch';
+
+      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
+
+      if (isMouse) {
+        this.processPointerOverOut(interactionEvent, displayObject, hit);
+      }
+
+      if (isTouch && displayObject.started) this.triggerEvent(displayObject, 'touchmove', interactionEvent);
+      if (!this.moveWhenInside || hit) {
+        this.triggerEvent(displayObject, 'pointermove', interactionEvent);
+        if (isMouse) this.triggerEvent(displayObject, 'mousemove', interactionEvent);
+      }
+    }
+
+    /**
+     * Is called when the pointer is moved out of the renderer element
+     *
+     * @private
+     * @param {PointerEvent} originalEvent - The DOM event of a pointer being moved out
+     */
+
+  }, {
+    key: 'onPointerOut',
+    value: function onPointerOut(originalEvent) {
+      // if we support touch events, then only use those for touch events, not pointer events
+      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
+
+      var events = this.normalizeToPointerData(originalEvent);
+
+      // Only mouse and pointer can call onPointerOut, so events will always be length 1
+      var event = events[0];
+
+      if (event.pointerType === 'mouse') {
+        this.mouseOverRenderer = false;
+        this.setCursorMode(null);
+      }
+
+      var interactionData = this.getInteractionDataForPointerId(event);
+
+      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+
+      interactionEvent.data.originalEvent = event;
+
+      this.processInteractive(interactionEvent, this.scene, this.processPointerOverOut, false);
+
+      this.emit('pointerout', interactionEvent);
+      if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
+        this.emit('mouseout', interactionEvent);
+      } else {
+        // we can get touchleave events after touchend, so we want to make sure we don't
+        // introduce memory leaks
+        this.releaseInteractionDataForPointerId(interactionData.identifier);
+      }
+    }
+
+    /**
+     * Processes the result of the pointer over/out check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     * @param {boolean} hit - the result of the hit test on the display object
+     */
+
+  }, {
+    key: 'processPointerOverOut',
+    value: function processPointerOverOut(interactionEvent, displayObject, hit) {
+      var data = interactionEvent.data;
+
+      var id = interactionEvent.data.identifier;
+
+      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
+
+      var trackingData = displayObject.trackedPointers[id];
+
+      // if we just moused over the display object, then we need to track that state
+      if (hit && !trackingData) {
+        trackingData = displayObject.trackedPointers[id] = new InteractionTrackingData(id);
+      }
+
+      if (trackingData === undefined) return;
+
+      if (hit && this.mouseOverRenderer) {
+        if (!trackingData.over) {
+          trackingData.over = true;
+          this.triggerEvent(displayObject, 'pointerover', interactionEvent);
+          if (isMouse) {
+            this.triggerEvent(displayObject, 'mouseover', interactionEvent);
+          }
+        }
+
+        // only change the cursor if it has not already been changed (by something deeper in the
+        // display tree)
+        if (isMouse && this.cursor === null) {
+          this.cursor = displayObject.cursor;
+        }
+      } else if (trackingData.over) {
+        trackingData.over = false;
+        this.triggerEvent(displayObject, 'pointerout', this.eventData);
+        if (isMouse) {
+          this.triggerEvent(displayObject, 'mouseout', interactionEvent);
+        }
+        // if there is no mouse down information for the pointer, then it is safe to delete
+        if (trackingData.none) {
+          delete displayObject.trackedPointers[id];
+        }
+      }
+    }
+
+    /**
+     * Is called when the pointer is moved into the renderer element
+     *
+     * @private
+     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being moved into the renderer view
+     */
+
+  }, {
+    key: 'onPointerOver',
+    value: function onPointerOver(originalEvent) {
+      var events = this.normalizeToPointerData(originalEvent);
+
+      // Only mouse and pointer can call onPointerOver, so events will always be length 1
+      var event = events[0];
+
+      var interactionData = this.getInteractionDataForPointerId(event);
+
+      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+
+      interactionEvent.data.originalEvent = event;
+
+      if (event.pointerType === 'mouse') {
+        this.mouseOverRenderer = true;
+      }
+
+      this.emit('pointerover', interactionEvent);
+      if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
+        this.emit('mouseover', interactionEvent);
+      }
+    }
+
+    /**
+     * Get InteractionData for a given pointerId. Store that data as well
+     *
+     * @private
+     * @param {PointerEvent} event - Normalized pointer event, output from normalizeToPointerData
+     * @return {InteractionData} - Interaction data for the given pointer identifier
+     */
+
+  }, {
+    key: 'getInteractionDataForPointerId',
+    value: function getInteractionDataForPointerId(event) {
+      var pointerId = event.pointerId;
+
+      var interactionData = void 0;
+
+      if (pointerId === MOUSE_POINTER_ID || event.pointerType === 'mouse') {
+        interactionData = this.mouse;
+      } else if (this.activeInteractionData[pointerId]) {
+        interactionData = this.activeInteractionData[pointerId];
+      } else {
+        interactionData = this.interactionDataPool.pop() || new InteractionData();
+        interactionData.identifier = pointerId;
+        this.activeInteractionData[pointerId] = interactionData;
+      }
+      // copy properties from the event, so that we can make sure that touch/pointer specific
+      // data is available
+      interactionData._copyEvent(event);
+
+      return interactionData;
+    }
+
+    /**
+     * Return unused InteractionData to the pool, for a given pointerId
+     *
+     * @private
+     * @param {number} pointerId - Identifier from a pointer event
+     */
+
+  }, {
+    key: 'releaseInteractionDataForPointerId',
+    value: function releaseInteractionDataForPointerId(pointerId) {
+      var interactionData = this.activeInteractionData[pointerId];
+
+      if (interactionData) {
+        delete this.activeInteractionData[pointerId];
+        interactionData._reset();
+        this.interactionDataPool.push(interactionData);
+      }
+    }
+
+    /**
+     * Maps x and y coords from a DOM object and maps them correctly to the three.js view. The
+     * resulting value is stored in the point. This takes into account the fact that the DOM
+     * element could be scaled and positioned anywhere on the screen.
+     *
+     * @param  {Vector2} point - the point that the result will be stored in
+     * @param  {number} x - the x coord of the position to map
+     * @param  {number} y - the y coord of the position to map
+     */
+
+  }, {
+    key: 'mapPositionToPoint',
+    value: function mapPositionToPoint(point, x, y) {
+      var rect = void 0;
+
+      // IE 11 fix
+      if (!this.interactionDOMElement.parentElement) {
+        rect = {
+          x: 0,
+          y: 0,
+          left: 0,
+          top: 0,
+          width: 0,
+          height: 0
+        };
+      } else {
+        rect = this.interactionDOMElement.getBoundingClientRect();
+      }
+
+      point.x = (x - rect.left) / rect.width * 2 - 1;
+      point.y = -((y - rect.top) / rect.height) * 2 + 1;
+    }
+
+    /**
+     * Configure an InteractionEvent to wrap a DOM PointerEvent and InteractionData
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The event to be configured
+     * @param {PointerEvent} pointerEvent - The DOM event that will be paired with the InteractionEvent
+     * @param {InteractionData} interactionData - The InteractionData that will be paired
+     *        with the InteractionEvent
+     * @return {InteractionEvent} the interaction event that was passed in
+     */
+
+  }, {
+    key: 'configureInteractionEventForDOMEvent',
+    value: function configureInteractionEventForDOMEvent(interactionEvent, pointerEvent, interactionData) {
+      interactionEvent.data = interactionData;
+
+      this.mapPositionToPoint(interactionData.global, pointerEvent.clientX, pointerEvent.clientY);
+
+      this.raycaster.setFromCamera(interactionData.global, this.camera);
+
+      // Not really sure why this is happening, but it's how a previous version handled things TODO: there should be remove
+      if (pointerEvent.pointerType === 'touch') {
+        pointerEvent.globalX = interactionData.global.x;
+        pointerEvent.globalY = interactionData.global.y;
+      }
+
+      interactionData.originalEvent = pointerEvent;
+      interactionEvent._reset();
+      interactionEvent.intersects = this.raycaster.intersectObjects(this.scene.children, true);
+
+      return interactionEvent;
+    }
+
+    /**
+     * Ensures that the original event object contains all data that a regular pointer event would have
+     *
+     * @private
+     * @param {TouchEvent|MouseEvent|PointerEvent} event - The original event data from a touch or mouse event
+     * @return {PointerEvent[]} An array containing a single normalized pointer event, in the case of a pointer
+     *  or mouse event, or a multiple normalized pointer events if there are multiple changed touches
+     */
+
+  }, {
+    key: 'normalizeToPointerData',
+    value: function normalizeToPointerData(event) {
+      var normalizedEvents = [];
+
+      if (this.supportsTouchEvents && event instanceof TouchEvent) {
+        for (var i = 0, li = event.changedTouches.length; i < li; i++) {
+          var touch = event.changedTouches[i];
+
+          if (typeof touch.button === 'undefined') touch.button = event.touches.length ? 1 : 0;
+          if (typeof touch.buttons === 'undefined') touch.buttons = event.touches.length ? 1 : 0;
+          if (typeof touch.isPrimary === 'undefined') {
+            touch.isPrimary = event.touches.length === 1 && event.type === 'touchstart';
+          }
+          if (typeof touch.width === 'undefined') touch.width = touch.radiusX || 1;
+          if (typeof touch.height === 'undefined') touch.height = touch.radiusY || 1;
+          if (typeof touch.tiltX === 'undefined') touch.tiltX = 0;
+          if (typeof touch.tiltY === 'undefined') touch.tiltY = 0;
+          if (typeof touch.pointerType === 'undefined') touch.pointerType = 'touch';
+          if (typeof touch.pointerId === 'undefined') touch.pointerId = touch.identifier || 0;
+          if (typeof touch.pressure === 'undefined') touch.pressure = touch.force || 0.5;
+          touch.twist = 0;
+          touch.tangentialPressure = 0;
+          // TODO: Remove these, as layerX/Y is not a standard, is deprecated, has uneven
+          // support, and the fill ins are not quite the same
+          // offsetX/Y might be okay, but is not the same as clientX/Y when the canvas's top
+          // left is not 0,0 on the page
+          if (typeof touch.layerX === 'undefined') touch.layerX = touch.offsetX = touch.clientX;
+          if (typeof touch.layerY === 'undefined') touch.layerY = touch.offsetY = touch.clientY;
+
+          // mark the touch as normalized, just so that we know we did it
+          touch.isNormalized = true;
+
+          normalizedEvents.push(touch);
+        }
+      } else if (event instanceof MouseEvent && (!this.supportsPointerEvents || !(event instanceof window.PointerEvent))) {
+        if (typeof event.isPrimary === 'undefined') event.isPrimary = true;
+        if (typeof event.width === 'undefined') event.width = 1;
+        if (typeof event.height === 'undefined') event.height = 1;
+        if (typeof event.tiltX === 'undefined') event.tiltX = 0;
+        if (typeof event.tiltY === 'undefined') event.tiltY = 0;
+        if (typeof event.pointerType === 'undefined') event.pointerType = 'mouse';
+        if (typeof event.pointerId === 'undefined') event.pointerId = MOUSE_POINTER_ID;
+        if (typeof event.pressure === 'undefined') event.pressure = 0.5;
+        event.twist = 0;
+        event.tangentialPressure = 0;
+
+        // mark the mouse event as normalized, just so that we know we did it
+        event.isNormalized = true;
+
+        normalizedEvents.push(event);
+      } else {
+        normalizedEvents.push(event);
+      }
+
+      return normalizedEvents;
+    }
+
+    /**
+     * Destroys the interaction manager
+     *
+     */
+
+  }, {
+    key: 'destroy',
+    value: function destroy() {
+      this.removeEvents();
+
+      this.removeAllListeners();
+
+      this.renderer = null;
+
+      this.mouse = null;
+
+      this.eventData = null;
+
+      this.interactionDOMElement = null;
+
+      this.onPointerDown = null;
+      this.processPointerDown = null;
+
+      this.onPointerUp = null;
+      this.processPointerUp = null;
+
+      this.onPointerCancel = null;
+      this.processPointerCancel = null;
+
+      this.onPointerMove = null;
+      this.processPointerMove = null;
+
+      this.onPointerOut = null;
+      this.processPointerOverOut = null;
+
+      this.onPointerOver = null;
+
+      this._tempPoint = null;
+    }
+  }]);
+  return InteractionManager;
+}(three.EventDispatcher);
+
+var MOUSE_POINTER_ID$1 = 'MOUSE';
+
+// helpers for hitTest() - only used inside hitTest()
+var hitTestEvent$1 = {
+  target: null,
+  data: {
+    global: null
+  }
+};
+
+/**
+ * The interaction manager deals with mouse, touch and pointer events. Any DisplayObject can be interactive
+ * if its interactive parameter is set to true
+ * This manager also supports multitouch.
+ *
+ * reference to [pixi.js](http://www.pixijs.com/) impl
+ *
+ * @private
+ * @class
+ * @extends EventDispatcher
+ */
+
+var InteractionLayer = function (_EventDispatcher) {
+  inherits(InteractionLayer, _EventDispatcher);
+
+  /**
+   * @param {WebGLRenderer} renderer - A reference to the current renderer
+   * @param {Object} [options] - The options for the manager.
+   * @param {Boolean} [options.autoPreventDefault=false] - Should the manager automatically prevent default browser actions.
+   * @param {Boolean} [options.autoAttach=true] - Should the manager automatically attach target element.
+   * @param {Number} [options.interactionFrequency=10] - Frequency increases the interaction events will be checked.
+   */
+  function InteractionLayer(renderer, options) {
+    classCallCheck(this, InteractionLayer);
+
+    var _this = possibleConstructorReturn(this, (InteractionLayer.__proto__ || Object.getPrototypeOf(InteractionLayer)).call(this));
+
+    options = options || {};
+
+    /**
+     * The renderer this interaction manager works for.
+     *
+     * @member {WebGLRenderer}
+     */
+    _this.renderer = renderer;
+
+    /**
+     * The renderer this interaction manager works for.
+     *
+     * @member {Layer}
+     */
+    _this.layer = null;
+
+    /**
+     * The renderer this interaction manager works for.
+     *
+     * @member {Scene}
+     */
+    // this.scene = scene;
+
+    /**
+     * The renderer this interaction manager works for.
+     *
+     * @member {Camera}
+     */
+    // this.camera = camera;
+
+    /**
+     * Should default browser actions automatically be prevented.
+     * Does not apply to pointer events for backwards compatibility
+     * preventDefault on pointer events stops mouse events from firing
+     * Thus, for every pointer event, there will always be either a mouse of touch event alongside it.
+     *
+     * @member {boolean}
+     * @default false
+     */
+    _this.autoPreventDefault = options.autoPreventDefault || false;
+
+    /**
+     * Frequency in milliseconds that the mousemove, moveover & mouseout interaction events will be checked.
+     *
+     * @member {number}
+     * @default 10
+     */
+    _this.interactionFrequency = options.interactionFrequency || 10;
+
+    /**
+     * The mouse data
+     *
+     * @member {InteractionData}
+     */
+    _this.mouse = new InteractionData();
+    _this.mouse.identifier = MOUSE_POINTER_ID$1;
+
+    // setting the mouse to start off far off screen will mean that mouse over does
+    //  not get called before we even move the mouse.
+    _this.mouse.global.set(-999999);
+
+    /**
+     * Actively tracked InteractionData
+     *
+     * @private
+     * @member {Object.<number,InteractionData>}
+     */
+    _this.activeInteractionData = {};
+    _this.activeInteractionData[MOUSE_POINTER_ID$1] = _this.mouse;
+
+    /**
+     * Pool of unused InteractionData
+     *
+     * @private
+     * @member {InteractionData[]}
+     */
+    _this.interactionDataPool = [];
+
+    /**
+     * An event data object to handle all the event tracking/dispatching
+     *
+     * @member {object}
+     */
+    _this.eventData = new InteractionEvent();
+
+    /**
+     * The DOM element to bind to.
+     *
+     * @private
+     * @member {HTMLElement}
+     */
+    _this.interactionDOMElement = null;
+
+    /**
+     * This property determines if mousemove and touchmove events are fired only when the cursor
+     * is over the object.
+     * Setting to true will make things work more in line with how the DOM verison works.
+     * Setting to false can make things easier for things like dragging
+     * It is currently set to false as this is how three.js used to work.
+     *
+     * @member {boolean}
+     * @default true
+     */
+    _this.moveWhenInside = true;
+
+    /**
+     * Have events been attached to the dom element?
+     *
+     * @private
+     * @member {boolean}
+     */
+    _this.eventsAdded = false;
+
+    /**
+     * Is the mouse hovering over the renderer?
+     *
+     * @private
+     * @member {boolean}
+     */
+    _this.mouseOverRenderer = false;
+
+    /**
+     * Does the device support touch events
+     * https://www.w3.org/TR/touch-events/
+     *
+     * @readonly
+     * @member {boolean}
+     */
+    _this.supportsTouchEvents = 'ontouchstart' in window;
+
+    /**
+     * Does the device support pointer events
+     * https://www.w3.org/Submission/pointer-events/
+     *
+     * @readonly
+     * @member {boolean}
+     */
+    _this.supportsPointerEvents = !!window.PointerEvent;
+
+    // this will make it so that you don't have to call bind all the time
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onClick = _this.onClick.bind(_this);
+    _this.processClick = _this.processClick.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerUp = _this.onPointerUp.bind(_this);
+    _this.processPointerUp = _this.processPointerUp.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerCancel = _this.onPointerCancel.bind(_this);
+    _this.processPointerCancel = _this.processPointerCancel.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerDown = _this.onPointerDown.bind(_this);
+    _this.processPointerDown = _this.processPointerDown.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerMove = _this.onPointerMove.bind(_this);
+    _this.processPointerMove = _this.processPointerMove.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerOut = _this.onPointerOut.bind(_this);
+    _this.processPointerOverOut = _this.processPointerOverOut.bind(_this);
+
+    /**
+     * @private
+     * @member {Function}
+     */
+    _this.onPointerOver = _this.onPointerOver.bind(_this);
+
+    /**
+     * Dictionary of how different cursor modes are handled. Strings are handled as CSS cursor
+     * values, objects are handled as dictionaries of CSS values for interactionDOMElement,
+     * and functions are called instead of changing the CSS.
+     * Default CSS cursor values are provided for 'default' and 'pointer' modes.
+     * @member {Object.<string, (string|Function|Object.<string, string>)>}
+     */
+    _this.cursorStyles = {
+      default: 'inherit',
+      pointer: 'pointer'
+    };
+
+    /**
+     * The mode of the cursor that is being used.
+     * The value of this is a key from the cursorStyles dictionary.
+     *
+     * @member {string}
+     */
+    _this.currentCursorMode = null;
+
+    /**
+     * Internal cached let.
+     *
+     * @private
+     * @member {string}
+     */
+    _this.cursor = null;
+
+    /**
+     * ray caster, for survey intersects from 3d-scene
+     *
+     * @private
+     * @member {Raycaster}
+     */
+    _this.raycaster = new three.Raycaster();
+
+    /**
+     * snippet time
+     *
+     * @private
+     * @member {Number}
+     */
+    _this._deltaTime = 0;
+
+    _this.setTargetElement(_this.renderer.domElement);
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is pressed on the display
+     * object.
+     *
+     * @event InteractionLayer#mousedown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
+     * on the display object.
+     *
+     * @event InteractionLayer#rightdown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is released over the display
+     * object.
+     *
+     * @event InteractionLayer#mouseup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is released
+     * over the display object.
+     *
+     * @event InteractionLayer#rightup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is pressed and released on
+     * the display object.
+     *
+     * @event InteractionLayer#click
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
+     * and released on the display object.
+     *
+     * @event InteractionLayer#rightclick
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is released outside the
+     * display object that initially registered a
+     * [mousedown]{@link InteractionLayer#event:mousedown}.
+     *
+     * @event InteractionLayer#mouseupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is released
+     * outside the display object that initially registered a
+     * [rightdown]{@link InteractionLayer#event:rightdown}.
+     *
+     * @event InteractionLayer#rightupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved while over the display object
+     *
+     * @event InteractionLayer#mousemove
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved onto the display object
+     *
+     * @event InteractionLayer#mouseover
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved off the display object
+     *
+     * @event InteractionLayer#mouseout
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is pressed on the display object.
+     *
+     * @event InteractionLayer#pointerdown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is released over the display object.
+     *
+     * @event InteractionLayer#pointerup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when the operating system cancels a pointer event
+     *
+     * @event InteractionLayer#pointercancel
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is pressed and released on the display object.
+     *
+     * @event InteractionLayer#pointertap
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is released outside the display object that initially
+     * registered a [pointerdown]{@link InteractionLayer#event:pointerdown}.
+     *
+     * @event InteractionLayer#pointerupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved while over the display object
+     *
+     * @event InteractionLayer#pointermove
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved onto the display object
+     *
+     * @event InteractionLayer#pointerover
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved off the display object
+     *
+     * @event InteractionLayer#pointerout
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is placed on the display object.
+     *
+     * @event InteractionLayer#touchstart
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is removed from the display object.
+     *
+     * @event InteractionLayer#touchend
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when the operating system cancels a touch
+     *
+     * @event InteractionLayer#touchcancel
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is placed and removed from the display object.
+     *
+     * @event InteractionLayer#tap
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is removed outside of the display object that initially
+     * registered a [touchstart]{@link InteractionLayer#event:touchstart}.
+     *
+     * @event InteractionLayer#touchendoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is moved along the display object.
+     *
+     * @event InteractionLayer#touchmove
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is pressed on the display.
+     * object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mousedown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
+     * on the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#rightdown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is released over the display
+     * object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mouseup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is released
+     * over the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#rightup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is pressed and released on
+     * the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#click
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
+     * and released on the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#rightclick
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button (usually a mouse left-button) is released outside the
+     * display object that initially registered a
+     * [mousedown]{@link Object3D#event:mousedown}.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mouseupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device secondary button (usually a mouse right-button) is released
+     * outside the display object that initially registered a
+     * [rightdown]{@link Object3D#event:rightdown}.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#rightupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved while over the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mousemove
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved onto the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mouseover
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device (usually a mouse) is moved off the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#mouseout
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is pressed on the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointerdown
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is released over the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointerup
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when the operating system cancels a pointer event.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointercancel
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is pressed and released on the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointertap
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device button is released outside the display object that initially
+     * registered a [pointerdown]{@link Object3D#event:pointerdown}.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointerupoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved while over the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointermove
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved onto the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointerover
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a pointer device is moved off the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#pointerout
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is placed on the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#touchstart
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is removed from the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#touchend
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when the operating system cancels a touch.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#touchcancel
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is placed and removed from the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#tap
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is removed outside of the display object that initially
+     * registered a [touchstart]{@link Object3D#event:touchstart}.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#touchendoutside
+     * @param {InteractionEvent} event - Interaction event
+     */
+
+    /**
+     * Fired when a touch point is moved along the display object.
+     * DisplayObject's `interactive` property must be set to `true` to fire event.
+     *
+     * @event Object3D#touchmove
+     * @param {InteractionEvent} event - Interaction event
+     */
+    return _this;
+  }
+
+  /**
+   * @return {boolean}
+   */
+
+
+  createClass(InteractionLayer, [{
+    key: 'isAble',
+    value: function isAble() {
+      return this.layer && this.layer.interactive;
+    }
+
+    /**
+     * set layer
+     * @param {Layer} layer layer
+     */
+
+  }, {
+    key: 'setLayer',
+    value: function setLayer(layer) {
+      this.layer = layer;
+    }
+
+    /**
+     * Hit tests a point against the display tree, returning the first interactive object that is hit.
+     *
+     * @param {Point} globalPoint - A point to hit test with, in global space.
+     * @param {Object3D} [root] - The root display object to start from. If omitted, defaults
+     * to the last rendered root of the associated renderer.
+     * @return {Object3D} The hit display object, if any.
+     */
+
+  }, {
+    key: 'hitTest',
+    value: function hitTest(globalPoint, root) {
+      if (!this.isAble()) return null;
+      // clear the target for our hit test
+      hitTestEvent$1.target = null;
+      // assign the global point
+      hitTestEvent$1.data.global = globalPoint;
+      // ensure safety of the root
+      if (!root) {
+        root = this.layer.scene;
+      }
+      // run the hit test
+      this.processInteractive(hitTestEvent$1, root, null, true);
+      // return our found object - it'll be null if we didn't hit anything
+
+      return hitTestEvent$1.target;
+    }
+
+    /**
+     * Sets the DOM element which will receive mouse/touch events. This is useful for when you have
+     * other DOM elements on top of the renderers Canvas element. With this you'll be bale to deletegate
+     * another DOM element to receive those events.
+     *
+     * @param {HTMLCanvasElement} element - the DOM element which will receive mouse and touch events.
+     */
+
+  }, {
+    key: 'setTargetElement',
+    value: function setTargetElement(element) {
+      this.removeEvents();
+
+      this.interactionDOMElement = element;
+
+      this.addEvents();
+    }
+
+    /**
+     * Registers all the DOM events
+     *
+     * @private
+     */
+
+  }, {
+    key: 'addEvents',
+    value: function addEvents() {
+      if (!this.interactionDOMElement || this.eventsAdded) {
+        return;
+      }
+
+      this.emit('addevents');
+
+      this.interactionDOMElement.addEventListener('click', this.onClick, true);
+
+      if (window.navigator.msPointerEnabled) {
+        this.interactionDOMElement.style['-ms-content-zooming'] = 'none';
+        this.interactionDOMElement.style['-ms-touch-action'] = 'none';
+      } else if (this.supportsPointerEvents) {
+        this.interactionDOMElement.style['touch-action'] = 'none';
+      }
+
+      /**
+       * These events are added first, so that if pointer events are normalised, they are fired
+       * in the same order as non-normalised events. ie. pointer event 1st, mouse / touch 2nd
+       */
+      if (this.supportsPointerEvents) {
+        window.document.addEventListener('pointermove', this.onPointerMove, true);
+        this.interactionDOMElement.addEventListener('pointerdown', this.onPointerDown, true);
+        // pointerout is fired in addition to pointerup (for touch events) and pointercancel
+        // we already handle those, so for the purposes of what we do in onPointerOut, we only
+        // care about the pointerleave event
+        this.interactionDOMElement.addEventListener('pointerleave', this.onPointerOut, true);
+        this.interactionDOMElement.addEventListener('pointerover', this.onPointerOver, true);
+        window.addEventListener('pointercancel', this.onPointerCancel, true);
+        window.addEventListener('pointerup', this.onPointerUp, true);
+      } else {
+        window.document.addEventListener('mousemove', this.onPointerMove, true);
+        this.interactionDOMElement.addEventListener('mousedown', this.onPointerDown, true);
+        this.interactionDOMElement.addEventListener('mouseout', this.onPointerOut, true);
+        this.interactionDOMElement.addEventListener('mouseover', this.onPointerOver, true);
+        window.addEventListener('mouseup', this.onPointerUp, true);
+      }
+
+      // always look directly for touch events so that we can provide original data
+      // In a future version we should change this to being just a fallback and rely solely on
+      // PointerEvents whenever available
+      if (this.supportsTouchEvents) {
+        this.interactionDOMElement.addEventListener('touchstart', this.onPointerDown, true);
+        this.interactionDOMElement.addEventListener('touchcancel', this.onPointerCancel, true);
+        this.interactionDOMElement.addEventListener('touchend', this.onPointerUp, true);
+        this.interactionDOMElement.addEventListener('touchmove', this.onPointerMove, true);
+      }
+
+      this.eventsAdded = true;
+    }
+
+    /**
+     * Removes all the DOM events that were previously registered
+     *
+     * @private
+     */
+
+  }, {
+    key: 'removeEvents',
+    value: function removeEvents() {
+      if (!this.interactionDOMElement) {
+        return;
+      }
+
+      this.emit('removeevents');
+
+      this.interactionDOMElement.removeEventListener('click', this.onClick, true);
+
+      if (window.navigator.msPointerEnabled) {
+        this.interactionDOMElement.style['-ms-content-zooming'] = '';
+        this.interactionDOMElement.style['-ms-touch-action'] = '';
+      } else if (this.supportsPointerEvents) {
+        this.interactionDOMElement.style['touch-action'] = '';
+      }
+
+      if (this.supportsPointerEvents) {
+        window.document.removeEventListener('pointermove', this.onPointerMove, true);
+        this.interactionDOMElement.removeEventListener('pointerdown', this.onPointerDown, true);
+        this.interactionDOMElement.removeEventListener('pointerleave', this.onPointerOut, true);
+        this.interactionDOMElement.removeEventListener('pointerover', this.onPointerOver, true);
+        window.removeEventListener('pointercancel', this.onPointerCancel, true);
+        window.removeEventListener('pointerup', this.onPointerUp, true);
+      } else {
+        window.document.removeEventListener('mousemove', this.onPointerMove, true);
+        this.interactionDOMElement.removeEventListener('mousedown', this.onPointerDown, true);
+        this.interactionDOMElement.removeEventListener('mouseout', this.onPointerOut, true);
+        this.interactionDOMElement.removeEventListener('mouseover', this.onPointerOver, true);
+        window.removeEventListener('mouseup', this.onPointerUp, true);
+      }
+
+      if (this.supportsTouchEvents) {
+        this.interactionDOMElement.removeEventListener('touchstart', this.onPointerDown, true);
+        this.interactionDOMElement.removeEventListener('touchcancel', this.onPointerCancel, true);
+        this.interactionDOMElement.removeEventListener('touchend', this.onPointerUp, true);
+        this.interactionDOMElement.removeEventListener('touchmove', this.onPointerMove, true);
+      }
+
+      this.interactionDOMElement = null;
+
+      this.eventsAdded = false;
+    }
+
+    /**
+     * Updates the state of interactive objects.
+     * Invoked by a throttled ticker.
+     *
+     * @param {number} deltaTime - time delta since last tick
+     */
+
+  }, {
+    key: 'update',
+    value: function update(_ref) {
+      var snippet = _ref.snippet;
+
+      if (!this.isAble()) return;
+      this._deltaTime += snippet;
+
+      if (this._deltaTime < this.interactionFrequency) {
+        return;
+      }
+
+      this._deltaTime = 0;
+
+      if (!this.interactionDOMElement) {
+        return;
+      }
+
+      // if the user move the mouse this check has already been done using the mouse move!
+      if (this.didMove) {
+        this.didMove = false;
+
+        return;
+      }
+
+      this.cursor = null;
+
+      // Resets the flag as set by a stopPropagation call. This flag is usually reset by a user interaction of any kind,
+      // but there was a scenario of a display object moving under a static mouse cursor.
+      // In this case, mouseover and mouseevents would not pass the flag test in triggerEvent function
+      for (var k in this.activeInteractionData) {
+        // eslint-disable-next-line no-prototype-builtins
+        if (this.activeInteractionData.hasOwnProperty(k)) {
+          var interactionData = this.activeInteractionData[k];
+
+          if (interactionData.originalEvent && interactionData.pointerType !== 'touch') {
+            var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, interactionData.originalEvent, interactionData);
+
+            this.processInteractive(interactionEvent, this.layer.scene, this.processPointerOverOut, true);
+          }
+        }
+      }
+
+      this.setCursorMode(this.cursor);
+
+      // TODO
+    }
+
+    /**
+     * Sets the current cursor mode, handling any callbacks or CSS style changes.
+     *
+     * @param {string} mode - cursor mode, a key from the cursorStyles dictionary
+     */
+
+  }, {
+    key: 'setCursorMode',
+    value: function setCursorMode(mode) {
+      mode = mode || 'default';
+      // if the mode didn't actually change, bail early
+      if (this.currentCursorMode === mode) {
+        return;
+      }
+      this.currentCursorMode = mode;
+      var style = this.cursorStyles[mode];
+
+      // only do things if there is a cursor style for it
+      if (style) {
+        switch (typeof style === 'undefined' ? 'undefined' : _typeof(style)) {
+          case 'string':
+            // string styles are handled as cursor CSS
+            this.interactionDOMElement.style.cursor = style;
+            break;
+          case 'function':
+            // functions are just called, and passed the cursor mode
+            style(mode);
+            break;
+          case 'object':
+            // if it is an object, assume that it is a dictionary of CSS styles,
+            // apply it to the interactionDOMElement
+            Object.assign(this.interactionDOMElement.style, style);
+            break;
+          default:
+            break;
+        }
+      } else if (typeof mode === 'string' && !Object.prototype.hasOwnProperty.call(this.cursorStyles, mode)) {
+        // if it mode is a string (not a Symbol) and cursorStyles doesn't have any entry
+        // for the mode, then assume that the dev wants it to be CSS for the cursor.
+        this.interactionDOMElement.style.cursor = mode;
+      }
+    }
+
+    /**
+     * Dispatches an event on the display object that was interacted with
+     *
+     * @param {Object3D} displayObject - the display object in question
+     * @param {string} eventString - the name of the event (e.g, mousedown)
+     * @param {object} eventData - the event data object
+     * @private
+     */
+
+  }, {
+    key: 'triggerEvent',
+    value: function triggerEvent(displayObject, eventString, eventData) {
+      if (!eventData.stopped) {
+        eventData.currentTarget = displayObject;
+        eventData.type = eventString;
+
+        displayObject.emit(eventString, eventData);
+
+        if (displayObject[eventString]) {
+          displayObject[eventString](eventData);
+        }
+      }
+    }
+
+    /**
+     * This function is provides a neat way of crawling through the scene graph and running a
+     * specified function on all interactive objects it finds. It will also take care of hit
+     * testing the interactive objects and passes the hit across in the function.
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - event containing the point that
+     *  is tested for collision
+     * @param {Object3D} displayObject - the displayObject
+     *  that will be hit test (recursively crawls its children)
+     * @param {Function} [func] - the function that will be called on each interactive object. The
+     *  interactionEvent, displayObject and hit will be passed to the function
+     * @param {boolean} [hitTest] - this indicates if the objects inside should be hit test against the point
+     * @param {boolean} [interactive] - Whether the displayObject is interactive
+     * @return {boolean} returns true if the displayObject hit the point
+     */
+
+  }, {
+    key: 'processInteractive',
+    value: function processInteractive(interactionEvent, displayObject, func, hitTest, interactive) {
+      if (!displayObject || !displayObject.visible) {
+        return false;
+      }
+
+      // Took a little while to rework this function correctly! But now it is done and nice and optimised. ^_^
+      //
+      // This function will now loop through all objects and then only hit test the objects it HAS
+      // to, not all of them. MUCH faster..
+      // An object will be hit test if the following is true:
+      //
+      // 1: It is interactive.
+      // 2: It belongs to a parent that is interactive AND one of the parents children have not already been hit.
+      //
+      // As another little optimisation once an interactive object has been hit we can carry on
+      // through the scenegraph, but we know that there will be no more hits! So we can avoid extra hit tests
+      // A final optimisation is that an object is not hit test directly if a child has already been hit.
+
+      interactive = displayObject.interactive || interactive;
+
+      var hit = false;
+      var interactiveParent = interactive;
+
+      if (displayObject.interactiveChildren && displayObject.children) {
+        var children = displayObject.children;
+
+        for (var i = children.length - 1; i >= 0; i--) {
+          var child = children[i];
+
+          // time to get recursive.. if this function will return if something is hit..
+          var childHit = this.processInteractive(interactionEvent, child, func, hitTest, interactiveParent);
+
+          if (childHit) {
+            // its a good idea to check if a child has lost its parent.
+            // this means it has been removed whilst looping so its best
+            if (!child.parent) {
+              continue;
+            }
+
+            // we no longer need to hit test any more objects in this container as we we
+            // now know the parent has been hit
+            interactiveParent = false;
+
+            // If the child is interactive , that means that the object hit was actually
+            // interactive and not just the child of an interactive object.
+            // This means we no longer need to hit test anything else. We still need to run
+            // through all objects, but we don't need to perform any hit tests.
+
+            if (childHit) {
+              if (interactionEvent.target) {
+                hitTest = false;
+              }
+              hit = true;
+            }
+          }
+        }
+      }
+
+      // no point running this if the item is not interactive or does not have an interactive parent.
+      if (interactive) {
+        // if we are hit testing (as in we have no hit any objects yet)
+        // We also don't need to worry about hit testing if once of the displayObjects children
+        // has already been hit - but only if it was interactive, otherwise we need to keep
+        // looking for an interactive child, just in case we hit one
+        if (hitTest && !interactionEvent.target) {
+          if (interactionEvent.intersects[0] && interactionEvent.intersects[0].object === displayObject) {
+            hit = true;
+          }
+        }
+
+        if (displayObject.interactive) {
+          if (hit && !interactionEvent.target) {
+            interactionEvent.data.target = interactionEvent.target = displayObject;
+          }
+
+          if (func) {
+            func(interactionEvent, displayObject, !!hit);
+          }
+        }
+      }
+
+      return hit;
+    }
+
+    /**
+     * Is called when the click is pressed down on the renderer element
+     *
+     * @private
+     * @param {MouseEvent} originalEvent - The DOM event of a click being pressed down
+     */
+
+  }, {
+    key: 'onClick',
+    value: function onClick(originalEvent) {
+      if (!this.isAble()) return;
+      if (originalEvent.type !== 'click') return;
+
+      var events = this.normalizeToPointerData(originalEvent);
+
+      if (this.autoPreventDefault && events[0].isNormalized) {
+        originalEvent.preventDefault();
+      }
+
+      var interactionData = this.getInteractionDataForPointerId(events[0]);
+
+      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, events[0], interactionData);
+
+      interactionEvent.data.originalEvent = originalEvent;
+
+      this.processInteractive(interactionEvent, this.layer.scene, this.processClick, true);
+
+      this.emit('click', interactionEvent);
+    }
+
+    /**
+     * Processes the result of the click check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     * @param {boolean} hit - the result of the hit test on the display object
+     */
+
+  }, {
+    key: 'processClick',
+    value: function processClick(interactionEvent, displayObject, hit) {
+      if (hit) {
+        this.triggerEvent(displayObject, 'click', interactionEvent);
+      }
+    }
+
+    /**
+     * Is called when the pointer button is pressed down on the renderer element
+     *
+     * @private
+     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being pressed down
+     */
+
+  }, {
+    key: 'onPointerDown',
+    value: function onPointerDown(originalEvent) {
+      if (!this.isAble()) return;
+      // if we support touch events, then only use those for touch events, not pointer events
+      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
+
+      var events = this.normalizeToPointerData(originalEvent);
+
+      /**
+       * No need to prevent default on natural pointer events, as there are no side effects
+       * Normalized events, however, may have the double mousedown/touchstart issue on the native android browser,
+       * so still need to be prevented.
+       */
+
+      // Guaranteed that there will be at least one event in events, and all events must have the same pointer type
+
+      if (this.autoPreventDefault && events[0].isNormalized) {
+        originalEvent.preventDefault();
+      }
+
+      var eventLen = events.length;
+
+      for (var i = 0; i < eventLen; i++) {
+        var event = events[i];
+
+        var interactionData = this.getInteractionDataForPointerId(event);
+
+        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+
+        interactionEvent.data.originalEvent = originalEvent;
+
+        this.processInteractive(interactionEvent, this.layer.scene, this.processPointerDown, true);
+
+        this.emit('pointerdown', interactionEvent);
+        if (event.pointerType === 'touch') {
+          this.emit('touchstart', interactionEvent);
+        } else if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
+          var isRightButton = event.button === 2;
+
+          this.emit(isRightButton ? 'rightdown' : 'mousedown', this.eventData);
+        }
+      }
+    }
+
+    /**
+     * Processes the result of the pointer down check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     * @param {boolean} hit - the result of the hit test on the display object
+     */
+
+  }, {
+    key: 'processPointerDown',
+    value: function processPointerDown(interactionEvent, displayObject, hit) {
+      var data = interactionEvent.data;
+      var id = interactionEvent.data.identifier;
+
+      if (hit) {
+        if (!displayObject.trackedPointers[id]) {
+          displayObject.trackedPointers[id] = new InteractionTrackingData(id);
+        }
+        this.triggerEvent(displayObject, 'pointerdown', interactionEvent);
+
+        if (data.pointerType === 'touch') {
+          displayObject.started = true;
+          this.triggerEvent(displayObject, 'touchstart', interactionEvent);
+        } else if (data.pointerType === 'mouse' || data.pointerType === 'pen') {
+          var isRightButton = data.button === 2;
+
+          if (isRightButton) {
+            displayObject.trackedPointers[id].rightDown = true;
+          } else {
+            displayObject.trackedPointers[id].leftDown = true;
+          }
+
+          this.triggerEvent(displayObject, isRightButton ? 'rightdown' : 'mousedown', interactionEvent);
+        }
+      }
+    }
+
+    /**
+     * Is called when the pointer button is released on the renderer element
+     *
+     * @private
+     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being released
+     * @param {boolean} cancelled - true if the pointer is cancelled
+     * @param {Function} func - Function passed to {@link processInteractive}
+     */
+
+  }, {
+    key: 'onPointerComplete',
+    value: function onPointerComplete(originalEvent, cancelled, func) {
+      var events = this.normalizeToPointerData(originalEvent);
+
+      var eventLen = events.length;
+
+      // if the event wasn't targeting our canvas, then consider it to be pointerupoutside
+      // in all cases (unless it was a pointercancel)
+      var eventAppend = originalEvent.target !== this.interactionDOMElement ? 'outside' : '';
+
+      for (var i = 0; i < eventLen; i++) {
+        var event = events[i];
+
+        var interactionData = this.getInteractionDataForPointerId(event);
+
+        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+
+        interactionEvent.data.originalEvent = originalEvent;
+
+        // perform hit testing for events targeting our canvas or cancel events
+        this.processInteractive(interactionEvent, this.layer.scene, func, cancelled || !eventAppend);
+
+        this.emit(cancelled ? 'pointercancel' : 'pointerup' + eventAppend, interactionEvent);
+
+        if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
+          var isRightButton = event.button === 2;
+
+          this.emit(isRightButton ? 'rightup' + eventAppend : 'mouseup' + eventAppend, interactionEvent);
+        } else if (event.pointerType === 'touch') {
+          this.emit(cancelled ? 'touchcancel' : 'touchend' + eventAppend, interactionEvent);
+          this.releaseInteractionDataForPointerId(event.pointerId, interactionData);
+        }
+      }
+    }
+
+    /**
+     * Is called when the pointer button is cancelled
+     *
+     * @private
+     * @param {PointerEvent} event - The DOM event of a pointer button being released
+     */
+
+  }, {
+    key: 'onPointerCancel',
+    value: function onPointerCancel(event) {
+      if (!this.isAble()) return;
+      // if we support touch events, then only use those for touch events, not pointer events
+      if (this.supportsTouchEvents && event.pointerType === 'touch') return;
+
+      this.onPointerComplete(event, true, this.processPointerCancel);
+    }
+
+    /**
+     * Processes the result of the pointer cancel check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     */
+
+  }, {
+    key: 'processPointerCancel',
+    value: function processPointerCancel(interactionEvent, displayObject) {
+      var data = interactionEvent.data;
+
+      var id = interactionEvent.data.identifier;
+
+      if (displayObject.trackedPointers[id] !== undefined) {
+        delete displayObject.trackedPointers[id];
+        this.triggerEvent(displayObject, 'pointercancel', interactionEvent);
+
+        if (data.pointerType === 'touch') {
+          this.triggerEvent(displayObject, 'touchcancel', interactionEvent);
+        }
+      }
+    }
+
+    /**
+     * Is called when the pointer button is released on the renderer element
+     *
+     * @private
+     * @param {PointerEvent} event - The DOM event of a pointer button being released
+     */
+
+  }, {
+    key: 'onPointerUp',
+    value: function onPointerUp(event) {
+      if (!this.isAble()) return;
+      // if we support touch events, then only use those for touch events, not pointer events
+      if (this.supportsTouchEvents && event.pointerType === 'touch') return;
+
+      this.onPointerComplete(event, false, this.processPointerUp);
+    }
+
+    /**
+     * Processes the result of the pointer up check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     * @param {boolean} hit - the result of the hit test on the display object
+     */
+
+  }, {
+    key: 'processPointerUp',
+    value: function processPointerUp(interactionEvent, displayObject, hit) {
+      var data = interactionEvent.data;
+
+      var id = interactionEvent.data.identifier;
+
+      var trackingData = displayObject.trackedPointers[id];
+
+      var isTouch = data.pointerType === 'touch';
+
+      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
+
+      // Mouse only
+      if (isMouse) {
+        var isRightButton = data.button === 2;
+
+        var flags = InteractionTrackingData.FLAGS;
+
+        var test = isRightButton ? flags.RIGHT_DOWN : flags.LEFT_DOWN;
+
+        var isDown = trackingData !== undefined && trackingData.flags & test;
+
+        if (hit) {
+          this.triggerEvent(displayObject, isRightButton ? 'rightup' : 'mouseup', interactionEvent);
+
+          if (isDown) {
+            this.triggerEvent(displayObject, isRightButton ? 'rightclick' : 'leftclick', interactionEvent);
+          }
+        } else if (isDown) {
+          this.triggerEvent(displayObject, isRightButton ? 'rightupoutside' : 'mouseupoutside', interactionEvent);
+        }
+        // update the down state of the tracking data
+        if (trackingData) {
+          if (isRightButton) {
+            trackingData.rightDown = false;
+          } else {
+            trackingData.leftDown = false;
+          }
+        }
+      }
+
+      // Pointers and Touches, and Mouse
+      if (isTouch && displayObject.started) {
+        displayObject.started = false;
+        this.triggerEvent(displayObject, 'touchend', interactionEvent);
+      }
+      if (hit) {
+        this.triggerEvent(displayObject, 'pointerup', interactionEvent);
+
+        if (trackingData) {
+          this.triggerEvent(displayObject, 'pointertap', interactionEvent);
+          if (isTouch) {
+            this.triggerEvent(displayObject, 'tap', interactionEvent);
+            // touches are no longer over (if they ever were) when we get the touchend
+            // so we should ensure that we don't keep pretending that they are
+            trackingData.over = false;
+          }
+        }
+      } else if (trackingData) {
+        this.triggerEvent(displayObject, 'pointerupoutside', interactionEvent);
+        if (isTouch) this.triggerEvent(displayObject, 'touchendoutside', interactionEvent);
+      }
+      // Only remove the tracking data if there is no over/down state still associated with it
+      if (trackingData && trackingData.none) {
+        delete displayObject.trackedPointers[id];
+      }
+    }
+
+    /**
+     * Is called when the pointer moves across the renderer element
+     *
+     * @private
+     * @param {PointerEvent} originalEvent - The DOM event of a pointer moving
+     */
+
+  }, {
+    key: 'onPointerMove',
+    value: function onPointerMove(originalEvent) {
+      if (!this.isAble()) return;
+      // if we support touch events, then only use those for touch events, not pointer events
+      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
+
+      var events = this.normalizeToPointerData(originalEvent);
+
+      if (events[0].pointerType === 'mouse') {
+        this.didMove = true;
+
+        this.cursor = null;
+      }
+
+      var eventLen = events.length;
+
+      for (var i = 0; i < eventLen; i++) {
+        var event = events[i];
+
+        var interactionData = this.getInteractionDataForPointerId(event);
+
+        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+
+        interactionEvent.data.originalEvent = originalEvent;
+
+        var interactive = event.pointerType === 'touch' ? this.moveWhenInside : true;
+
+        this.processInteractive(interactionEvent, this.layer.scene, this.processPointerMove, interactive);
+        this.emit('pointermove', interactionEvent);
+        if (event.pointerType === 'touch') this.emit('touchmove', interactionEvent);
+        if (event.pointerType === 'mouse' || event.pointerType === 'pen') this.emit('mousemove', interactionEvent);
+      }
+
+      if (events[0].pointerType === 'mouse') {
+        this.setCursorMode(this.cursor);
+
+        // TODO BUG for parents interactive object (border order issue)
+      }
+    }
+
+    /**
+     * Processes the result of the pointer move check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     * @param {boolean} hit - the result of the hit test on the display object
+     */
+
+  }, {
+    key: 'processPointerMove',
+    value: function processPointerMove(interactionEvent, displayObject, hit) {
+      var data = interactionEvent.data;
+
+      var isTouch = data.pointerType === 'touch';
+
+      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
+
+      if (isMouse) {
+        this.processPointerOverOut(interactionEvent, displayObject, hit);
+      }
+
+      if (isTouch && displayObject.started) this.triggerEvent(displayObject, 'touchmove', interactionEvent);
+      if (!this.moveWhenInside || hit) {
+        this.triggerEvent(displayObject, 'pointermove', interactionEvent);
+        if (isMouse) this.triggerEvent(displayObject, 'mousemove', interactionEvent);
+      }
+    }
+
+    /**
+     * Is called when the pointer is moved out of the renderer element
+     *
+     * @private
+     * @param {PointerEvent} originalEvent - The DOM event of a pointer being moved out
+     */
+
+  }, {
+    key: 'onPointerOut',
+    value: function onPointerOut(originalEvent) {
+      if (!this.isAble()) return;
+      // if we support touch events, then only use those for touch events, not pointer events
+      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
+
+      var events = this.normalizeToPointerData(originalEvent);
+
+      // Only mouse and pointer can call onPointerOut, so events will always be length 1
+      var event = events[0];
+
+      if (event.pointerType === 'mouse') {
+        this.mouseOverRenderer = false;
+        this.setCursorMode(null);
+      }
+
+      var interactionData = this.getInteractionDataForPointerId(event);
+
+      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+
+      interactionEvent.data.originalEvent = event;
+
+      this.processInteractive(interactionEvent, this.layer.scene, this.processPointerOverOut, false);
+
+      this.emit('pointerout', interactionEvent);
+      if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
+        this.emit('mouseout', interactionEvent);
+      } else {
+        // we can get touchleave events after touchend, so we want to make sure we don't
+        // introduce memory leaks
+        this.releaseInteractionDataForPointerId(interactionData.identifier);
+      }
+    }
+
+    /**
+     * Processes the result of the pointer over/out check and dispatches the event if need be
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
+     * @param {Object3D} displayObject - The display object that was tested
+     * @param {boolean} hit - the result of the hit test on the display object
+     */
+
+  }, {
+    key: 'processPointerOverOut',
+    value: function processPointerOverOut(interactionEvent, displayObject, hit) {
+      var data = interactionEvent.data;
+
+      var id = interactionEvent.data.identifier;
+
+      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
+
+      var trackingData = displayObject.trackedPointers[id];
+
+      // if we just moused over the display object, then we need to track that state
+      if (hit && !trackingData) {
+        trackingData = displayObject.trackedPointers[id] = new InteractionTrackingData(id);
+      }
+
+      if (trackingData === undefined) return;
+
+      if (hit && this.mouseOverRenderer) {
+        if (!trackingData.over) {
+          trackingData.over = true;
+          this.triggerEvent(displayObject, 'pointerover', interactionEvent);
+          if (isMouse) {
+            this.triggerEvent(displayObject, 'mouseover', interactionEvent);
+          }
+        }
+
+        // only change the cursor if it has not already been changed (by something deeper in the
+        // display tree)
+        if (isMouse && this.cursor === null) {
+          this.cursor = displayObject.cursor;
+        }
+      } else if (trackingData.over) {
+        trackingData.over = false;
+        this.triggerEvent(displayObject, 'pointerout', this.eventData);
+        if (isMouse) {
+          this.triggerEvent(displayObject, 'mouseout', interactionEvent);
+        }
+        // if there is no mouse down information for the pointer, then it is safe to delete
+        if (trackingData.none) {
+          delete displayObject.trackedPointers[id];
+        }
+      }
+    }
+
+    /**
+     * Is called when the pointer is moved into the renderer element
+     *
+     * @private
+     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being moved into the renderer view
+     */
+
+  }, {
+    key: 'onPointerOver',
+    value: function onPointerOver(originalEvent) {
+      if (!this.isAble()) return;
+      var events = this.normalizeToPointerData(originalEvent);
+
+      // Only mouse and pointer can call onPointerOver, so events will always be length 1
+      var event = events[0];
+
+      var interactionData = this.getInteractionDataForPointerId(event);
+
+      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+
+      interactionEvent.data.originalEvent = event;
+
+      if (event.pointerType === 'mouse') {
+        this.mouseOverRenderer = true;
+      }
+
+      this.emit('pointerover', interactionEvent);
+      if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
+        this.emit('mouseover', interactionEvent);
+      }
+    }
+
+    /**
+     * Get InteractionData for a given pointerId. Store that data as well
+     *
+     * @private
+     * @param {PointerEvent} event - Normalized pointer event, output from normalizeToPointerData
+     * @return {InteractionData} - Interaction data for the given pointer identifier
+     */
+
+  }, {
+    key: 'getInteractionDataForPointerId',
+    value: function getInteractionDataForPointerId(event) {
+      var pointerId = event.pointerId;
+
+      var interactionData = void 0;
+
+      if (pointerId === MOUSE_POINTER_ID$1 || event.pointerType === 'mouse') {
+        interactionData = this.mouse;
+      } else if (this.activeInteractionData[pointerId]) {
+        interactionData = this.activeInteractionData[pointerId];
+      } else {
+        interactionData = this.interactionDataPool.pop() || new InteractionData();
+        interactionData.identifier = pointerId;
+        this.activeInteractionData[pointerId] = interactionData;
+      }
+      // copy properties from the event, so that we can make sure that touch/pointer specific
+      // data is available
+      interactionData._copyEvent(event);
+
+      return interactionData;
+    }
+
+    /**
+     * Return unused InteractionData to the pool, for a given pointerId
+     *
+     * @private
+     * @param {number} pointerId - Identifier from a pointer event
+     */
+
+  }, {
+    key: 'releaseInteractionDataForPointerId',
+    value: function releaseInteractionDataForPointerId(pointerId) {
+      var interactionData = this.activeInteractionData[pointerId];
+
+      if (interactionData) {
+        delete this.activeInteractionData[pointerId];
+        interactionData._reset();
+        this.interactionDataPool.push(interactionData);
+      }
+    }
+
+    /**
+     * Maps x and y coords from a DOM object and maps them correctly to the three.js view. The
+     * resulting value is stored in the point. This takes into account the fact that the DOM
+     * element could be scaled and positioned anywhere on the screen.
+     *
+     * @param  {Vector2} point - the point that the result will be stored in
+     * @param  {number} x - the x coord of the position to map
+     * @param  {number} y - the y coord of the position to map
+     */
+
+  }, {
+    key: 'mapPositionToPoint',
+    value: function mapPositionToPoint(point, x, y) {
+      var rect = void 0;
+
+      // IE 11 fix
+      if (!this.interactionDOMElement.parentElement) {
+        rect = {
+          x: 0,
+          y: 0,
+          left: 0,
+          top: 0,
+          width: 0,
+          height: 0
+        };
+      } else {
+        rect = this.interactionDOMElement.getBoundingClientRect();
+      }
+
+      point.x = (x - rect.left) / rect.width * 2 - 1;
+      point.y = -((y - rect.top) / rect.height) * 2 + 1;
+    }
+
+    /**
+     * Configure an InteractionEvent to wrap a DOM PointerEvent and InteractionData
+     *
+     * @private
+     * @param {InteractionEvent} interactionEvent - The event to be configured
+     * @param {PointerEvent} pointerEvent - The DOM event that will be paired with the InteractionEvent
+     * @param {InteractionData} interactionData - The InteractionData that will be paired
+     *        with the InteractionEvent
+     * @return {InteractionEvent} the interaction event that was passed in
+     */
+
+  }, {
+    key: 'configureInteractionEventForDOMEvent',
+    value: function configureInteractionEventForDOMEvent(interactionEvent, pointerEvent, interactionData) {
+      interactionEvent.data = interactionData;
+
+      this.mapPositionToPoint(interactionData.global, pointerEvent.clientX, pointerEvent.clientY);
+
+      if (this.layer && this.layer.interactive) this.raycaster.setFromCamera(interactionData.global, this.layer.camera);
+
+      // Not really sure why this is happening, but it's how a previous version handled things TODO: there should be remove
+      if (pointerEvent.pointerType === 'touch') {
+        pointerEvent.globalX = interactionData.global.x;
+        pointerEvent.globalY = interactionData.global.y;
+      }
+
+      interactionData.originalEvent = pointerEvent;
+      interactionEvent._reset();
+      interactionEvent.intersects = this.raycaster.intersectObjects(this.scene.children, true);
+
+      return interactionEvent;
+    }
+
+    /**
+     * Ensures that the original event object contains all data that a regular pointer event would have
+     *
+     * @private
+     * @param {TouchEvent|MouseEvent|PointerEvent} event - The original event data from a touch or mouse event
+     * @return {PointerEvent[]} An array containing a single normalized pointer event, in the case of a pointer
+     *  or mouse event, or a multiple normalized pointer events if there are multiple changed touches
+     */
+
+  }, {
+    key: 'normalizeToPointerData',
+    value: function normalizeToPointerData(event) {
+      var normalizedEvents = [];
+
+      if (this.supportsTouchEvents && event instanceof TouchEvent) {
+        for (var i = 0, li = event.changedTouches.length; i < li; i++) {
+          var touch = event.changedTouches[i];
+
+          if (typeof touch.button === 'undefined') touch.button = event.touches.length ? 1 : 0;
+          if (typeof touch.buttons === 'undefined') touch.buttons = event.touches.length ? 1 : 0;
+          if (typeof touch.isPrimary === 'undefined') {
+            touch.isPrimary = event.touches.length === 1 && event.type === 'touchstart';
+          }
+          if (typeof touch.width === 'undefined') touch.width = touch.radiusX || 1;
+          if (typeof touch.height === 'undefined') touch.height = touch.radiusY || 1;
+          if (typeof touch.tiltX === 'undefined') touch.tiltX = 0;
+          if (typeof touch.tiltY === 'undefined') touch.tiltY = 0;
+          if (typeof touch.pointerType === 'undefined') touch.pointerType = 'touch';
+          if (typeof touch.pointerId === 'undefined') touch.pointerId = touch.identifier || 0;
+          if (typeof touch.pressure === 'undefined') touch.pressure = touch.force || 0.5;
+          touch.twist = 0;
+          touch.tangentialPressure = 0;
+          // TODO: Remove these, as layerX/Y is not a standard, is deprecated, has uneven
+          // support, and the fill ins are not quite the same
+          // offsetX/Y might be okay, but is not the same as clientX/Y when the canvas's top
+          // left is not 0,0 on the page
+          if (typeof touch.layerX === 'undefined') touch.layerX = touch.offsetX = touch.clientX;
+          if (typeof touch.layerY === 'undefined') touch.layerY = touch.offsetY = touch.clientY;
+
+          // mark the touch as normalized, just so that we know we did it
+          touch.isNormalized = true;
+
+          normalizedEvents.push(touch);
+        }
+      } else if (event instanceof MouseEvent && (!this.supportsPointerEvents || !(event instanceof window.PointerEvent))) {
+        if (typeof event.isPrimary === 'undefined') event.isPrimary = true;
+        if (typeof event.width === 'undefined') event.width = 1;
+        if (typeof event.height === 'undefined') event.height = 1;
+        if (typeof event.tiltX === 'undefined') event.tiltX = 0;
+        if (typeof event.tiltY === 'undefined') event.tiltY = 0;
+        if (typeof event.pointerType === 'undefined') event.pointerType = 'mouse';
+        if (typeof event.pointerId === 'undefined') event.pointerId = MOUSE_POINTER_ID$1;
+        if (typeof event.pressure === 'undefined') event.pressure = 0.5;
+        event.twist = 0;
+        event.tangentialPressure = 0;
+
+        // mark the mouse event as normalized, just so that we know we did it
+        event.isNormalized = true;
+
+        normalizedEvents.push(event);
+      } else {
+        normalizedEvents.push(event);
+      }
+
+      return normalizedEvents;
+    }
+
+    /**
+     * Destroys the interaction manager
+     *
+     */
+
+  }, {
+    key: 'destroy',
+    value: function destroy() {
+      this.removeEvents();
+
+      this.removeAllListeners();
+
+      this.renderer = null;
+
+      this.mouse = null;
+
+      this.eventData = null;
+
+      this.interactionDOMElement = null;
+
+      this.onPointerDown = null;
+      this.processPointerDown = null;
+
+      this.onPointerUp = null;
+      this.processPointerUp = null;
+
+      this.onPointerCancel = null;
+      this.processPointerCancel = null;
+
+      this.onPointerMove = null;
+      this.processPointerMove = null;
+
+      this.onPointerOut = null;
+      this.processPointerOverOut = null;
+
+      this.onPointerOver = null;
+
+      this._tempPoint = null;
+    }
+  }]);
+  return InteractionLayer;
+}(three.EventDispatcher);
+
+(function () {
+  var lastTime = 0;
+  var vendors = ['ms', 'moz', 'webkit', 'o'];
+  for (var x = 0; x < vendors.length && !window.requestAnimationFrame; ++x) {
+    window.requestAnimationFrame = window[vendors[x] + 'RequestAnimationFrame'];
+    window.cancelAnimationFrame = window[vendors[x] + 'CancelAnimationFrame'] || window[vendors[x] + 'CancelRequestAnimationFrame'];
+  }
+
+  if (!window.requestAnimationFrame) {
+    window.requestAnimationFrame = function (callback) {
+      var currTime = new Date().getTime();
+      var timeToCall = Math.max(0, 16 - (currTime - lastTime));
+      var id = window.setTimeout(function () {
+        callback(currTime + timeToCall);
+      }, timeToCall);
+      lastTime = currTime + timeToCall;
+      return id;
+    };
+  }
+
+  if (!window.cancelAnimationFrame) {
+    window.cancelAnimationFrame = function (id) {
+      clearTimeout(id);
+    };
+  }
+
+  window.RAF = window.requestAnimationFrame;
+  window.CAF = window.cancelAnimationFrame;
+})();
+
+/**
+ * @extends EventDispatcher
+ */
+
+var Ticker = function (_EventDispatcher) {
+  inherits(Ticker, _EventDispatcher);
+
+  /**
+   *
+   */
+  function Ticker() {
+    classCallCheck(this, Ticker);
+
+    var _this = possibleConstructorReturn(this, (Ticker.__proto__ || Object.getPrototypeOf(Ticker)).call(this));
+
+    _this.timer = null;
+    _this.started = false;
+
+    /**
+     * pre-time cache
+     *
+     * @member {Number}
+     * @private
+     */
+    _this.pt = 0;
+
+    /**
+     * how long the time through, at this tick
+     *
+     * @member {Number}
+     * @private
+     */
+    _this.snippet = 0;
+
+    _this.start();
+    return _this;
+  }
+
+  /**
+   * start tick loop
+   */
+
+
+  createClass(Ticker, [{
+    key: 'start',
+    value: function start() {
+      var _this2 = this;
+
+      if (this.started) return;
+      var loop = function loop() {
+        _this2.timeline();
+        _this2.emit('tick', { snippet: _this2.snippet });
+        _this2.timer = RAF(loop);
+      };
+      loop();
+    }
+
+    /**
+     * stop tick loop
+     */
+
+  }, {
+    key: 'stop',
+    value: function stop() {
+      CAF(this.timer);
+      this.started = false;
+    }
+
+    /**
+     * get timeline snippet
+     *
+     * @private
+     */
+
+  }, {
+    key: 'timeline',
+    value: function timeline() {
+      this.snippet = Date.now() - this.pt;
+      if (this.pt === 0 || this.snippet > 200) {
+        this.pt = Date.now();
+        this.snippet = Date.now() - this.pt;
+      }
+
+      this.pt += this.snippet;
+    }
+  }]);
+  return Ticker;
+}(three.EventDispatcher);
+
+/**
+ * The interaction manager deals with mouse, touch and pointer events. Any DisplayObject can be interactive
+ * if its interactive parameter is set to true
+ * This manager also supports multitouch.
+ *
+ * reference to [pixi.js](http://www.pixijs.com/) impl
+ *
+ * @example
+ * import { Scene, PerspectiveCamera, WebGLRenderer, Mesh, BoxGeometry, MeshBasicMaterial } from 'three';
+ * import { Interaction } from 'three.interaction';
+ * const renderer = new WebGLRenderer({ canvas: canvasElement });
+ * const scene = new Scene();
+ * const camera = new PerspectiveCamera(60, width / height, 0.1, 100);
+ *
+ * const interaction = new Interaction(renderer, scene, camera);
+ * // then you can bind every interaction event with any mesh which you had `add` into `scene` before
+ * const cube = new Mesh(
+ *   new BoxGeometry(1, 1, 1),
+ *   new MeshBasicMaterial({ color: 0xffffff }),
+ * );
+ * scene.add(cube);
+ * cube.on('touchstart', ev => {
+ *   console.log(ev);
+ * });
+ *
+ * cube.on('mousedown', ev => {
+ *   console.log(ev);
+ * });
+ *
+ * cube.on('pointerdown', ev => {
+ *   console.log(ev);
+ * });
+ * // and so on ...
+ *
+ * // you can also listen on parent-node or any display-tree node,
+ * // source event will bubble up along with display-tree.
+ * // you can stop the bubble-up by invoke ev.stopPropagation function.
+ * scene.on('touchstart', ev => {
+ *   console.log(ev);
+ * })
+ *
+ * @class
+ * @extends InteractionManager
+ */
+
+var Interaction = function (_InteractionManager) {
+  inherits(Interaction, _InteractionManager);
+
+  /**
+   * @param {WebGLRenderer} renderer - A reference to the current renderer
+   * @param {Scene} scene - A reference to the current scene
+   * @param {Camera} camera - A reference to the current camera
+   * @param {Object} [options] - The options for the manager.
+   * @param {Boolean} [options.autoPreventDefault=false] - Should the manager automatically prevent default browser actions.
+   * @param {Boolean} [options.autoAttach=false] - Should the manager automatically attach target element.
+   * @param {Number} [options.interactionFrequency=10] - Frequency increases the interaction events will be checked.
+   */
+  function Interaction(renderer, scene, camera, options) {
+    classCallCheck(this, Interaction);
+
+    options = Object.assign({ autoAttach: false }, options);
+
+    /**
+     * a ticker
+     *
+     * @private
+     * @member {Ticker}
+     */
+    var _this = possibleConstructorReturn(this, (Interaction.__proto__ || Object.getPrototypeOf(Interaction)).call(this, renderer, scene, camera, options));
+
+    _this.ticker = new Ticker();
+
+    /**
+     * update for some over event
+     *
+     * @private
+     */
+    _this.update = _this.update.bind(_this);
+
+    _this.on('addevents', function () {
+      _this.ticker.on('tick', _this.update);
+    });
+
+    _this.on('removeevents', function () {
+      _this.ticker.off('tick', _this.update);
+    });
+
+    _this.setTargetElement(_this.renderer.domElement);
+    return _this;
+  }
+
+  return Interaction;
+}(InteractionManager);
+
+exports.InteractionManager = InteractionManager;
+exports.InteractionLayer = InteractionLayer;
+exports.Interaction = Interaction;
+
+Object.defineProperty(exports, '__esModule', { value: true });
+
+})));
+
+
+},{"three":6}],6:[function(require,module,exports){
 (function (global, factory) {
 	typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
 	typeof define === 'function' && define.amd ? define(['exports'], factory) :
@@ -51348,6714 +58053,7 @@ module.exports = EventDispatcher;
 
 })));
 
-},{}],3:[function(require,module,exports){
-/*!
- * camera-controls
- * https://github.com/yomotsu/camera-controls
- * (c) 2017 @yomotsu
- * Released under the MIT License.
- */
-(function (global, factory) {
-	typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
-	typeof define === 'function' && define.amd ? define(factory) :
-	(global = global || self, global.CameraControls = factory());
-}(this, (function () { 'use strict';
-
-	/*! *****************************************************************************
-	Copyright (c) Microsoft Corporation. All rights reserved.
-	Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-	this file except in compliance with the License. You may obtain a copy of the
-	License at http://www.apache.org/licenses/LICENSE-2.0
-
-	THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-	KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED
-	WARRANTIES OR CONDITIONS OF TITLE, FITNESS FOR A PARTICULAR PURPOSE,
-	MERCHANTABLITY OR NON-INFRINGEMENT.
-
-	See the Apache Version 2.0 License for specific language governing permissions
-	and limitations under the License.
-	***************************************************************************** */
-	/* global Reflect, Promise */
-
-	var extendStatics = function(d, b) {
-	    extendStatics = Object.setPrototypeOf ||
-	        ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
-	        function (d, b) { for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p]; };
-	    return extendStatics(d, b);
-	};
-
-	function __extends(d, b) {
-	    extendStatics(d, b);
-	    function __() { this.constructor = d; }
-	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
-	}
-
-	var ACTION;
-	(function (ACTION) {
-	    ACTION[ACTION["NONE"] = 0] = "NONE";
-	    ACTION[ACTION["ROTATE"] = 1] = "ROTATE";
-	    ACTION[ACTION["TRUCK"] = 2] = "TRUCK";
-	    ACTION[ACTION["DOLLY"] = 3] = "DOLLY";
-	    ACTION[ACTION["ZOOM"] = 4] = "ZOOM";
-	    ACTION[ACTION["TOUCH_ROTATE"] = 5] = "TOUCH_ROTATE";
-	    ACTION[ACTION["TOUCH_TRUCK"] = 6] = "TOUCH_TRUCK";
-	    ACTION[ACTION["TOUCH_DOLLY"] = 7] = "TOUCH_DOLLY";
-	    ACTION[ACTION["TOUCH_ZOOM"] = 8] = "TOUCH_ZOOM";
-	    ACTION[ACTION["TOUCH_DOLLY_TRUCK"] = 9] = "TOUCH_DOLLY_TRUCK";
-	    ACTION[ACTION["TOUCH_ZOOM_TRUCK"] = 10] = "TOUCH_ZOOM_TRUCK";
-	})(ACTION || (ACTION = {}));
-
-	var PI_2 = Math.PI * 2;
-	var PI_HALF = Math.PI / 2;
-	var FPS_60 = 1 / 0.016;
-
-	var EPSILON = 1e-5;
-	function approxZero(number) {
-	    return Math.abs(number) < EPSILON;
-	}
-	function approxEquals(a, b) {
-	    return approxZero(a - b);
-	}
-	function roundToStep(value, step) {
-	    return Math.round(value / step) * step;
-	}
-	function infinityToMaxNumber(value) {
-	    if (isFinite(value))
-	        return value;
-	    if (value < 0)
-	        return -Number.MAX_VALUE;
-	    return Number.MAX_VALUE;
-	}
-	function maxNumberToInfinity(value) {
-	    if (Math.abs(value) < Number.MAX_VALUE)
-	        return value;
-	    return value * Infinity;
-	}
-
-	function isTouchEvent(event) {
-	    return 'TouchEvent' in window && event instanceof TouchEvent;
-	}
-
-	function extractClientCoordFromEvent(event, out) {
-	    out.set(0, 0);
-	    if (isTouchEvent(event)) {
-	        var touchEvent = event;
-	        for (var i = 0; i < touchEvent.touches.length; i++) {
-	            out.x += touchEvent.touches[i].clientX;
-	            out.y += touchEvent.touches[i].clientY;
-	        }
-	        out.x /= touchEvent.touches.length;
-	        out.y /= touchEvent.touches.length;
-	        return out;
-	    }
-	    else {
-	        var mouseEvent = event;
-	        out.set(mouseEvent.clientX, mouseEvent.clientY);
-	        return out;
-	    }
-	}
-
-	function notSupportedInOrthographicCamera(camera, message) {
-	    if (!camera.isPerspectiveCamera) {
-	        console.warn(message + " is not supported in OrthographicCamera");
-	        return true;
-	    }
-	    return false;
-	}
-
-	var EventDispatcher = (function () {
-	    function EventDispatcher() {
-	        this._listeners = {};
-	    }
-	    EventDispatcher.prototype.addEventListener = function (type, listener) {
-	        var listeners = this._listeners;
-	        if (listeners[type] === undefined)
-	            listeners[type] = [];
-	        if (listeners[type].indexOf(listener) === -1)
-	            listeners[type].push(listener);
-	    };
-	    EventDispatcher.prototype.removeEventListener = function (type, listener) {
-	        var listeners = this._listeners;
-	        var listenerArray = listeners[type];
-	        if (listenerArray !== undefined) {
-	            var index = listenerArray.indexOf(listener);
-	            if (index !== -1)
-	                listenerArray.splice(index, 1);
-	        }
-	    };
-	    EventDispatcher.prototype.removeAllEventListeners = function (type) {
-	        if (!type) {
-	            this._listeners = {};
-	            return;
-	        }
-	        if (Array.isArray(this._listeners[type]))
-	            this._listeners[type].length = 0;
-	    };
-	    EventDispatcher.prototype.dispatchEvent = function (event) {
-	        var listeners = this._listeners;
-	        var listenerArray = listeners[event.type];
-	        if (listenerArray !== undefined) {
-	            event.target = this;
-	            var array = listenerArray.slice(0);
-	            for (var i = 0, l = array.length; i < l; i++) {
-	                array[i].call(this, event);
-	            }
-	        }
-	    };
-	    return EventDispatcher;
-	}());
-
-	var isMac = /Mac/.test(navigator.platform);
-	var readonlyACTION = Object.freeze(ACTION);
-	var TOUCH_DOLLY_FACTOR = 1 / 8;
-	var THREE;
-	var _ORIGIN;
-	var _AXIS_Y;
-	var _AXIS_Z;
-	var _v2;
-	var _v3A;
-	var _v3B;
-	var _v3C;
-	var _xColumn;
-	var _yColumn;
-	var _sphericalA;
-	var _sphericalB;
-	var _box3A;
-	var _box3B;
-	var _quaternionA;
-	var _quaternionB;
-	var _rotationMatrix;
-	var _raycaster;
-	var CameraControls = (function (_super) {
-	    __extends(CameraControls, _super);
-	    function CameraControls(camera, domElement) {
-	        var _this = _super.call(this) || this;
-	        _this.enabled = true;
-	        _this.minPolarAngle = 0;
-	        _this.maxPolarAngle = Math.PI;
-	        _this.minAzimuthAngle = -Infinity;
-	        _this.maxAzimuthAngle = Infinity;
-	        _this.minDistance = 0;
-	        _this.maxDistance = Infinity;
-	        _this.minZoom = 0.01;
-	        _this.maxZoom = Infinity;
-	        _this.dampingFactor = 0.05;
-	        _this.draggingDampingFactor = 0.25;
-	        _this.azimuthRotateSpeed = 1.0;
-	        _this.polarRotateSpeed = 1.0;
-	        _this.dollySpeed = 1.0;
-	        _this.truckSpeed = 2.0;
-	        _this.dollyToCursor = false;
-	        _this.verticalDragToForward = false;
-	        _this.boundaryFriction = 0.0;
-	        _this.colliderMeshes = [];
-	        _this._state = ACTION.NONE;
-	        _this._viewport = null;
-	        _this._dollyControlAmount = 0;
-	        _this._boundaryEnclosesCamera = false;
-	        _this._needsUpdate = true;
-	        _this._updatedLastTime = false;
-	        _this._camera = camera;
-	        _this._yAxisUpSpace = new THREE.Quaternion().setFromUnitVectors(_this._camera.up, _AXIS_Y);
-	        _this._yAxisUpSpaceInverse = _this._yAxisUpSpace.clone().inverse();
-	        _this._state = ACTION.NONE;
-	        _this._domElement = domElement;
-	        _this._target = new THREE.Vector3();
-	        _this._targetEnd = _this._target.clone();
-	        _this._spherical = new THREE.Spherical().setFromVector3(_v3A.copy(_this._camera.position).applyQuaternion(_this._yAxisUpSpace));
-	        _this._sphericalEnd = _this._spherical.clone();
-	        _this._zoom = _this._camera.zoom;
-	        _this._zoomEnd = _this._zoom;
-	        _this._nearPlaneCorners = [
-	            new THREE.Vector3(),
-	            new THREE.Vector3(),
-	            new THREE.Vector3(),
-	            new THREE.Vector3(),
-	        ];
-	        _this._updateNearPlaneCorners();
-	        _this._boundary = new THREE.Box3(new THREE.Vector3(-Infinity, -Infinity, -Infinity), new THREE.Vector3(Infinity, Infinity, Infinity));
-	        _this._target0 = _this._target.clone();
-	        _this._position0 = _this._camera.position.clone();
-	        _this._zoom0 = _this._zoom;
-	        _this._dollyControlAmount = 0;
-	        _this._dollyControlCoord = new THREE.Vector2();
-	        _this.mouseButtons = {
-	            left: ACTION.ROTATE,
-	            middle: ACTION.DOLLY,
-	            right: ACTION.TRUCK,
-	            wheel: _this._camera.isPerspectiveCamera ? ACTION.DOLLY :
-	                _this._camera.isOrthographicCamera ? ACTION.ZOOM :
-	                    ACTION.NONE,
-	        };
-	        _this.touches = {
-	            one: ACTION.TOUCH_ROTATE,
-	            two: _this._camera.isPerspectiveCamera ? ACTION.TOUCH_DOLLY_TRUCK :
-	                _this._camera.isOrthographicCamera ? ACTION.TOUCH_ZOOM_TRUCK :
-	                    ACTION.NONE,
-	            three: ACTION.TOUCH_TRUCK,
-	        };
-	        if (_this._domElement) {
-	            var dragStartPosition_1 = new THREE.Vector2();
-	            var lastDragPosition_1 = new THREE.Vector2();
-	            var dollyStart_1 = new THREE.Vector2();
-	            var elementRect_1 = new THREE.Vector4();
-	            var truckInternal_1 = function (deltaX, deltaY) {
-	                if (_this._camera.isPerspectiveCamera) {
-	                    var camera_1 = _this._camera;
-	                    var offset = _v3A.copy(camera_1.position).sub(_this._target);
-	                    var fov = camera_1.getEffectiveFOV() * THREE.Math.DEG2RAD;
-	                    var targetDistance = offset.length() * Math.tan(fov * 0.5);
-	                    var truckX = (_this.truckSpeed * deltaX * targetDistance / elementRect_1.w);
-	                    var pedestalY = (_this.truckSpeed * deltaY * targetDistance / elementRect_1.w);
-	                    if (_this.verticalDragToForward) {
-	                        _this.truck(truckX, 0, true);
-	                        _this.forward(-pedestalY, true);
-	                    }
-	                    else {
-	                        _this.truck(truckX, pedestalY, true);
-	                    }
-	                }
-	                else if (_this._camera.isOrthographicCamera) {
-	                    var camera_2 = _this._camera;
-	                    var truckX = deltaX * (camera_2.right - camera_2.left) / camera_2.zoom / elementRect_1.z;
-	                    var pedestalY = deltaY * (camera_2.top - camera_2.bottom) / camera_2.zoom / elementRect_1.w;
-	                    _this.truck(truckX, pedestalY, true);
-	                }
-	            };
-	            var rotateInternal_1 = function (deltaX, deltaY) {
-	                var theta = PI_2 * _this.azimuthRotateSpeed * deltaX / elementRect_1.w;
-	                var phi = PI_2 * _this.polarRotateSpeed * deltaY / elementRect_1.w;
-	                _this.rotate(theta, phi, true);
-	            };
-	            var dollyInternal_1 = function (delta, x, y) {
-	                var dollyScale = Math.pow(0.95, -delta * _this.dollySpeed);
-	                var distance = _this._sphericalEnd.radius * dollyScale;
-	                var prevRadius = _this._sphericalEnd.radius;
-	                _this.dollyTo(distance);
-	                if (_this.dollyToCursor) {
-	                    _this._dollyControlAmount += _this._sphericalEnd.radius - prevRadius;
-	                    _this._dollyControlCoord.set(x, y);
-	                }
-	                return;
-	            };
-	            var zoomInternal_1 = function (delta) {
-	                var zoomScale = Math.pow(0.95, delta * _this.dollySpeed);
-	                _this.zoomTo(_this._zoom * zoomScale);
-	                return;
-	            };
-	            var onMouseDown_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                event.preventDefault();
-	                var prevState = _this._state;
-	                switch (event.button) {
-	                    case THREE.MOUSE.LEFT:
-	                        _this._state = _this.mouseButtons.left;
-	                        break;
-	                    case THREE.MOUSE.MIDDLE:
-	                        _this._state = _this.mouseButtons.middle;
-	                        break;
-	                    case THREE.MOUSE.RIGHT:
-	                        _this._state = _this.mouseButtons.right;
-	                        break;
-	                }
-	                if (prevState !== _this._state) {
-	                    startDragging_1(event);
-	                }
-	            };
-	            var onTouchStart_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                event.preventDefault();
-	                var prevState = _this._state;
-	                switch (event.touches.length) {
-	                    case 1:
-	                        _this._state = _this.touches.one;
-	                        break;
-	                    case 2:
-	                        _this._state = _this.touches.two;
-	                        break;
-	                    case 3:
-	                        _this._state = _this.touches.three;
-	                        break;
-	                }
-	                if (prevState !== _this._state) {
-	                    startDragging_1(event);
-	                }
-	            };
-	            var lastScrollTimeStamp_1 = -1;
-	            var onMouseWheel_1 = function (event) {
-	                if (!_this.enabled || _this.mouseButtons.wheel === ACTION.NONE)
-	                    return;
-	                event.preventDefault();
-	                if (_this.dollyToCursor ||
-	                    _this.mouseButtons.wheel === ACTION.ROTATE ||
-	                    _this.mouseButtons.wheel === ACTION.TRUCK) {
-	                    var now = performance.now();
-	                    if (lastScrollTimeStamp_1 - now < 1000)
-	                        _this._getClientRect(elementRect_1);
-	                    lastScrollTimeStamp_1 = now;
-	                }
-	                var deltaYFactor = isMac ? -1 : -3;
-	                var delta = (event.deltaMode === 1) ? event.deltaY / deltaYFactor : event.deltaY / (deltaYFactor * 10);
-	                var x = _this.dollyToCursor ? (event.clientX - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
-	                var y = _this.dollyToCursor ? (event.clientY - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
-	                switch (_this.mouseButtons.wheel) {
-	                    case ACTION.ROTATE: {
-	                        rotateInternal_1(event.deltaX, event.deltaY);
-	                        break;
-	                    }
-	                    case ACTION.TRUCK: {
-	                        truckInternal_1(event.deltaX, event.deltaY);
-	                        break;
-	                    }
-	                    case ACTION.DOLLY: {
-	                        dollyInternal_1(-delta, x, y);
-	                        break;
-	                    }
-	                    case ACTION.ZOOM: {
-	                        zoomInternal_1(-delta);
-	                        break;
-	                    }
-	                }
-	                _this.dispatchEvent({
-	                    type: 'control',
-	                    originalEvent: event,
-	                });
-	            };
-	            var onContextMenu_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                event.preventDefault();
-	            };
-	            var startDragging_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                event.preventDefault();
-	                extractClientCoordFromEvent(event, _v2);
-	                _this._getClientRect(elementRect_1);
-	                dragStartPosition_1.copy(_v2);
-	                lastDragPosition_1.copy(_v2);
-	                var isMultiTouch = isTouchEvent(event) && event.touches.length >= 2;
-	                if (isMultiTouch) {
-	                    var touchEvent = event;
-	                    var dx = _v2.x - touchEvent.touches[1].clientX;
-	                    var dy = _v2.y - touchEvent.touches[1].clientY;
-	                    var distance = Math.sqrt(dx * dx + dy * dy);
-	                    dollyStart_1.set(0, distance);
-	                    var x = (touchEvent.touches[0].clientX + touchEvent.touches[1].clientX) * 0.5;
-	                    var y = (touchEvent.touches[0].clientY + touchEvent.touches[1].clientY) * 0.5;
-	                    lastDragPosition_1.set(x, y);
-	                }
-	                document.addEventListener('mousemove', dragging_1);
-	                document.addEventListener('touchmove', dragging_1, { passive: false });
-	                document.addEventListener('mouseup', endDragging_1);
-	                document.addEventListener('touchend', endDragging_1);
-	                _this.dispatchEvent({
-	                    type: 'controlstart',
-	                    originalEvent: event,
-	                });
-	            };
-	            var dragging_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                event.preventDefault();
-	                extractClientCoordFromEvent(event, _v2);
-	                var deltaX = lastDragPosition_1.x - _v2.x;
-	                var deltaY = lastDragPosition_1.y - _v2.y;
-	                lastDragPosition_1.copy(_v2);
-	                switch (_this._state) {
-	                    case ACTION.ROTATE:
-	                    case ACTION.TOUCH_ROTATE: {
-	                        rotateInternal_1(deltaX, deltaY);
-	                        break;
-	                    }
-	                    case ACTION.DOLLY:
-	                    case ACTION.ZOOM: {
-	                        var dollyX = _this.dollyToCursor ? (dragStartPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
-	                        var dollyY = _this.dollyToCursor ? (dragStartPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
-	                        _this._state === ACTION.DOLLY ?
-	                            dollyInternal_1(deltaY * TOUCH_DOLLY_FACTOR, dollyX, dollyY) :
-	                            zoomInternal_1(deltaY * TOUCH_DOLLY_FACTOR);
-	                        break;
-	                    }
-	                    case ACTION.TOUCH_DOLLY:
-	                    case ACTION.TOUCH_ZOOM:
-	                    case ACTION.TOUCH_DOLLY_TRUCK:
-	                    case ACTION.TOUCH_ZOOM_TRUCK: {
-	                        var touchEvent = event;
-	                        var dx = _v2.x - touchEvent.touches[1].clientX;
-	                        var dy = _v2.y - touchEvent.touches[1].clientY;
-	                        var distance = Math.sqrt(dx * dx + dy * dy);
-	                        var dollyDelta = dollyStart_1.y - distance;
-	                        dollyStart_1.set(0, distance);
-	                        var dollyX = _this.dollyToCursor ? (lastDragPosition_1.x - elementRect_1.x) / elementRect_1.z * 2 - 1 : 0;
-	                        var dollyY = _this.dollyToCursor ? (lastDragPosition_1.y - elementRect_1.y) / elementRect_1.w * -2 + 1 : 0;
-	                        _this._state === ACTION.TOUCH_DOLLY ||
-	                            _this._state === ACTION.TOUCH_DOLLY_TRUCK ?
-	                            dollyInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR, dollyX, dollyY) :
-	                            zoomInternal_1(dollyDelta * TOUCH_DOLLY_FACTOR);
-	                        if (_this._state === ACTION.TOUCH_DOLLY_TRUCK ||
-	                            _this._state === ACTION.TOUCH_ZOOM_TRUCK) {
-	                            truckInternal_1(deltaX, deltaY);
-	                        }
-	                        break;
-	                    }
-	                    case ACTION.TRUCK:
-	                    case ACTION.TOUCH_TRUCK: {
-	                        truckInternal_1(deltaX, deltaY);
-	                        break;
-	                    }
-	                }
-	                _this.dispatchEvent({
-	                    type: 'control',
-	                    originalEvent: event,
-	                });
-	            };
-	            var endDragging_1 = function (event) {
-	                if (!_this.enabled)
-	                    return;
-	                _this._state = ACTION.NONE;
-	                document.removeEventListener('mousemove', dragging_1);
-	                document.removeEventListener('touchmove', dragging_1, { passive: false });
-	                document.removeEventListener('mouseup', endDragging_1);
-	                document.removeEventListener('touchend', endDragging_1);
-	                _this.dispatchEvent({
-	                    type: 'controlend',
-	                    originalEvent: event,
-	                });
-	            };
-	            _this._domElement.addEventListener('mousedown', onMouseDown_1);
-	            _this._domElement.addEventListener('touchstart', onTouchStart_1);
-	            _this._domElement.addEventListener('wheel', onMouseWheel_1);
-	            _this._domElement.addEventListener('contextmenu', onContextMenu_1);
-	            _this._removeAllEventListeners = function () {
-	                _this._domElement.removeEventListener('mousedown', onMouseDown_1);
-	                _this._domElement.removeEventListener('touchstart', onTouchStart_1);
-	                _this._domElement.removeEventListener('wheel', onMouseWheel_1);
-	                _this._domElement.removeEventListener('contextmenu', onContextMenu_1);
-	                document.removeEventListener('mousemove', dragging_1);
-	                document.removeEventListener('touchmove', dragging_1, { passive: false });
-	                document.removeEventListener('mouseup', endDragging_1);
-	                document.removeEventListener('touchend', endDragging_1);
-	            };
-	        }
-	        _this.update(0);
-	        return _this;
-	    }
-	    CameraControls.install = function (libs) {
-	        THREE = libs.THREE;
-	        _ORIGIN = Object.freeze(new THREE.Vector3(0, 0, 0));
-	        _AXIS_Y = Object.freeze(new THREE.Vector3(0, 1, 0));
-	        _AXIS_Z = Object.freeze(new THREE.Vector3(0, 0, 1));
-	        _v2 = new THREE.Vector2();
-	        _v3A = new THREE.Vector3();
-	        _v3B = new THREE.Vector3();
-	        _v3C = new THREE.Vector3();
-	        _xColumn = new THREE.Vector3();
-	        _yColumn = new THREE.Vector3();
-	        _sphericalA = new THREE.Spherical();
-	        _sphericalB = new THREE.Spherical();
-	        _box3A = new THREE.Box3();
-	        _box3B = new THREE.Box3();
-	        _quaternionA = new THREE.Quaternion();
-	        _quaternionB = new THREE.Quaternion();
-	        _rotationMatrix = new THREE.Matrix4();
-	        _raycaster = new THREE.Raycaster();
-	    };
-	    Object.defineProperty(CameraControls, "ACTION", {
-	        get: function () {
-	            return readonlyACTION;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "currentAction", {
-	        get: function () {
-	            return this._state;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "distance", {
-	        get: function () {
-	            return this._spherical.radius;
-	        },
-	        set: function (distance) {
-	            if (this._spherical.radius === distance &&
-	                this._sphericalEnd.radius === distance)
-	                return;
-	            this._spherical.radius = distance;
-	            this._sphericalEnd.radius = distance;
-	            this._needsUpdate = true;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "azimuthAngle", {
-	        get: function () {
-	            return this._spherical.theta;
-	        },
-	        set: function (azimuthAngle) {
-	            if (this._spherical.theta === azimuthAngle &&
-	                this._sphericalEnd.theta === azimuthAngle)
-	                return;
-	            this._spherical.theta = azimuthAngle;
-	            this._sphericalEnd.theta = azimuthAngle;
-	            this._needsUpdate = true;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "polarAngle", {
-	        get: function () {
-	            return this._spherical.phi;
-	        },
-	        set: function (polarAngle) {
-	            if (this._spherical.phi === polarAngle &&
-	                this._sphericalEnd.phi === polarAngle)
-	                return;
-	            this._spherical.phi = polarAngle;
-	            this._sphericalEnd.phi = polarAngle;
-	            this._needsUpdate = true;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "phiSpeed", {
-	        set: function (speed) {
-	            console.warn('phiSpeed was renamed. use azimuthRotateSpeed instead');
-	            this.azimuthRotateSpeed = speed;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "thetaSpeed", {
-	        set: function (speed) {
-	            console.warn('thetaSpeed was renamed. use polarRotateSpeed instead');
-	            this.polarRotateSpeed = speed;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    Object.defineProperty(CameraControls.prototype, "boundaryEnclosesCamera", {
-	        get: function () {
-	            return this._boundaryEnclosesCamera;
-	        },
-	        set: function (boundaryEnclosesCamera) {
-	            this._boundaryEnclosesCamera = boundaryEnclosesCamera;
-	            this._needsUpdate = true;
-	        },
-	        enumerable: true,
-	        configurable: true
-	    });
-	    CameraControls.prototype.rotate = function (azimuthAngle, polarAngle, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this.rotateTo(this._sphericalEnd.theta + azimuthAngle, this._sphericalEnd.phi + polarAngle, enableTransition);
-	    };
-	    CameraControls.prototype.rotateTo = function (azimuthAngle, polarAngle, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        var theta = THREE.Math.clamp(azimuthAngle, this.minAzimuthAngle, this.maxAzimuthAngle);
-	        var phi = THREE.Math.clamp(polarAngle, this.minPolarAngle, this.maxPolarAngle);
-	        this._sphericalEnd.theta = theta;
-	        this._sphericalEnd.phi = phi;
-	        this._sphericalEnd.makeSafe();
-	        if (!enableTransition) {
-	            this._spherical.theta = this._sphericalEnd.theta;
-	            this._spherical.phi = this._sphericalEnd.phi;
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.dolly = function (distance, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this.dollyTo(this._sphericalEnd.radius - distance, enableTransition);
-	    };
-	    CameraControls.prototype.dollyTo = function (distance, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        if (notSupportedInOrthographicCamera(this._camera, 'dolly'))
-	            return;
-	        this._sphericalEnd.radius = THREE.Math.clamp(distance, this.minDistance, this.maxDistance);
-	        if (!enableTransition) {
-	            this._spherical.radius = this._sphericalEnd.radius;
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.zoom = function (zoomStep, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this.zoomTo(this._zoomEnd + zoomStep, enableTransition);
-	    };
-	    CameraControls.prototype.zoomTo = function (zoom, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this._zoomEnd = THREE.Math.clamp(zoom, this.minZoom, this.maxZoom);
-	        if (!enableTransition) {
-	            this._zoom = this._zoomEnd;
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.pan = function (x, y, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        console.log('`pan` has been renamed to `truck`');
-	        this.truck(x, y, enableTransition);
-	    };
-	    CameraControls.prototype.truck = function (x, y, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this._camera.updateMatrix();
-	        _xColumn.setFromMatrixColumn(this._camera.matrix, 0);
-	        _yColumn.setFromMatrixColumn(this._camera.matrix, 1);
-	        _xColumn.multiplyScalar(x);
-	        _yColumn.multiplyScalar(-y);
-	        var offset = _v3A.copy(_xColumn).add(_yColumn);
-	        this._encloseToBoundary(this._targetEnd, offset, this.boundaryFriction);
-	        if (!enableTransition) {
-	            this._target.copy(this._targetEnd);
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.forward = function (distance, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        _v3A.setFromMatrixColumn(this._camera.matrix, 0);
-	        _v3A.crossVectors(this._camera.up, _v3A);
-	        _v3A.multiplyScalar(distance);
-	        this._encloseToBoundary(this._targetEnd, _v3A, this.boundaryFriction);
-	        if (!enableTransition) {
-	            this._target.copy(this._targetEnd);
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.moveTo = function (x, y, z, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this._targetEnd.set(x, y, z);
-	        if (!enableTransition) {
-	            this._target.copy(this._targetEnd);
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.fitTo = function (box3OrObject, enableTransition, _a) {
-	        var _b = _a === void 0 ? {} : _a, _c = _b.paddingLeft, paddingLeft = _c === void 0 ? 0 : _c, _d = _b.paddingRight, paddingRight = _d === void 0 ? 0 : _d, _e = _b.paddingBottom, paddingBottom = _e === void 0 ? 0 : _e, _f = _b.paddingTop, paddingTop = _f === void 0 ? 0 : _f;
-	        var aabb = box3OrObject.isBox3
-	            ? _box3A.copy(box3OrObject)
-	            : _box3A.setFromObject(box3OrObject);
-	        var theta = roundToStep(this._sphericalEnd.theta, PI_HALF);
-	        var phi = roundToStep(this._sphericalEnd.phi, PI_HALF);
-	        this.rotateTo(theta, phi, enableTransition);
-	        var normal = _v3A.setFromSpherical(this._sphericalEnd).normalize();
-	        var rotation = _quaternionA.setFromUnitVectors(normal, _AXIS_Z);
-	        var viewFromPolar = approxEquals(Math.abs(normal.y), 1);
-	        if (viewFromPolar) {
-	            rotation.multiply(_quaternionB.setFromAxisAngle(_AXIS_Y, theta));
-	        }
-	        var bb = _box3B.makeEmpty();
-	        _v3B.copy(aabb.min).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.min).setX(aabb.max.x).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.min).setY(aabb.max.y).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.max).setZ(aabb.min.z).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.min).setZ(aabb.max.z).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.max).setY(aabb.min.y).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.max).setX(aabb.min.x).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        _v3B.copy(aabb.max).applyQuaternion(rotation);
-	        bb.expandByPoint(_v3B);
-	        rotation.setFromUnitVectors(_AXIS_Z, normal);
-	        bb.min.x -= paddingLeft;
-	        bb.min.y -= paddingBottom;
-	        bb.max.x += paddingRight;
-	        bb.max.y += paddingTop;
-	        var bbSize = bb.getSize(_v3A);
-	        var center = bb.getCenter(_v3B).applyQuaternion(rotation);
-	        var isPerspectiveCamera = this._camera.isPerspectiveCamera;
-	        var isOrthographicCamera = this._camera.isOrthographicCamera;
-	        if (isPerspectiveCamera) {
-	            var distance = this.getDistanceToFit(bbSize.x, bbSize.y, bbSize.z);
-	            this.moveTo(center.x, center.y, center.z, enableTransition);
-	            this.dollyTo(distance, enableTransition);
-	            return;
-	        }
-	        else if (isOrthographicCamera) {
-	            var camera = this._camera;
-	            var width = camera.right - camera.left;
-	            var height = camera.top - camera.bottom;
-	            var zoom = Math.min(width / bbSize.x, height / bbSize.y);
-	            this.moveTo(center.x, center.y, center.z, enableTransition);
-	            this.zoomTo(zoom, enableTransition);
-	            return;
-	        }
-	    };
-	    CameraControls.prototype.setLookAt = function (positionX, positionY, positionZ, targetX, targetY, targetZ, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        var position = _v3A.set(positionX, positionY, positionZ);
-	        var target = _v3B.set(targetX, targetY, targetZ);
-	        this._targetEnd.copy(target);
-	        this._sphericalEnd.setFromVector3(position.sub(target).applyQuaternion(this._yAxisUpSpace));
-	        this.normalizeRotations();
-	        if (!enableTransition) {
-	            this._target.copy(this._targetEnd);
-	            this._spherical.copy(this._sphericalEnd);
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.lerpLookAt = function (positionAX, positionAY, positionAZ, targetAX, targetAY, targetAZ, positionBX, positionBY, positionBZ, targetBX, targetBY, targetBZ, t, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        var positionA = _v3A.set(positionAX, positionAY, positionAZ);
-	        var targetA = _v3B.set(targetAX, targetAY, targetAZ);
-	        _sphericalA.setFromVector3(positionA.sub(targetA).applyQuaternion(this._yAxisUpSpace));
-	        var targetB = _v3A.set(targetBX, targetBY, targetBZ);
-	        this._targetEnd.copy(targetA).lerp(targetB, t);
-	        var positionB = _v3B.set(positionBX, positionBY, positionBZ);
-	        _sphericalB.setFromVector3(positionB.sub(targetB).applyQuaternion(this._yAxisUpSpace));
-	        var deltaTheta = _sphericalB.theta - _sphericalA.theta;
-	        var deltaPhi = _sphericalB.phi - _sphericalA.phi;
-	        var deltaRadius = _sphericalB.radius - _sphericalA.radius;
-	        this._sphericalEnd.set(_sphericalA.radius + deltaRadius * t, _sphericalA.phi + deltaPhi * t, _sphericalA.theta + deltaTheta * t);
-	        this.normalizeRotations();
-	        if (!enableTransition) {
-	            this._target.copy(this._targetEnd);
-	            this._spherical.copy(this._sphericalEnd);
-	        }
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.setPosition = function (positionX, positionY, positionZ, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this.setLookAt(positionX, positionY, positionZ, this._targetEnd.x, this._targetEnd.y, this._targetEnd.z, enableTransition);
-	    };
-	    CameraControls.prototype.setTarget = function (targetX, targetY, targetZ, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        var pos = this.getPosition(_v3A);
-	        this.setLookAt(pos.x, pos.y, pos.z, targetX, targetY, targetZ, enableTransition);
-	    };
-	    CameraControls.prototype.setBoundary = function (box3) {
-	        if (!box3) {
-	            this._boundary.min.set(-Infinity, -Infinity, -Infinity);
-	            this._boundary.max.set(Infinity, Infinity, Infinity);
-	            this._needsUpdate = true;
-	            return;
-	        }
-	        this._boundary.copy(box3);
-	        this._boundary.clampPoint(this._targetEnd, this._targetEnd);
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.setViewport = function (viewportOrX, y, width, height) {
-	        if (viewportOrX === null) {
-	            this._viewport = null;
-	            return;
-	        }
-	        this._viewport = this._viewport || new THREE.Vector4();
-	        if (typeof viewportOrX === 'number') {
-	            this._viewport.set(viewportOrX, y, width, height);
-	        }
-	        else {
-	            this._viewport.copy(viewportOrX);
-	        }
-	    };
-	    CameraControls.prototype.getDistanceToFit = function (width, height, depth) {
-	        if (notSupportedInOrthographicCamera(this._camera, 'getDistanceToFit'))
-	            return this._spherical.radius;
-	        var camera = this._camera;
-	        var boundingRectAspect = width / height;
-	        var fov = camera.getEffectiveFOV() * THREE.Math.DEG2RAD;
-	        var aspect = camera.aspect;
-	        var heightToFit = boundingRectAspect < aspect ? height : width / aspect;
-	        return heightToFit * 0.5 / Math.tan(fov * 0.5) + depth * 0.5;
-	    };
-	    CameraControls.prototype.getTarget = function (out) {
-	        var _out = !!out && out.isVector3 ? out : new THREE.Vector3();
-	        return _out.copy(this._targetEnd);
-	    };
-	    CameraControls.prototype.getPosition = function (out) {
-	        var _out = !!out && out.isVector3 ? out : new THREE.Vector3();
-	        return _out.setFromSpherical(this._sphericalEnd).applyQuaternion(this._yAxisUpSpaceInverse).add(this._targetEnd);
-	    };
-	    CameraControls.prototype.normalizeRotations = function () {
-	        this._sphericalEnd.theta = this._sphericalEnd.theta % PI_2;
-	        if (this._sphericalEnd.theta < 0)
-	            this._sphericalEnd.theta += PI_2;
-	        this._spherical.theta += PI_2 * Math.round((this._sphericalEnd.theta - this._spherical.theta) / PI_2);
-	    };
-	    CameraControls.prototype.reset = function (enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        this.setLookAt(this._position0.x, this._position0.y, this._position0.z, this._target0.x, this._target0.y, this._target0.z, enableTransition);
-	        this.zoomTo(this._zoom0, enableTransition);
-	    };
-	    CameraControls.prototype.saveState = function () {
-	        this._target0.copy(this._target);
-	        this._position0.copy(this._camera.position);
-	        this._zoom0 = this._zoom;
-	    };
-	    CameraControls.prototype.updateCameraUp = function () {
-	        this._yAxisUpSpace.setFromUnitVectors(this._camera.up, _AXIS_Y);
-	        this._yAxisUpSpaceInverse.copy(this._yAxisUpSpace).inverse();
-	    };
-	    CameraControls.prototype.update = function (delta) {
-	        var dampingFactor = this._state === ACTION.NONE ? this.dampingFactor : this.draggingDampingFactor;
-	        var lerpRatio = 1.0 - Math.exp(-dampingFactor * delta * FPS_60);
-	        var deltaTheta = this._sphericalEnd.theta - this._spherical.theta;
-	        var deltaPhi = this._sphericalEnd.phi - this._spherical.phi;
-	        var deltaRadius = this._sphericalEnd.radius - this._spherical.radius;
-	        var deltaTarget = _v3A.subVectors(this._targetEnd, this._target);
-	        if (!approxZero(deltaTheta) ||
-	            !approxZero(deltaPhi) ||
-	            !approxZero(deltaRadius) ||
-	            !approxZero(deltaTarget.x) ||
-	            !approxZero(deltaTarget.y) ||
-	            !approxZero(deltaTarget.z)) {
-	            this._spherical.set(this._spherical.radius + deltaRadius * lerpRatio, this._spherical.phi + deltaPhi * lerpRatio, this._spherical.theta + deltaTheta * lerpRatio);
-	            this._target.add(deltaTarget.multiplyScalar(lerpRatio));
-	            this._needsUpdate = true;
-	        }
-	        else {
-	            this._spherical.copy(this._sphericalEnd);
-	            this._target.copy(this._targetEnd);
-	        }
-	        if (this._dollyControlAmount !== 0) {
-	            if (this._camera.isPerspectiveCamera) {
-	                var camera = this._camera;
-	                var direction = _v3A.setFromSpherical(this._sphericalEnd).applyQuaternion(this._yAxisUpSpaceInverse).normalize().negate();
-	                var planeX = _v3B.copy(direction).cross(camera.up).normalize();
-	                if (planeX.lengthSq() === 0)
-	                    planeX.x = 1.0;
-	                var planeY = _v3C.crossVectors(planeX, direction);
-	                var worldToScreen = this._sphericalEnd.radius * Math.tan(camera.getEffectiveFOV() * THREE.Math.DEG2RAD * 0.5);
-	                var prevRadius = this._sphericalEnd.radius - this._dollyControlAmount;
-	                var lerpRatio_1 = (prevRadius - this._sphericalEnd.radius) / this._sphericalEnd.radius;
-	                var cursor = _v3A.copy(this._targetEnd)
-	                    .add(planeX.multiplyScalar(this._dollyControlCoord.x * worldToScreen * camera.aspect))
-	                    .add(planeY.multiplyScalar(this._dollyControlCoord.y * worldToScreen));
-	                this._targetEnd.lerp(cursor, lerpRatio_1);
-	                this._target.copy(this._targetEnd);
-	            }
-	            this._dollyControlAmount = 0;
-	        }
-	        var maxDistance = this._collisionTest();
-	        this._spherical.radius = Math.min(this._spherical.radius, maxDistance);
-	        this._spherical.makeSafe();
-	        this._camera.position.setFromSpherical(this._spherical).applyQuaternion(this._yAxisUpSpaceInverse).add(this._target);
-	        this._camera.lookAt(this._target);
-	        if (this._boundaryEnclosesCamera) {
-	            this._encloseToBoundary(this._camera.position.copy(this._target), _v3A.setFromSpherical(this._spherical).applyQuaternion(this._yAxisUpSpaceInverse), 1.0);
-	        }
-	        var zoomDelta = this._zoomEnd - this._zoom;
-	        this._zoom += zoomDelta * lerpRatio;
-	        if (this._camera.zoom !== this._zoom) {
-	            if (approxZero(zoomDelta))
-	                this._zoom = this._zoomEnd;
-	            this._camera.zoom = this._zoom;
-	            this._camera.updateProjectionMatrix();
-	            this._updateNearPlaneCorners();
-	            this._needsUpdate = true;
-	        }
-	        var updated = this._needsUpdate;
-	        if (updated && !this._updatedLastTime) {
-	            this.dispatchEvent({ type: 'wake' });
-	            this.dispatchEvent({ type: 'update' });
-	        }
-	        else if (updated) {
-	            this.dispatchEvent({ type: 'update' });
-	        }
-	        else if (!updated && this._updatedLastTime) {
-	            this.dispatchEvent({ type: 'sleep' });
-	        }
-	        this._updatedLastTime = updated;
-	        this._needsUpdate = false;
-	        return updated;
-	    };
-	    CameraControls.prototype.toJSON = function () {
-	        return JSON.stringify({
-	            enabled: this.enabled,
-	            minDistance: this.minDistance,
-	            maxDistance: infinityToMaxNumber(this.maxDistance),
-	            minZoom: this.minZoom,
-	            maxZoom: infinityToMaxNumber(this.maxZoom),
-	            minPolarAngle: this.minPolarAngle,
-	            maxPolarAngle: infinityToMaxNumber(this.maxPolarAngle),
-	            minAzimuthAngle: infinityToMaxNumber(this.minAzimuthAngle),
-	            maxAzimuthAngle: infinityToMaxNumber(this.maxAzimuthAngle),
-	            dampingFactor: this.dampingFactor,
-	            draggingDampingFactor: this.draggingDampingFactor,
-	            dollySpeed: this.dollySpeed,
-	            truckSpeed: this.truckSpeed,
-	            dollyToCursor: this.dollyToCursor,
-	            verticalDragToForward: this.verticalDragToForward,
-	            target: this._targetEnd.toArray(),
-	            position: this._camera.position.toArray(),
-	            zoom: this._camera.zoom,
-	            target0: this._target0.toArray(),
-	            position0: this._position0.toArray(),
-	            zoom0: this._zoom0,
-	        });
-	    };
-	    CameraControls.prototype.fromJSON = function (json, enableTransition) {
-	        if (enableTransition === void 0) { enableTransition = false; }
-	        var obj = JSON.parse(json);
-	        var position = _v3A.fromArray(obj.position);
-	        this.enabled = obj.enabled;
-	        this.minDistance = obj.minDistance;
-	        this.maxDistance = maxNumberToInfinity(obj.maxDistance);
-	        this.minZoom = obj.minZoom;
-	        this.maxZoom = maxNumberToInfinity(obj.maxZoom);
-	        this.minPolarAngle = obj.minPolarAngle;
-	        this.maxPolarAngle = maxNumberToInfinity(obj.maxPolarAngle);
-	        this.minAzimuthAngle = maxNumberToInfinity(obj.minAzimuthAngle);
-	        this.maxAzimuthAngle = maxNumberToInfinity(obj.maxAzimuthAngle);
-	        this.dampingFactor = obj.dampingFactor;
-	        this.draggingDampingFactor = obj.draggingDampingFactor;
-	        this.dollySpeed = obj.dollySpeed;
-	        this.truckSpeed = obj.truckSpeed;
-	        this.dollyToCursor = obj.dollyToCursor;
-	        this.verticalDragToForward = obj.verticalDragToForward;
-	        this._target0.fromArray(obj.target0);
-	        this._position0.fromArray(obj.position0);
-	        this._zoom0 = obj.zoom0;
-	        this.moveTo(obj.target[0], obj.target[1], obj.target[2], enableTransition);
-	        _sphericalA.setFromVector3(position.sub(this._targetEnd).applyQuaternion(this._yAxisUpSpace));
-	        this.rotateTo(_sphericalA.theta, _sphericalA.phi, enableTransition);
-	        this.zoomTo(obj.zoom, enableTransition);
-	        this._needsUpdate = true;
-	    };
-	    CameraControls.prototype.dispose = function () {
-	        this._removeAllEventListeners();
-	    };
-	    CameraControls.prototype._encloseToBoundary = function (position, offset, friction) {
-	        var offsetLength2 = offset.lengthSq();
-	        if (offsetLength2 === 0.0) {
-	            return position;
-	        }
-	        var newTarget = _v3B.copy(offset).add(position);
-	        var clampedTarget = this._boundary.clampPoint(newTarget, _v3C);
-	        var deltaClampedTarget = clampedTarget.sub(newTarget);
-	        var deltaClampedTargetLength2 = deltaClampedTarget.lengthSq();
-	        if (deltaClampedTargetLength2 === 0.0) {
-	            return position.add(offset);
-	        }
-	        else if (deltaClampedTargetLength2 === offsetLength2) {
-	            return position;
-	        }
-	        else if (friction === 0.0) {
-	            return position.add(offset).add(deltaClampedTarget);
-	        }
-	        else {
-	            var offsetFactor = 1.0 + friction * deltaClampedTargetLength2 / offset.dot(deltaClampedTarget);
-	            return position
-	                .add(_v3B.copy(offset).multiplyScalar(offsetFactor))
-	                .add(deltaClampedTarget.multiplyScalar(1.0 - friction));
-	        }
-	    };
-	    CameraControls.prototype._updateNearPlaneCorners = function () {
-	        if (this._camera.isPerspectiveCamera) {
-	            var camera = this._camera;
-	            var near = camera.near;
-	            var fov = camera.getEffectiveFOV() * THREE.Math.DEG2RAD;
-	            var heightHalf = Math.tan(fov * 0.5) * near;
-	            var widthHalf = heightHalf * camera.aspect;
-	            this._nearPlaneCorners[0].set(-widthHalf, -heightHalf, 0);
-	            this._nearPlaneCorners[1].set(widthHalf, -heightHalf, 0);
-	            this._nearPlaneCorners[2].set(widthHalf, heightHalf, 0);
-	            this._nearPlaneCorners[3].set(-widthHalf, heightHalf, 0);
-	        }
-	        else if (this._camera.isOrthographicCamera) {
-	            var camera = this._camera;
-	            var zoomInv = 1 / camera.zoom;
-	            var left = camera.left * zoomInv;
-	            var right = camera.right * zoomInv;
-	            var top_1 = camera.top * zoomInv;
-	            var bottom = camera.bottom * zoomInv;
-	            this._nearPlaneCorners[0].set(left, top_1, 0);
-	            this._nearPlaneCorners[1].set(right, top_1, 0);
-	            this._nearPlaneCorners[2].set(right, bottom, 0);
-	            this._nearPlaneCorners[3].set(left, bottom, 0);
-	        }
-	    };
-	    CameraControls.prototype._collisionTest = function () {
-	        var distance = Infinity;
-	        var hasCollider = this.colliderMeshes.length >= 1;
-	        if (!hasCollider)
-	            return distance;
-	        if (notSupportedInOrthographicCamera(this._camera, '_collisionTest'))
-	            return distance;
-	        distance = this._spherical.radius;
-	        var direction = _v3A.setFromSpherical(this._spherical).divideScalar(distance);
-	        _rotationMatrix.lookAt(_ORIGIN, direction, this._camera.up);
-	        for (var i = 0; i < 4; i++) {
-	            var nearPlaneCorner = _v3B.copy(this._nearPlaneCorners[i]);
-	            nearPlaneCorner.applyMatrix4(_rotationMatrix);
-	            var origin_1 = _v3C.addVectors(this._target, nearPlaneCorner);
-	            _raycaster.set(origin_1, direction);
-	            _raycaster.far = distance;
-	            var intersects = _raycaster.intersectObjects(this.colliderMeshes);
-	            if (intersects.length !== 0 && intersects[0].distance < distance) {
-	                distance = intersects[0].distance;
-	            }
-	        }
-	        return distance;
-	    };
-	    CameraControls.prototype._getClientRect = function (target) {
-	        var rect = this._domElement.getBoundingClientRect();
-	        target.x = rect.left;
-	        target.y = rect.top;
-	        if (this._viewport) {
-	            target.x += this._viewport.x;
-	            target.y += rect.height - this._viewport.w - this._viewport.y;
-	            target.z = this._viewport.z;
-	            target.w = this._viewport.w;
-	        }
-	        else {
-	            target.z = rect.width;
-	            target.w = rect.height;
-	        }
-	        return target;
-	    };
-	    CameraControls.prototype._removeAllEventListeners = function () { };
-	    return CameraControls;
-	}(EventDispatcher));
-
-	return CameraControls;
-
-})));
-
-},{}],4:[function(require,module,exports){
-// https://github.com/d3/d3-delaunay v5.3.0 Copyright 2020 Mike Bostock
-// https://github.com/mapbox/delaunator v4.0.1. Copyright 2019 Mapbox, Inc.
-(function (global, factory) {
-typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
-typeof define === 'function' && define.amd ? define(['exports'], factory) :
-(global = global || self, factory(global.d3 = global.d3 || {}));
-}(this, function (exports) { 'use strict';
-
-const EPSILON = Math.pow(2, -52);
-const EDGE_STACK = new Uint32Array(512);
-
-class Delaunator {
-
-    static from(points, getX = defaultGetX, getY = defaultGetY) {
-        const n = points.length;
-        const coords = new Float64Array(n * 2);
-
-        for (let i = 0; i < n; i++) {
-            const p = points[i];
-            coords[2 * i] = getX(p);
-            coords[2 * i + 1] = getY(p);
-        }
-
-        return new Delaunator(coords);
-    }
-
-    constructor(coords) {
-        const n = coords.length >> 1;
-        if (n > 0 && typeof coords[0] !== 'number') throw new Error('Expected coords to contain numbers.');
-
-        this.coords = coords;
-
-        // arrays that will store the triangulation graph
-        const maxTriangles = Math.max(2 * n - 5, 0);
-        this._triangles = new Uint32Array(maxTriangles * 3);
-        this._halfedges = new Int32Array(maxTriangles * 3);
-
-        // temporary arrays for tracking the edges of the advancing convex hull
-        this._hashSize = Math.ceil(Math.sqrt(n));
-        this._hullPrev = new Uint32Array(n); // edge to prev edge
-        this._hullNext = new Uint32Array(n); // edge to next edge
-        this._hullTri = new Uint32Array(n); // edge to adjacent triangle
-        this._hullHash = new Int32Array(this._hashSize).fill(-1); // angular edge hash
-
-        // temporary arrays for sorting points
-        this._ids = new Uint32Array(n);
-        this._dists = new Float64Array(n);
-
-        this.update();
-    }
-
-    update() {
-        const {coords, _hullPrev: hullPrev, _hullNext: hullNext, _hullTri: hullTri, _hullHash: hullHash} =  this;
-        const n = coords.length >> 1;
-
-        // populate an array of point indices; calculate input data bbox
-        let minX = Infinity;
-        let minY = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
-
-        for (let i = 0; i < n; i++) {
-            const x = coords[2 * i];
-            const y = coords[2 * i + 1];
-            if (x < minX) minX = x;
-            if (y < minY) minY = y;
-            if (x > maxX) maxX = x;
-            if (y > maxY) maxY = y;
-            this._ids[i] = i;
-        }
-        const cx = (minX + maxX) / 2;
-        const cy = (minY + maxY) / 2;
-
-        let minDist = Infinity;
-        let i0, i1, i2;
-
-        // pick a seed point close to the center
-        for (let i = 0; i < n; i++) {
-            const d = dist(cx, cy, coords[2 * i], coords[2 * i + 1]);
-            if (d < minDist) {
-                i0 = i;
-                minDist = d;
-            }
-        }
-        const i0x = coords[2 * i0];
-        const i0y = coords[2 * i0 + 1];
-
-        minDist = Infinity;
-
-        // find the point closest to the seed
-        for (let i = 0; i < n; i++) {
-            if (i === i0) continue;
-            const d = dist(i0x, i0y, coords[2 * i], coords[2 * i + 1]);
-            if (d < minDist && d > 0) {
-                i1 = i;
-                minDist = d;
-            }
-        }
-        let i1x = coords[2 * i1];
-        let i1y = coords[2 * i1 + 1];
-
-        let minRadius = Infinity;
-
-        // find the third point which forms the smallest circumcircle with the first two
-        for (let i = 0; i < n; i++) {
-            if (i === i0 || i === i1) continue;
-            const r = circumradius(i0x, i0y, i1x, i1y, coords[2 * i], coords[2 * i + 1]);
-            if (r < minRadius) {
-                i2 = i;
-                minRadius = r;
-            }
-        }
-        let i2x = coords[2 * i2];
-        let i2y = coords[2 * i2 + 1];
-
-        if (minRadius === Infinity) {
-            // order collinear points by dx (or dy if all x are identical)
-            // and return the list as a hull
-            for (let i = 0; i < n; i++) {
-                this._dists[i] = (coords[2 * i] - coords[0]) || (coords[2 * i + 1] - coords[1]);
-            }
-            quicksort(this._ids, this._dists, 0, n - 1);
-            const hull = new Uint32Array(n);
-            let j = 0;
-            for (let i = 0, d0 = -Infinity; i < n; i++) {
-                const id = this._ids[i];
-                if (this._dists[id] > d0) {
-                    hull[j++] = id;
-                    d0 = this._dists[id];
-                }
-            }
-            this.hull = hull.subarray(0, j);
-            this.triangles = new Uint32Array(0);
-            this.halfedges = new Uint32Array(0);
-            return;
-        }
-
-        // swap the order of the seed points for counter-clockwise orientation
-        if (orient(i0x, i0y, i1x, i1y, i2x, i2y)) {
-            const i = i1;
-            const x = i1x;
-            const y = i1y;
-            i1 = i2;
-            i1x = i2x;
-            i1y = i2y;
-            i2 = i;
-            i2x = x;
-            i2y = y;
-        }
-
-        const center = circumcenter(i0x, i0y, i1x, i1y, i2x, i2y);
-        this._cx = center.x;
-        this._cy = center.y;
-
-        for (let i = 0; i < n; i++) {
-            this._dists[i] = dist(coords[2 * i], coords[2 * i + 1], center.x, center.y);
-        }
-
-        // sort the points by distance from the seed triangle circumcenter
-        quicksort(this._ids, this._dists, 0, n - 1);
-
-        // set up the seed triangle as the starting hull
-        this._hullStart = i0;
-        let hullSize = 3;
-
-        hullNext[i0] = hullPrev[i2] = i1;
-        hullNext[i1] = hullPrev[i0] = i2;
-        hullNext[i2] = hullPrev[i1] = i0;
-
-        hullTri[i0] = 0;
-        hullTri[i1] = 1;
-        hullTri[i2] = 2;
-
-        hullHash.fill(-1);
-        hullHash[this._hashKey(i0x, i0y)] = i0;
-        hullHash[this._hashKey(i1x, i1y)] = i1;
-        hullHash[this._hashKey(i2x, i2y)] = i2;
-
-        this.trianglesLen = 0;
-        this._addTriangle(i0, i1, i2, -1, -1, -1);
-
-        for (let k = 0, xp, yp; k < this._ids.length; k++) {
-            const i = this._ids[k];
-            const x = coords[2 * i];
-            const y = coords[2 * i + 1];
-
-            // skip near-duplicate points
-            if (k > 0 && Math.abs(x - xp) <= EPSILON && Math.abs(y - yp) <= EPSILON) continue;
-            xp = x;
-            yp = y;
-
-            // skip seed triangle points
-            if (i === i0 || i === i1 || i === i2) continue;
-
-            // find a visible edge on the convex hull using edge hash
-            let start = 0;
-            for (let j = 0, key = this._hashKey(x, y); j < this._hashSize; j++) {
-                start = hullHash[(key + j) % this._hashSize];
-                if (start !== -1 && start !== hullNext[start]) break;
-            }
-
-            start = hullPrev[start];
-            let e = start, q;
-            while (q = hullNext[e], !orient(x, y, coords[2 * e], coords[2 * e + 1], coords[2 * q], coords[2 * q + 1])) {
-                e = q;
-                if (e === start) {
-                    e = -1;
-                    break;
-                }
-            }
-            if (e === -1) continue; // likely a near-duplicate point; skip it
-
-            // add the first triangle from the point
-            let t = this._addTriangle(e, i, hullNext[e], -1, -1, hullTri[e]);
-
-            // recursively flip triangles from the point until they satisfy the Delaunay condition
-            hullTri[i] = this._legalize(t + 2);
-            hullTri[e] = t; // keep track of boundary triangles on the hull
-            hullSize++;
-
-            // walk forward through the hull, adding more triangles and flipping recursively
-            let n = hullNext[e];
-            while (q = hullNext[n], orient(x, y, coords[2 * n], coords[2 * n + 1], coords[2 * q], coords[2 * q + 1])) {
-                t = this._addTriangle(n, i, q, hullTri[i], -1, hullTri[n]);
-                hullTri[i] = this._legalize(t + 2);
-                hullNext[n] = n; // mark as removed
-                hullSize--;
-                n = q;
-            }
-
-            // walk backward from the other side, adding more triangles and flipping
-            if (e === start) {
-                while (q = hullPrev[e], orient(x, y, coords[2 * q], coords[2 * q + 1], coords[2 * e], coords[2 * e + 1])) {
-                    t = this._addTriangle(q, i, e, -1, hullTri[e], hullTri[q]);
-                    this._legalize(t + 2);
-                    hullTri[q] = t;
-                    hullNext[e] = e; // mark as removed
-                    hullSize--;
-                    e = q;
-                }
-            }
-
-            // update the hull indices
-            this._hullStart = hullPrev[i] = e;
-            hullNext[e] = hullPrev[n] = i;
-            hullNext[i] = n;
-
-            // save the two new edges in the hash table
-            hullHash[this._hashKey(x, y)] = i;
-            hullHash[this._hashKey(coords[2 * e], coords[2 * e + 1])] = e;
-        }
-
-        this.hull = new Uint32Array(hullSize);
-        for (let i = 0, e = this._hullStart; i < hullSize; i++) {
-            this.hull[i] = e;
-            e = hullNext[e];
-        }
-
-        // trim typed triangle mesh arrays
-        this.triangles = this._triangles.subarray(0, this.trianglesLen);
-        this.halfedges = this._halfedges.subarray(0, this.trianglesLen);
-    }
-
-    _hashKey(x, y) {
-        return Math.floor(pseudoAngle(x - this._cx, y - this._cy) * this._hashSize) % this._hashSize;
-    }
-
-    _legalize(a) {
-        const {_triangles: triangles, _halfedges: halfedges, coords} = this;
-
-        let i = 0;
-        let ar = 0;
-
-        // recursion eliminated with a fixed-size stack
-        while (true) {
-            const b = halfedges[a];
-
-            /* if the pair of triangles doesn't satisfy the Delaunay condition
-             * (p1 is inside the circumcircle of [p0, pl, pr]), flip them,
-             * then do the same check/flip recursively for the new pair of triangles
-             *
-             *           pl                    pl
-             *          /||\                  /  \
-             *       al/ || \bl            al/    \a
-             *        /  ||  \              /      \
-             *       /  a||b  \    flip    /___ar___\
-             *     p0\   ||   /p1   =>   p0\---bl---/p1
-             *        \  ||  /              \      /
-             *       ar\ || /br             b\    /br
-             *          \||/                  \  /
-             *           pr                    pr
-             */
-            const a0 = a - a % 3;
-            ar = a0 + (a + 2) % 3;
-
-            if (b === -1) { // convex hull edge
-                if (i === 0) break;
-                a = EDGE_STACK[--i];
-                continue;
-            }
-
-            const b0 = b - b % 3;
-            const al = a0 + (a + 1) % 3;
-            const bl = b0 + (b + 2) % 3;
-
-            const p0 = triangles[ar];
-            const pr = triangles[a];
-            const pl = triangles[al];
-            const p1 = triangles[bl];
-
-            const illegal = inCircle(
-                coords[2 * p0], coords[2 * p0 + 1],
-                coords[2 * pr], coords[2 * pr + 1],
-                coords[2 * pl], coords[2 * pl + 1],
-                coords[2 * p1], coords[2 * p1 + 1]);
-
-            if (illegal) {
-                triangles[a] = p1;
-                triangles[b] = p0;
-
-                const hbl = halfedges[bl];
-
-                // edge swapped on the other side of the hull (rare); fix the halfedge reference
-                if (hbl === -1) {
-                    let e = this._hullStart;
-                    do {
-                        if (this._hullTri[e] === bl) {
-                            this._hullTri[e] = a;
-                            break;
-                        }
-                        e = this._hullPrev[e];
-                    } while (e !== this._hullStart);
-                }
-                this._link(a, hbl);
-                this._link(b, halfedges[ar]);
-                this._link(ar, bl);
-
-                const br = b0 + (b + 1) % 3;
-
-                // don't worry about hitting the cap: it can only happen on extremely degenerate input
-                if (i < EDGE_STACK.length) {
-                    EDGE_STACK[i++] = br;
-                }
-            } else {
-                if (i === 0) break;
-                a = EDGE_STACK[--i];
-            }
-        }
-
-        return ar;
-    }
-
-    _link(a, b) {
-        this._halfedges[a] = b;
-        if (b !== -1) this._halfedges[b] = a;
-    }
-
-    // add a new triangle given vertex indices and adjacent half-edge ids
-    _addTriangle(i0, i1, i2, a, b, c) {
-        const t = this.trianglesLen;
-
-        this._triangles[t] = i0;
-        this._triangles[t + 1] = i1;
-        this._triangles[t + 2] = i2;
-
-        this._link(t, a);
-        this._link(t + 1, b);
-        this._link(t + 2, c);
-
-        this.trianglesLen += 3;
-
-        return t;
-    }
-}
-
-// monotonically increases with real angle, but doesn't need expensive trigonometry
-function pseudoAngle(dx, dy) {
-    const p = dx / (Math.abs(dx) + Math.abs(dy));
-    return (dy > 0 ? 3 - p : 1 + p) / 4; // [0..1]
-}
-
-function dist(ax, ay, bx, by) {
-    const dx = ax - bx;
-    const dy = ay - by;
-    return dx * dx + dy * dy;
-}
-
-// return 2d orientation sign if we're confident in it through J. Shewchuk's error bound check
-function orientIfSure(px, py, rx, ry, qx, qy) {
-    const l = (ry - py) * (qx - px);
-    const r = (rx - px) * (qy - py);
-    return Math.abs(l - r) >= 3.3306690738754716e-16 * Math.abs(l + r) ? l - r : 0;
-}
-
-// a more robust orientation test that's stable in a given triangle (to fix robustness issues)
-function orient(rx, ry, qx, qy, px, py) {
-    const sign = orientIfSure(px, py, rx, ry, qx, qy) ||
-    orientIfSure(rx, ry, qx, qy, px, py) ||
-    orientIfSure(qx, qy, px, py, rx, ry);
-    return sign < 0;
-}
-
-function inCircle(ax, ay, bx, by, cx, cy, px, py) {
-    const dx = ax - px;
-    const dy = ay - py;
-    const ex = bx - px;
-    const ey = by - py;
-    const fx = cx - px;
-    const fy = cy - py;
-
-    const ap = dx * dx + dy * dy;
-    const bp = ex * ex + ey * ey;
-    const cp = fx * fx + fy * fy;
-
-    return dx * (ey * cp - bp * fy) -
-           dy * (ex * cp - bp * fx) +
-           ap * (ex * fy - ey * fx) < 0;
-}
-
-function circumradius(ax, ay, bx, by, cx, cy) {
-    const dx = bx - ax;
-    const dy = by - ay;
-    const ex = cx - ax;
-    const ey = cy - ay;
-
-    const bl = dx * dx + dy * dy;
-    const cl = ex * ex + ey * ey;
-    const d = 0.5 / (dx * ey - dy * ex);
-
-    const x = (ey * bl - dy * cl) * d;
-    const y = (dx * cl - ex * bl) * d;
-
-    return x * x + y * y;
-}
-
-function circumcenter(ax, ay, bx, by, cx, cy) {
-    const dx = bx - ax;
-    const dy = by - ay;
-    const ex = cx - ax;
-    const ey = cy - ay;
-
-    const bl = dx * dx + dy * dy;
-    const cl = ex * ex + ey * ey;
-    const d = 0.5 / (dx * ey - dy * ex);
-
-    const x = ax + (ey * bl - dy * cl) * d;
-    const y = ay + (dx * cl - ex * bl) * d;
-
-    return {x, y};
-}
-
-function quicksort(ids, dists, left, right) {
-    if (right - left <= 20) {
-        for (let i = left + 1; i <= right; i++) {
-            const temp = ids[i];
-            const tempDist = dists[temp];
-            let j = i - 1;
-            while (j >= left && dists[ids[j]] > tempDist) ids[j + 1] = ids[j--];
-            ids[j + 1] = temp;
-        }
-    } else {
-        const median = (left + right) >> 1;
-        let i = left + 1;
-        let j = right;
-        swap(ids, median, i);
-        if (dists[ids[left]] > dists[ids[right]]) swap(ids, left, right);
-        if (dists[ids[i]] > dists[ids[right]]) swap(ids, i, right);
-        if (dists[ids[left]] > dists[ids[i]]) swap(ids, left, i);
-
-        const temp = ids[i];
-        const tempDist = dists[temp];
-        while (true) {
-            do i++; while (dists[ids[i]] < tempDist);
-            do j--; while (dists[ids[j]] > tempDist);
-            if (j < i) break;
-            swap(ids, i, j);
-        }
-        ids[left + 1] = ids[j];
-        ids[j] = temp;
-
-        if (right - i + 1 >= j - left) {
-            quicksort(ids, dists, i, right);
-            quicksort(ids, dists, left, j - 1);
-        } else {
-            quicksort(ids, dists, left, j - 1);
-            quicksort(ids, dists, i, right);
-        }
-    }
-}
-
-function swap(arr, i, j) {
-    const tmp = arr[i];
-    arr[i] = arr[j];
-    arr[j] = tmp;
-}
-
-function defaultGetX(p) {
-    return p[0];
-}
-function defaultGetY(p) {
-    return p[1];
-}
-
-const epsilon = 1e-6;
-
-class Path {
-  constructor() {
-    this._x0 = this._y0 = // start of current subpath
-    this._x1 = this._y1 = null; // end of current subpath
-    this._ = "";
-  }
-  moveTo(x, y) {
-    this._ += `M${this._x0 = this._x1 = +x},${this._y0 = this._y1 = +y}`;
-  }
-  closePath() {
-    if (this._x1 !== null) {
-      this._x1 = this._x0, this._y1 = this._y0;
-      this._ += "Z";
-    }
-  }
-  lineTo(x, y) {
-    this._ += `L${this._x1 = +x},${this._y1 = +y}`;
-  }
-  arc(x, y, r) {
-    x = +x, y = +y, r = +r;
-    const x0 = x + r;
-    const y0 = y;
-    if (r < 0) throw new Error("negative radius");
-    if (this._x1 === null) this._ += `M${x0},${y0}`;
-    else if (Math.abs(this._x1 - x0) > epsilon || Math.abs(this._y1 - y0) > epsilon) this._ += "L" + x0 + "," + y0;
-    if (!r) return;
-    this._ += `A${r},${r},0,1,1,${x - r},${y}A${r},${r},0,1,1,${this._x1 = x0},${this._y1 = y0}`;
-  }
-  rect(x, y, w, h) {
-    this._ += `M${this._x0 = this._x1 = +x},${this._y0 = this._y1 = +y}h${+w}v${+h}h${-w}Z`;
-  }
-  value() {
-    return this._ || null;
-  }
-}
-
-class Polygon {
-  constructor() {
-    this._ = [];
-  }
-  moveTo(x, y) {
-    this._.push([x, y]);
-  }
-  closePath() {
-    this._.push(this._[0].slice());
-  }
-  lineTo(x, y) {
-    this._.push([x, y]);
-  }
-  value() {
-    return this._.length ? this._ : null;
-  }
-}
-
-class Voronoi {
-  constructor(delaunay, [xmin, ymin, xmax, ymax] = [0, 0, 960, 500]) {
-    if (!((xmax = +xmax) >= (xmin = +xmin)) || !((ymax = +ymax) >= (ymin = +ymin))) throw new Error("invalid bounds");
-    this.delaunay = delaunay;
-    this._circumcenters = new Float64Array(delaunay.points.length * 2);
-    this.vectors = new Float64Array(delaunay.points.length * 2);
-    this.xmax = xmax, this.xmin = xmin;
-    this.ymax = ymax, this.ymin = ymin;
-    this._init();
-  }
-  update() {
-    this.delaunay.update();
-    this._init();
-    return this;
-  }
-  _init() {
-    const {delaunay: {points, hull, triangles}, vectors} = this;
-
-    // Compute circumcenters.
-    const circumcenters = this.circumcenters = this._circumcenters.subarray(0, triangles.length / 3 * 2);
-    for (let i = 0, j = 0, n = triangles.length, x, y; i < n; i += 3, j += 2) {
-      const t1 = triangles[i] * 2;
-      const t2 = triangles[i + 1] * 2;
-      const t3 = triangles[i + 2] * 2;
-      const x1 = points[t1];
-      const y1 = points[t1 + 1];
-      const x2 = points[t2];
-      const y2 = points[t2 + 1];
-      const x3 = points[t3];
-      const y3 = points[t3 + 1];
-
-      const dx = x2 - x1;
-      const dy = y2 - y1;
-      const ex = x3 - x1;
-      const ey = y3 - y1;
-      const bl = dx * dx + dy * dy;
-      const cl = ex * ex + ey * ey;
-      const ab = (dx * ey - dy * ex) * 2;
-
-      if (!ab) {
-        // degenerate case (collinear diagram)
-        x = (x1 + x3) / 2 - 1e8 * ey;
-        y = (y1 + y3) / 2 + 1e8 * ex;
-      }
-      else if (Math.abs(ab) < 1e-8) {
-        // almost equal points (degenerate triangle)
-        x = (x1 + x3) / 2;
-        y = (y1 + y3) / 2;
-      } else {
-        const d = 1 / ab;
-        x = x1 + (ey * bl - dy * cl) * d;
-        y = y1 + (dx * cl - ex * bl) * d;
-      }
-      circumcenters[j] = x;
-      circumcenters[j + 1] = y;
-    }
-
-    // Compute exterior cell rays.
-    let h = hull[hull.length - 1];
-    let p0, p1 = h * 4;
-    let x0, x1 = points[2 * h];
-    let y0, y1 = points[2 * h + 1];
-    vectors.fill(0);
-    for (let i = 0; i < hull.length; ++i) {
-      h = hull[i];
-      p0 = p1, x0 = x1, y0 = y1;
-      p1 = h * 4, x1 = points[2 * h], y1 = points[2 * h + 1];
-      vectors[p0 + 2] = vectors[p1] = y0 - y1;
-      vectors[p0 + 3] = vectors[p1 + 1] = x1 - x0;
-    }
-  }
-  render(context) {
-    const buffer = context == null ? context = new Path : undefined;
-    const {delaunay: {halfedges, inedges, hull}, circumcenters, vectors} = this;
-    if (hull.length <= 1) return null;
-    for (let i = 0, n = halfedges.length; i < n; ++i) {
-      const j = halfedges[i];
-      if (j < i) continue;
-      const ti = Math.floor(i / 3) * 2;
-      const tj = Math.floor(j / 3) * 2;
-      const xi = circumcenters[ti];
-      const yi = circumcenters[ti + 1];
-      const xj = circumcenters[tj];
-      const yj = circumcenters[tj + 1];
-      this._renderSegment(xi, yi, xj, yj, context);
-    }
-    let h0, h1 = hull[hull.length - 1];
-    for (let i = 0; i < hull.length; ++i) {
-      h0 = h1, h1 = hull[i];
-      const t = Math.floor(inedges[h1] / 3) * 2;
-      const x = circumcenters[t];
-      const y = circumcenters[t + 1];
-      const v = h0 * 4;
-      const p = this._project(x, y, vectors[v + 2], vectors[v + 3]);
-      if (p) this._renderSegment(x, y, p[0], p[1], context);
-    }
-    return buffer && buffer.value();
-  }
-  renderBounds(context) {
-    const buffer = context == null ? context = new Path : undefined;
-    context.rect(this.xmin, this.ymin, this.xmax - this.xmin, this.ymax - this.ymin);
-    return buffer && buffer.value();
-  }
-  renderCell(i, context) {
-    const buffer = context == null ? context = new Path : undefined;
-    const points = this._clip(i);
-    if (points === null || !points.length) return;
-    context.moveTo(points[0], points[1]);
-    let n = points.length;
-    while (points[0] === points[n-2] && points[1] === points[n-1] && n > 1) n -= 2;
-    for (let i = 2; i < n; i += 2) {
-      if (points[i] !== points[i-2] || points[i+1] !== points[i-1])
-        context.lineTo(points[i], points[i + 1]);
-    }
-    context.closePath();
-    return buffer && buffer.value();
-  }
-  *cellPolygons() {
-    const {delaunay: {points}} = this;
-    for (let i = 0, n = points.length / 2; i < n; ++i) {
-      const cell = this.cellPolygon(i);
-      if (cell) cell.index = i, yield cell;
-    }
-  }
-  cellPolygon(i) {
-    const polygon = new Polygon;
-    this.renderCell(i, polygon);
-    return polygon.value();
-  }
-  _renderSegment(x0, y0, x1, y1, context) {
-    let S;
-    const c0 = this._regioncode(x0, y0);
-    const c1 = this._regioncode(x1, y1);
-    if (c0 === 0 && c1 === 0) {
-      context.moveTo(x0, y0);
-      context.lineTo(x1, y1);
-    } else if (S = this._clipSegment(x0, y0, x1, y1, c0, c1)) {
-      context.moveTo(S[0], S[1]);
-      context.lineTo(S[2], S[3]);
-    }
-  }
-  contains(i, x, y) {
-    if ((x = +x, x !== x) || (y = +y, y !== y)) return false;
-    return this.delaunay._step(i, x, y) === i;
-  }
-  *neighbors(i) {
-    const ci = this._clip(i);
-    if (ci) for (const j of this.delaunay.neighbors(i)) {
-      const cj = this._clip(j);
-      // find the common edge
-      if (cj) loop: for (let ai = 0, li = ci.length; ai < li; ai += 2) {
-        for (let aj = 0, lj = cj.length; aj < lj; aj += 2) {
-          if (ci[ai] == cj[aj]
-          && ci[ai + 1] == cj[aj + 1]
-          && ci[(ai + 2) % li] == cj[(aj + lj - 2) % lj]
-          && ci[(ai + 3) % li] == cj[(aj + lj - 1) % lj]
-          ) {
-            yield j;
-            break loop;
-          }
-        }
-      }
-    }
-  }
-  _cell(i) {
-    const {circumcenters, delaunay: {inedges, halfedges, triangles}} = this;
-    const e0 = inedges[i];
-    if (e0 === -1) return null; // coincident point
-    const points = [];
-    let e = e0;
-    do {
-      const t = Math.floor(e / 3);
-      points.push(circumcenters[t * 2], circumcenters[t * 2 + 1]);
-      e = e % 3 === 2 ? e - 2 : e + 1;
-      if (triangles[e] !== i) break; // bad triangulation
-      e = halfedges[e];
-    } while (e !== e0 && e !== -1);
-    return points;
-  }
-  _clip(i) {
-    // degenerate case (1 valid point: return the box)
-    if (i === 0 && this.delaunay.hull.length === 1) {
-      return [this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax, this.xmin, this.ymin];
-    }
-    const points = this._cell(i);
-    if (points === null) return null;
-    const {vectors: V} = this;
-    const v = i * 4;
-    return V[v] || V[v + 1]
-        ? this._clipInfinite(i, points, V[v], V[v + 1], V[v + 2], V[v + 3])
-        : this._clipFinite(i, points);
-  }
-  _clipFinite(i, points) {
-    const n = points.length;
-    let P = null;
-    let x0, y0, x1 = points[n - 2], y1 = points[n - 1];
-    let c0, c1 = this._regioncode(x1, y1);
-    let e0, e1;
-    for (let j = 0; j < n; j += 2) {
-      x0 = x1, y0 = y1, x1 = points[j], y1 = points[j + 1];
-      c0 = c1, c1 = this._regioncode(x1, y1);
-      if (c0 === 0 && c1 === 0) {
-        e0 = e1, e1 = 0;
-        if (P) P.push(x1, y1);
-        else P = [x1, y1];
-      } else {
-        let S, sx0, sy0, sx1, sy1;
-        if (c0 === 0) {
-          if ((S = this._clipSegment(x0, y0, x1, y1, c0, c1)) === null) continue;
-          [sx0, sy0, sx1, sy1] = S;
-        } else {
-          if ((S = this._clipSegment(x1, y1, x0, y0, c1, c0)) === null) continue;
-          [sx1, sy1, sx0, sy0] = S;
-          e0 = e1, e1 = this._edgecode(sx0, sy0);
-          if (e0 && e1) this._edge(i, e0, e1, P, P.length);
-          if (P) P.push(sx0, sy0);
-          else P = [sx0, sy0];
-        }
-        e0 = e1, e1 = this._edgecode(sx1, sy1);
-        if (e0 && e1) this._edge(i, e0, e1, P, P.length);
-        if (P) P.push(sx1, sy1);
-        else P = [sx1, sy1];
-      }
-    }
-    if (P) {
-      e0 = e1, e1 = this._edgecode(P[0], P[1]);
-      if (e0 && e1) this._edge(i, e0, e1, P, P.length);
-    } else if (this.contains(i, (this.xmin + this.xmax) / 2, (this.ymin + this.ymax) / 2)) {
-      return [this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax, this.xmin, this.ymin];
-    }
-    return P;
-  }
-  _clipSegment(x0, y0, x1, y1, c0, c1) {
-    while (true) {
-      if (c0 === 0 && c1 === 0) return [x0, y0, x1, y1];
-      if (c0 & c1) return null;
-      let x, y, c = c0 || c1;
-      if (c & 0b1000) x = x0 + (x1 - x0) * (this.ymax - y0) / (y1 - y0), y = this.ymax;
-      else if (c & 0b0100) x = x0 + (x1 - x0) * (this.ymin - y0) / (y1 - y0), y = this.ymin;
-      else if (c & 0b0010) y = y0 + (y1 - y0) * (this.xmax - x0) / (x1 - x0), x = this.xmax;
-      else y = y0 + (y1 - y0) * (this.xmin - x0) / (x1 - x0), x = this.xmin;
-      if (c0) x0 = x, y0 = y, c0 = this._regioncode(x0, y0);
-      else x1 = x, y1 = y, c1 = this._regioncode(x1, y1);
-    }
-  }
-  _clipInfinite(i, points, vx0, vy0, vxn, vyn) {
-    let P = Array.from(points), p;
-    if (p = this._project(P[0], P[1], vx0, vy0)) P.unshift(p[0], p[1]);
-    if (p = this._project(P[P.length - 2], P[P.length - 1], vxn, vyn)) P.push(p[0], p[1]);
-    if (P = this._clipFinite(i, P)) {
-      for (let j = 0, n = P.length, c0, c1 = this._edgecode(P[n - 2], P[n - 1]); j < n; j += 2) {
-        c0 = c1, c1 = this._edgecode(P[j], P[j + 1]);
-        if (c0 && c1) j = this._edge(i, c0, c1, P, j), n = P.length;
-      }
-    } else if (this.contains(i, (this.xmin + this.xmax) / 2, (this.ymin + this.ymax) / 2)) {
-      P = [this.xmin, this.ymin, this.xmax, this.ymin, this.xmax, this.ymax, this.xmin, this.ymax];
-    }
-    return P;
-  }
-  _edge(i, e0, e1, P, j) {
-    while (e0 !== e1) {
-      let x, y;
-      switch (e0) {
-        case 0b0101: e0 = 0b0100; continue; // top-left
-        case 0b0100: e0 = 0b0110, x = this.xmax, y = this.ymin; break; // top
-        case 0b0110: e0 = 0b0010; continue; // top-right
-        case 0b0010: e0 = 0b1010, x = this.xmax, y = this.ymax; break; // right
-        case 0b1010: e0 = 0b1000; continue; // bottom-right
-        case 0b1000: e0 = 0b1001, x = this.xmin, y = this.ymax; break; // bottom
-        case 0b1001: e0 = 0b0001; continue; // bottom-left
-        case 0b0001: e0 = 0b0101, x = this.xmin, y = this.ymin; break; // left
-      }
-      if ((P[j] !== x || P[j + 1] !== y) && this.contains(i, x, y)) {
-        P.splice(j, 0, x, y), j += 2;
-      }
-    }
-    if (P.length > 4) {
-      for (let i = 0; i < P.length; i+= 2) {
-        const j = (i + 2) % P.length, k = (i + 4) % P.length;
-        if (P[i] === P[j] && P[j] === P[k]
-        || P[i + 1] === P[j + 1] && P[j + 1] === P[k + 1])
-          P.splice(j, 2), i -= 2;
-      }
-    }
-    return j;
-  }
-  _project(x0, y0, vx, vy) {
-    let t = Infinity, c, x, y;
-    if (vy < 0) { // top
-      if (y0 <= this.ymin) return null;
-      if ((c = (this.ymin - y0) / vy) < t) y = this.ymin, x = x0 + (t = c) * vx;
-    } else if (vy > 0) { // bottom
-      if (y0 >= this.ymax) return null;
-      if ((c = (this.ymax - y0) / vy) < t) y = this.ymax, x = x0 + (t = c) * vx;
-    }
-    if (vx > 0) { // right
-      if (x0 >= this.xmax) return null;
-      if ((c = (this.xmax - x0) / vx) < t) x = this.xmax, y = y0 + (t = c) * vy;
-    } else if (vx < 0) { // left
-      if (x0 <= this.xmin) return null;
-      if ((c = (this.xmin - x0) / vx) < t) x = this.xmin, y = y0 + (t = c) * vy;
-    }
-    return [x, y];
-  }
-  _edgecode(x, y) {
-    return (x === this.xmin ? 0b0001
-        : x === this.xmax ? 0b0010 : 0b0000)
-        | (y === this.ymin ? 0b0100
-        : y === this.ymax ? 0b1000 : 0b0000);
-  }
-  _regioncode(x, y) {
-    return (x < this.xmin ? 0b0001
-        : x > this.xmax ? 0b0010 : 0b0000)
-        | (y < this.ymin ? 0b0100
-        : y > this.ymax ? 0b1000 : 0b0000);
-  }
-}
-
-const tau = 2 * Math.PI, pow = Math.pow;
-
-function pointX(p) {
-  return p[0];
-}
-
-function pointY(p) {
-  return p[1];
-}
-
-// A triangulation is collinear if all its triangles have a non-null area
-function collinear(d) {
-  const {triangles, coords} = d;
-  for (let i = 0; i < triangles.length; i += 3) {
-    const a = 2 * triangles[i],
-          b = 2 * triangles[i + 1],
-          c = 2 * triangles[i + 2],
-          cross = (coords[c] - coords[a]) * (coords[b + 1] - coords[a + 1])
-                - (coords[b] - coords[a]) * (coords[c + 1] - coords[a + 1]);
-    if (cross > 1e-10) return false;
-  }
-  return true;
-}
-
-function jitter(x, y, r) {
-  return [x + Math.sin(x + y) * r, y + Math.cos(x - y) * r];
-}
-
-class Delaunay {
-  static from(points, fx = pointX, fy = pointY, that) {
-    return new Delaunay("length" in points
-        ? flatArray(points, fx, fy, that)
-        : Float64Array.from(flatIterable(points, fx, fy, that)));
-  }
-  constructor(points) {
-    this._delaunator = new Delaunator(points);
-    this.inedges = new Int32Array(points.length / 2);
-    this._hullIndex = new Int32Array(points.length / 2);
-    this.points = this._delaunator.coords;
-    this._init();
-  }
-  update() {
-    this._delaunator.update();
-    this._init();
-    return this;
-  }
-  _init() {
-    const d = this._delaunator, points = this.points;
-
-    // check for collinear
-    if (d.hull && d.hull.length > 2 && collinear(d)) {
-      this.collinear = Int32Array.from({length: points.length/2}, (_,i) => i)
-        .sort((i, j) => points[2 * i] - points[2 * j] || points[2 * i + 1] - points[2 * j + 1]); // for exact neighbors
-      const e = this.collinear[0], f = this.collinear[this.collinear.length - 1],
-        bounds = [ points[2 * e], points[2 * e + 1], points[2 * f], points[2 * f + 1] ],
-        r = 1e-8 * Math.hypot(bounds[3] - bounds[1], bounds[2] - bounds[0]);
-      for (let i = 0, n = points.length / 2; i < n; ++i) {
-        const p = jitter(points[2 * i], points[2 * i + 1], r);
-        points[2 * i] = p[0];
-        points[2 * i + 1] = p[1];
-      }
-      this._delaunator = new Delaunator(points);
-    } else {
-      delete this.collinear;
-    }
-
-    const halfedges = this.halfedges = this._delaunator.halfedges;
-    const hull = this.hull = this._delaunator.hull;
-    const triangles = this.triangles = this._delaunator.triangles;
-    const inedges = this.inedges.fill(-1);
-    const hullIndex = this._hullIndex.fill(-1);
-
-    // Compute an index from each point to an (arbitrary) incoming halfedge
-    // Used to give the first neighbor of each point; for this reason,
-    // on the hull we give priority to exterior halfedges
-    for (let e = 0, n = halfedges.length; e < n; ++e) {
-      const p = triangles[e % 3 === 2 ? e - 2 : e + 1];
-      if (halfedges[e] === -1 || inedges[p] === -1) inedges[p] = e;
-    }
-    for (let i = 0, n = hull.length; i < n; ++i) {
-      hullIndex[hull[i]] = i;
-    }
-
-    // degenerate case: 1 or 2 (distinct) points
-    if (hull.length <= 2 && hull.length > 0) {
-      this.triangles = new Int32Array(3).fill(-1);
-      this.halfedges = new Int32Array(3).fill(-1);
-      this.triangles[0] = hull[0];
-      this.triangles[1] = hull[1];
-      this.triangles[2] = hull[1];
-      inedges[hull[0]] = 1;
-      if (hull.length === 2) inedges[hull[1]] = 0;
-    }
-  }
-  voronoi(bounds) {
-    return new Voronoi(this, bounds);
-  }
-  *neighbors(i) {
-    const {inedges, hull, _hullIndex, halfedges, triangles, collinear} = this;
-
-    // degenerate case with several collinear points
-    if (collinear) {
-      const l = collinear.indexOf(i);
-      if (l > 0) yield collinear[l - 1];
-      if (l < collinear.length - 1) yield collinear[l + 1];
-      return;
-    }
-
-    const e0 = inedges[i];
-    if (e0 === -1) return; // coincident point
-    let e = e0, p0 = -1;
-    do {
-      yield p0 = triangles[e];
-      e = e % 3 === 2 ? e - 2 : e + 1;
-      if (triangles[e] !== i) return; // bad triangulation
-      e = halfedges[e];
-      if (e === -1) {
-        const p = hull[(_hullIndex[i] + 1) % hull.length];
-        if (p !== p0) yield p;
-        return;
-      }
-    } while (e !== e0);
-  }
-  find(x, y, i = 0) {
-    if ((x = +x, x !== x) || (y = +y, y !== y)) return -1;
-    const i0 = i;
-    let c;
-    while ((c = this._step(i, x, y)) >= 0 && c !== i && c !== i0) i = c;
-    return c;
-  }
-  _step(i, x, y) {
-    const {inedges, hull, _hullIndex, halfedges, triangles, points} = this;
-    if (inedges[i] === -1 || !points.length) return (i + 1) % (points.length >> 1);
-    let c = i;
-    let dc = pow(x - points[i * 2], 2) + pow(y - points[i * 2 + 1], 2);
-    const e0 = inedges[i];
-    let e = e0;
-    do {
-      let t = triangles[e];
-      const dt = pow(x - points[t * 2], 2) + pow(y - points[t * 2 + 1], 2);
-      if (dt < dc) dc = dt, c = t;
-      e = e % 3 === 2 ? e - 2 : e + 1;
-      if (triangles[e] !== i) break; // bad triangulation
-      e = halfedges[e];
-      if (e === -1) {
-        e = hull[(_hullIndex[i] + 1) % hull.length];
-        if (e !== t) {
-          if (pow(x - points[e * 2], 2) + pow(y - points[e * 2 + 1], 2) < dc) return e;
-        }
-        break;
-      }
-    } while (e !== e0);
-    return c;
-  }
-  render(context) {
-    const buffer = context == null ? context = new Path : undefined;
-    const {points, halfedges, triangles} = this;
-    for (let i = 0, n = halfedges.length; i < n; ++i) {
-      const j = halfedges[i];
-      if (j < i) continue;
-      const ti = triangles[i] * 2;
-      const tj = triangles[j] * 2;
-      context.moveTo(points[ti], points[ti + 1]);
-      context.lineTo(points[tj], points[tj + 1]);
-    }
-    this.renderHull(context);
-    return buffer && buffer.value();
-  }
-  renderPoints(context, r = 2) {
-    const buffer = context == null ? context = new Path : undefined;
-    const {points} = this;
-    for (let i = 0, n = points.length; i < n; i += 2) {
-      const x = points[i], y = points[i + 1];
-      context.moveTo(x + r, y);
-      context.arc(x, y, r, 0, tau);
-    }
-    return buffer && buffer.value();
-  }
-  renderHull(context) {
-    const buffer = context == null ? context = new Path : undefined;
-    const {hull, points} = this;
-    const h = hull[0] * 2, n = hull.length;
-    context.moveTo(points[h], points[h + 1]);
-    for (let i = 1; i < n; ++i) {
-      const h = 2 * hull[i];
-      context.lineTo(points[h], points[h + 1]);
-    }
-    context.closePath();
-    return buffer && buffer.value();
-  }
-  hullPolygon() {
-    const polygon = new Polygon;
-    this.renderHull(polygon);
-    return polygon.value();
-  }
-  renderTriangle(i, context) {
-    const buffer = context == null ? context = new Path : undefined;
-    const {points, triangles} = this;
-    const t0 = triangles[i *= 3] * 2;
-    const t1 = triangles[i + 1] * 2;
-    const t2 = triangles[i + 2] * 2;
-    context.moveTo(points[t0], points[t0 + 1]);
-    context.lineTo(points[t1], points[t1 + 1]);
-    context.lineTo(points[t2], points[t2 + 1]);
-    context.closePath();
-    return buffer && buffer.value();
-  }
-  *trianglePolygons() {
-    const {triangles} = this;
-    for (let i = 0, n = triangles.length / 3; i < n; ++i) {
-      yield this.trianglePolygon(i);
-    }
-  }
-  trianglePolygon(i) {
-    const polygon = new Polygon;
-    this.renderTriangle(i, polygon);
-    return polygon.value();
-  }
-}
-
-function flatArray(points, fx, fy, that) {
-  const n = points.length;
-  const array = new Float64Array(n * 2);
-  for (let i = 0; i < n; ++i) {
-    const p = points[i];
-    array[i * 2] = fx.call(that, p, i, points);
-    array[i * 2 + 1] = fy.call(that, p, i, points);
-  }
-  return array;
-}
-
-function* flatIterable(points, fx, fy, that) {
-  let i = 0;
-  for (const p of points) {
-    yield fx.call(that, p, i, points);
-    yield fy.call(that, p, i, points);
-    ++i;
-  }
-}
-
-exports.Delaunay = Delaunay;
-exports.Voronoi = Voronoi;
-
-Object.defineProperty(exports, '__esModule', { value: true });
-
-}));
-
-},{}],5:[function(require,module,exports){
-// stats.js - http://github.com/mrdoob/stats.js
-(function(f,e){"object"===typeof exports&&"undefined"!==typeof module?module.exports=e():"function"===typeof define&&define.amd?define(e):f.Stats=e()})(this,function(){var f=function(){function e(a){c.appendChild(a.dom);return a}function u(a){for(var d=0;d<c.children.length;d++)c.children[d].style.display=d===a?"block":"none";l=a}var l=0,c=document.createElement("div");c.style.cssText="position:fixed;top:0;left:0;cursor:pointer;opacity:0.9;z-index:10000";c.addEventListener("click",function(a){a.preventDefault();
-u(++l%c.children.length)},!1);var k=(performance||Date).now(),g=k,a=0,r=e(new f.Panel("FPS","#0ff","#002")),h=e(new f.Panel("MS","#0f0","#020"));if(self.performance&&self.performance.memory)var t=e(new f.Panel("MB","#f08","#201"));u(0);return{REVISION:16,dom:c,addPanel:e,showPanel:u,begin:function(){k=(performance||Date).now()},end:function(){a++;var c=(performance||Date).now();h.update(c-k,200);if(c>g+1E3&&(r.update(1E3*a/(c-g),100),g=c,a=0,t)){var d=performance.memory;t.update(d.usedJSHeapSize/
-1048576,d.jsHeapSizeLimit/1048576)}return c},update:function(){k=this.end()},domElement:c,setMode:u}};f.Panel=function(e,f,l){var c=Infinity,k=0,g=Math.round,a=g(window.devicePixelRatio||1),r=80*a,h=48*a,t=3*a,v=2*a,d=3*a,m=15*a,n=74*a,p=30*a,q=document.createElement("canvas");q.width=r;q.height=h;q.style.cssText="width:80px;height:48px";var b=q.getContext("2d");b.font="bold "+9*a+"px Helvetica,Arial,sans-serif";b.textBaseline="top";b.fillStyle=l;b.fillRect(0,0,r,h);b.fillStyle=f;b.fillText(e,t,v);
-b.fillRect(d,m,n,p);b.fillStyle=l;b.globalAlpha=.9;b.fillRect(d,m,n,p);return{dom:q,update:function(h,w){c=Math.min(c,h);k=Math.max(k,h);b.fillStyle=l;b.globalAlpha=1;b.fillRect(0,0,r,m);b.fillStyle=f;b.fillText(g(h)+" "+e+" ("+g(c)+"-"+g(k)+")",t,v);b.drawImage(q,d+a,m,n-a,p,d,m,n-a,p);b.fillRect(d+n-a,m,a,p);b.fillStyle=l;b.globalAlpha=.9;b.fillRect(d+n-a,m,a,g((1-h/w)*p))}}};return f});
-
-},{}],6:[function(require,module,exports){
-(function (global, factory) {
-	typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports, require('three')) :
-	typeof define === 'function' && define.amd ? define(['exports', 'three'], factory) :
-	(factory((global.THREE = global.THREE || {}),global.THREE));
-}(this, (function (exports,three) { 'use strict';
-
-/**
- * get variable type
- * @param {*} val a variable which you want to get the type
- * @return {String} variable-type
- */
-function _rt(val) {
-  return Object.prototype.toString.call(val);
-}
-
-/**
- * Utils tool box
- *
- * @namespace Utils
- */
-var Utils = {
-  /**
-   * determine whether it is a `Function`
-   *
-   * @static
-   * @method
-   * @memberof Utils
-   * @param {*} variable a variable which you want to determine
-   * @return {Boolean} type result
-   */
-  isFunction: function () {
-    var ks = _rt(function () {});
-    return function (variable) {
-      return _rt(variable) === ks;
-    };
-  }(),
-
-  /**
-   * determine whether it is a `undefined`
-   *
-   * @static
-   * @method
-   * @memberof Utils
-   * @param {*} variable a variable which you want to determine
-   * @return {Boolean} type result
-   */
-  isUndefined: function isUndefined(variable) {
-    return typeof variable === 'undefined';
-  }
-};
-
-/**
- * proxy `addEventListener` function
- *
- * @param {String} type event type, evnet name
- * @param {Function} fn callback
- * @return {this} this
- */
-three.EventDispatcher.prototype.on = function (type, fn) {
-  if (!Utils.isFunction(fn)) return;
-  if (this instanceof three.Object3D) this.interactive = true;
-  this.addEventListener(type, fn);
-  return this;
-};
-
-/**
- * proxy `removeEventListener` function
- *
- * @param {String} type event type, evnet name
- * @param {Function} fn callback, which you had bind before
- * @return {this} this
- */
-three.EventDispatcher.prototype.off = function (type, fn) {
-  this.removeEventListener(type, fn);
-  return this;
-};
-
-/**
- * binding a once event, just emit once time
- *
- * @param {String} type event type, evnet name
- * @param {Function} fn callback
- * @return {this} this
- */
-three.EventDispatcher.prototype.once = function (type, fn) {
-  var _this = this;
-
-  if (!Utils.isFunction(fn)) return;
-  var cb = function cb(ev) {
-    fn(ev);
-    _this.off(type, cb);
-  };
-  this.on(type, cb);
-  return this;
-};
-
-/**
- * emit a event
- *
- * @param {String} type event type, evnet name
- * @return {this} this
- */
-three.EventDispatcher.prototype.emit = function (type) {
-  if (this._listeners === undefined || Utils.isUndefined(this._listeners[type])) return;
-  var cbs = this._listeners[type] || [];
-  var cache = cbs.slice(0);
-
-  for (var _len = arguments.length, argument = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
-    argument[_key - 1] = arguments[_key];
-  }
-
-  for (var i = 0; i < cache.length; i++) {
-    cache[i].apply(this, argument);
-  }
-  return this;
-};
-
-/**
- * whether displayObject is interactively
- */
-three.Object3D.prototype.interactive = false;
-
-/**
- * whether displayObject's children is interactively
- */
-three.Object3D.prototype.interactiveChildren = true;
-
-/**
- * whether displayObject had touchstart
- * @private
- */
-three.Object3D.prototype.started = false;
-
-/**
- * tracked event cache, like: touchend、mouseout、pointerout which decided by primary-event
- */
-Object.defineProperty(three.Object3D.prototype, 'trackedPointers', {
-  get: function get() {
-    if (!this._trackedPointers) this._trackedPointers = {};
-    return this._trackedPointers;
-  }
-});
-
-/**
- * dispatch a raycast
- *
- * @param {Raycaster} raycaster Raycaster object, get from THREE.Raycaster
- * @return {Object|Boolean} had pass hit-test
- */
-three.Object3D.prototype.raycastTest = function (raycaster) {
-  var result = [];
-  this.raycast(raycaster, result);
-
-  if (result.length > 0) {
-    return result[0];
-  }
-
-  return false;
-};
-
-var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) {
-  return typeof obj;
-} : function (obj) {
-  return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
-};
-
-
-
-
-
-
-
-
-
-
-
-var classCallCheck = function (instance, Constructor) {
-  if (!(instance instanceof Constructor)) {
-    throw new TypeError("Cannot call a class as a function");
-  }
-};
-
-var createClass = function () {
-  function defineProperties(target, props) {
-    for (var i = 0; i < props.length; i++) {
-      var descriptor = props[i];
-      descriptor.enumerable = descriptor.enumerable || false;
-      descriptor.configurable = true;
-      if ("value" in descriptor) descriptor.writable = true;
-      Object.defineProperty(target, descriptor.key, descriptor);
-    }
-  }
-
-  return function (Constructor, protoProps, staticProps) {
-    if (protoProps) defineProperties(Constructor.prototype, protoProps);
-    if (staticProps) defineProperties(Constructor, staticProps);
-    return Constructor;
-  };
-}();
-
-
-
-
-
-
-
-
-
-var inherits = function (subClass, superClass) {
-  if (typeof superClass !== "function" && superClass !== null) {
-    throw new TypeError("Super expression must either be null or a function, not " + typeof superClass);
-  }
-
-  subClass.prototype = Object.create(superClass && superClass.prototype, {
-    constructor: {
-      value: subClass,
-      enumerable: false,
-      writable: true,
-      configurable: true
-    }
-  });
-  if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass;
-};
-
-
-
-
-
-
-
-
-
-
-
-var possibleConstructorReturn = function (self, call) {
-  if (!self) {
-    throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-  }
-
-  return call && (typeof call === "object" || typeof call === "function") ? call : self;
-};
-
-/**
- * Holds all information related to an Interaction event
- *
- * @class
- */
-
-var InteractionData = function () {
-  /**
-   * InteractionData constructor
-   */
-  function InteractionData() {
-    classCallCheck(this, InteractionData);
-
-    /**
-     * This point stores the global coords of where the touch/mouse event happened
-     *
-     * @member {Vector2}
-     */
-    this.global = new three.Vector2();
-
-    /**
-     * The target DisplayObject that was interacted with
-     *
-     * @member {Object3D}
-     */
-    this.target = null;
-
-    /**
-     * When passed to an event handler, this will be the original DOM Event that was captured
-     *
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/TouchEvent
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent
-     * @member {MouseEvent|TouchEvent|PointerEvent}
-     */
-    this.originalEvent = null;
-
-    /**
-     * Unique identifier for this interaction
-     *
-     * @member {number}
-     */
-    this.identifier = null;
-
-    /**
-     * Indicates whether or not the pointer device that created the event is the primary pointer.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/isPrimary
-     * @type {Boolean}
-     */
-    this.isPrimary = false;
-
-    /**
-     * Indicates which button was pressed on the mouse or pointer device to trigger the event.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/button
-     * @type {number}
-     */
-    this.button = 0;
-
-    /**
-     * Indicates which buttons are pressed on the mouse or pointer device when the event is triggered.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/buttons
-     * @type {number}
-     */
-    this.buttons = 0;
-
-    /**
-     * The width of the pointer's contact along the x-axis, measured in CSS pixels.
-     * radiusX of TouchEvents will be represented by this value.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/width
-     * @type {number}
-     */
-    this.width = 0;
-
-    /**
-     * The height of the pointer's contact along the y-axis, measured in CSS pixels.
-     * radiusY of TouchEvents will be represented by this value.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/height
-     * @type {number}
-     */
-    this.height = 0;
-
-    /**
-     * The angle, in degrees, between the pointer device and the screen.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/tiltX
-     * @type {number}
-     */
-    this.tiltX = 0;
-
-    /**
-     * The angle, in degrees, between the pointer device and the screen.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/tiltY
-     * @type {number}
-     */
-    this.tiltY = 0;
-
-    /**
-     * The type of pointer that triggered the event.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/pointerType
-     * @type {string}
-     */
-    this.pointerType = null;
-
-    /**
-     * Pressure applied by the pointing device during the event. A Touch's force property
-     * will be represented by this value.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/pressure
-     * @type {number}
-     */
-    this.pressure = 0;
-
-    /**
-     * From TouchEvents (not PointerEvents triggered by touches), the rotationAngle of the Touch.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/Touch/rotationAngle
-     * @type {number}
-     */
-    this.rotationAngle = 0;
-
-    /**
-     * Twist of a stylus pointer.
-     * @see https://w3c.github.io/pointerevents/#pointerevent-interface
-     * @type {number}
-     */
-    this.twist = 0;
-
-    /**
-     * Barrel pressure on a stylus pointer.
-     * @see https://w3c.github.io/pointerevents/#pointerevent-interface
-     * @type {number}
-     */
-    this.tangentialPressure = 0;
-  }
-
-  /**
-   * The unique identifier of the pointer. It will be the same as `identifier`.
-   * @readonly
-   * @member {number}
-   * @see https://developer.mozilla.org/en-US/docs/Web/API/PointerEvent/pointerId
-   */
-
-
-  createClass(InteractionData, [{
-    key: '_copyEvent',
-
-
-    /**
-     * Copies properties from normalized event data.
-     *
-     * @param {Touch|MouseEvent|PointerEvent} event The normalized event data
-     * @private
-     */
-    value: function _copyEvent(event) {
-      // isPrimary should only change on touchstart/pointerdown, so we don't want to overwrite
-      // it with "false" on later events when our shim for it on touch events might not be
-      // accurate
-      if (event.isPrimary) {
-        this.isPrimary = true;
-      }
-      this.button = event.button;
-      this.buttons = event.buttons;
-      this.width = event.width;
-      this.height = event.height;
-      this.tiltX = event.tiltX;
-      this.tiltY = event.tiltY;
-      this.pointerType = event.pointerType;
-      this.pressure = event.pressure;
-      this.rotationAngle = event.rotationAngle;
-      this.twist = event.twist || 0;
-      this.tangentialPressure = event.tangentialPressure || 0;
-    }
-
-    /**
-     * Resets the data for pooling.
-     *
-     * @private
-     */
-
-  }, {
-    key: '_reset',
-    value: function _reset() {
-      // isPrimary is the only property that we really need to reset - everything else is
-      // guaranteed to be overwritten
-      this.isPrimary = false;
-    }
-  }, {
-    key: 'pointerId',
-    get: function get$$1() {
-      return this.identifier;
-    }
-  }]);
-  return InteractionData;
-}();
-
-/**
- * Event class that mimics native DOM events.
- *
- * @class
- */
-var InteractionEvent = function () {
-  /**
-   * InteractionEvent constructor
-   */
-  function InteractionEvent() {
-    classCallCheck(this, InteractionEvent);
-
-    /**
-     * Whether this event will continue propagating in the tree
-     *
-     * @member {boolean}
-     */
-    this.stopped = false;
-
-    /**
-     * The object which caused this event to be dispatched.
-     *
-     * @member {Object3D}
-     */
-    this.target = null;
-
-    /**
-     * The object whose event listener’s callback is currently being invoked.
-     *
-     * @member {Object3D}
-     */
-    this.currentTarget = null;
-
-    /**
-     * Type of the event
-     *
-     * @member {string}
-     */
-    this.type = null;
-
-    /**
-     * InteractionData related to this event
-     *
-     * @member {InteractionData}
-     */
-    this.data = null;
-
-    /**
-     * ray caster detial from 3d-mesh
-     *
-     * @member {Intersects}
-     */
-    this.intersects = [];
-  }
-
-  /**
-   * Prevents event from reaching any objects other than the current object.
-   *
-   */
-
-
-  createClass(InteractionEvent, [{
-    key: "stopPropagation",
-    value: function stopPropagation() {
-      this.stopped = true;
-    }
-
-    /**
-     * Resets the event.
-     *
-     * @private
-     */
-
-  }, {
-    key: "_reset",
-    value: function _reset() {
-      this.stopped = false;
-      this.currentTarget = null;
-      this.target = null;
-      this.intersects = [];
-    }
-  }]);
-  return InteractionEvent;
-}();
-
-/**
- * DisplayObjects with the `trackedPointers` property use this class to track interactions
- *
- * @class
- * @private
- */
-var InteractionTrackingData = function () {
-  /**
-   * @param {number} pointerId - Unique pointer id of the event
-   */
-  function InteractionTrackingData(pointerId) {
-    classCallCheck(this, InteractionTrackingData);
-
-    this._pointerId = pointerId;
-    this._flags = InteractionTrackingData.FLAGS.NONE;
-  }
-
-  /**
-   *
-   * @private
-   * @param {number} flag - The interaction flag to set
-   * @param {boolean} yn - Should the flag be set or unset
-   */
-
-
-  createClass(InteractionTrackingData, [{
-    key: "_doSet",
-    value: function _doSet(flag, yn) {
-      if (yn) {
-        this._flags = this._flags | flag;
-      } else {
-        this._flags = this._flags & ~flag;
-      }
-    }
-
-    /**
-     * Unique pointer id of the event
-     *
-     * @readonly
-     * @member {number}
-     */
-
-  }, {
-    key: "pointerId",
-    get: function get$$1() {
-      return this._pointerId;
-    }
-
-    /**
-     * State of the tracking data, expressed as bit flags
-     *
-     * @member {number}
-     */
-
-  }, {
-    key: "flags",
-    get: function get$$1() {
-      return this._flags;
-    }
-
-    /**
-     * Set the flags for the tracking data
-     *
-     * @param {number} flags - Flags to set
-     */
-    ,
-    set: function set$$1(flags) {
-      this._flags = flags;
-    }
-
-    /**
-     * Is the tracked event inactive (not over or down)?
-     *
-     * @member {number}
-     */
-
-  }, {
-    key: "none",
-    get: function get$$1() {
-      return this._flags === this.constructor.FLAGS.NONE;
-    }
-
-    /**
-     * Is the tracked event over the DisplayObject?
-     *
-     * @member {boolean}
-     */
-
-  }, {
-    key: "over",
-    get: function get$$1() {
-      return (this._flags & this.constructor.FLAGS.OVER) !== 0;
-    }
-
-    /**
-     * Set the over flag
-     *
-     * @param {boolean} yn - Is the event over?
-     */
-    ,
-    set: function set$$1(yn) {
-      this._doSet(this.constructor.FLAGS.OVER, yn);
-    }
-
-    /**
-     * Did the right mouse button come down in the DisplayObject?
-     *
-     * @member {boolean}
-     */
-
-  }, {
-    key: "rightDown",
-    get: function get$$1() {
-      return (this._flags & this.constructor.FLAGS.RIGHT_DOWN) !== 0;
-    }
-
-    /**
-     * Set the right down flag
-     *
-     * @param {boolean} yn - Is the right mouse button down?
-     */
-    ,
-    set: function set$$1(yn) {
-      this._doSet(this.constructor.FLAGS.RIGHT_DOWN, yn);
-    }
-
-    /**
-     * Did the left mouse button come down in the DisplayObject?
-     *
-     * @member {boolean}
-     */
-
-  }, {
-    key: "leftDown",
-    get: function get$$1() {
-      return (this._flags & this.constructor.FLAGS.LEFT_DOWN) !== 0;
-    }
-
-    /**
-     * Set the left down flag
-     *
-     * @param {boolean} yn - Is the left mouse button down?
-     */
-    ,
-    set: function set$$1(yn) {
-      this._doSet(this.constructor.FLAGS.LEFT_DOWN, yn);
-    }
-  }]);
-  return InteractionTrackingData;
-}();
-
-InteractionTrackingData.FLAGS = Object.freeze({
-  NONE: 0,
-  OVER: 1 << 0,
-  LEFT_DOWN: 1 << 1,
-  RIGHT_DOWN: 1 << 2
-});
-
-var MOUSE_POINTER_ID = 'MOUSE';
-
-// helpers for hitTest() - only used inside hitTest()
-var hitTestEvent = {
-  target: null,
-  data: {
-    global: null
-  }
-};
-
-/**
- * The interaction manager deals with mouse, touch and pointer events. Any DisplayObject can be interactive
- * if its interactive parameter is set to true
- * This manager also supports multitouch.
- *
- * reference to [pixi.js](http://www.pixijs.com/) impl
- *
- * @private
- * @class
- * @extends EventDispatcher
- */
-
-var InteractionManager = function (_EventDispatcher) {
-  inherits(InteractionManager, _EventDispatcher);
-
-  /**
-   * @param {WebGLRenderer} renderer - A reference to the current renderer
-   * @param {Scene} scene - A reference to the current scene
-   * @param {Camera} camera - A reference to the current camera
-   * @param {Object} [options] - The options for the manager.
-   * @param {Boolean} [options.autoPreventDefault=false] - Should the manager automatically prevent default browser actions.
-   * @param {Boolean} [options.autoAttach=true] - Should the manager automatically attach target element.
-   * @param {Number} [options.interactionFrequency=10] - Frequency increases the interaction events will be checked.
-   */
-  function InteractionManager(renderer, scene, camera, options) {
-    classCallCheck(this, InteractionManager);
-
-    var _this = possibleConstructorReturn(this, (InteractionManager.__proto__ || Object.getPrototypeOf(InteractionManager)).call(this));
-
-    options = options || {};
-
-    /**
-     * The renderer this interaction manager works for.
-     *
-     * @member {WebGLRenderer}
-     */
-    _this.renderer = renderer;
-
-    /**
-     * The renderer this interaction manager works for.
-     *
-     * @member {Scene}
-     */
-    _this.scene = scene;
-
-    /**
-     * The renderer this interaction manager works for.
-     *
-     * @member {Camera}
-     */
-    _this.camera = camera;
-
-    /**
-     * Should default browser actions automatically be prevented.
-     * Does not apply to pointer events for backwards compatibility
-     * preventDefault on pointer events stops mouse events from firing
-     * Thus, for every pointer event, there will always be either a mouse of touch event alongside it.
-     *
-     * @member {boolean}
-     * @default false
-     */
-    _this.autoPreventDefault = options.autoPreventDefault || false;
-
-    /**
-     * Frequency in milliseconds that the mousemove, moveover & mouseout interaction events will be checked.
-     *
-     * @member {number}
-     * @default 10
-     */
-    _this.interactionFrequency = options.interactionFrequency || 10;
-
-    /**
-     * The mouse data
-     *
-     * @member {InteractionData}
-     */
-    _this.mouse = new InteractionData();
-    _this.mouse.identifier = MOUSE_POINTER_ID;
-
-    // setting the mouse to start off far off screen will mean that mouse over does
-    //  not get called before we even move the mouse.
-    _this.mouse.global.set(-999999);
-
-    /**
-     * Actively tracked InteractionData
-     *
-     * @private
-     * @member {Object.<number,InteractionData>}
-     */
-    _this.activeInteractionData = {};
-    _this.activeInteractionData[MOUSE_POINTER_ID] = _this.mouse;
-
-    /**
-     * Pool of unused InteractionData
-     *
-     * @private
-     * @member {InteractionData[]}
-     */
-    _this.interactionDataPool = [];
-
-    /**
-     * An event data object to handle all the event tracking/dispatching
-     *
-     * @member {object}
-     */
-    _this.eventData = new InteractionEvent();
-
-    /**
-     * The DOM element to bind to.
-     *
-     * @private
-     * @member {HTMLElement}
-     */
-    _this.interactionDOMElement = null;
-
-    /**
-     * This property determines if mousemove and touchmove events are fired only when the cursor
-     * is over the object.
-     * Setting to true will make things work more in line with how the DOM verison works.
-     * Setting to false can make things easier for things like dragging
-     * It is currently set to false as this is how three.js used to work.
-     *
-     * @member {boolean}
-     * @default true
-     */
-    _this.moveWhenInside = true;
-
-    /**
-     * Have events been attached to the dom element?
-     *
-     * @private
-     * @member {boolean}
-     */
-    _this.eventsAdded = false;
-
-    /**
-     * Is the mouse hovering over the renderer?
-     *
-     * @private
-     * @member {boolean}
-     */
-    _this.mouseOverRenderer = false;
-
-    /**
-     * Does the device support touch events
-     * https://www.w3.org/TR/touch-events/
-     *
-     * @readonly
-     * @member {boolean}
-     */
-    _this.supportsTouchEvents = 'ontouchstart' in window;
-
-    /**
-     * Does the device support pointer events
-     * https://www.w3.org/Submission/pointer-events/
-     *
-     * @readonly
-     * @member {boolean}
-     */
-    _this.supportsPointerEvents = !!window.PointerEvent;
-
-    // this will make it so that you don't have to call bind all the time
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onClick = _this.onClick.bind(_this);
-    _this.processClick = _this.processClick.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerUp = _this.onPointerUp.bind(_this);
-    _this.processPointerUp = _this.processPointerUp.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerCancel = _this.onPointerCancel.bind(_this);
-    _this.processPointerCancel = _this.processPointerCancel.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerDown = _this.onPointerDown.bind(_this);
-    _this.processPointerDown = _this.processPointerDown.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerMove = _this.onPointerMove.bind(_this);
-    _this.processPointerMove = _this.processPointerMove.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerOut = _this.onPointerOut.bind(_this);
-    _this.processPointerOverOut = _this.processPointerOverOut.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerOver = _this.onPointerOver.bind(_this);
-
-    /**
-     * Dictionary of how different cursor modes are handled. Strings are handled as CSS cursor
-     * values, objects are handled as dictionaries of CSS values for interactionDOMElement,
-     * and functions are called instead of changing the CSS.
-     * Default CSS cursor values are provided for 'default' and 'pointer' modes.
-     * @member {Object.<string, (string|Function|Object.<string, string>)>}
-     */
-    _this.cursorStyles = {
-      default: 'inherit',
-      pointer: 'pointer'
-    };
-
-    /**
-     * The mode of the cursor that is being used.
-     * The value of this is a key from the cursorStyles dictionary.
-     *
-     * @member {string}
-     */
-    _this.currentCursorMode = null;
-
-    /**
-     * Internal cached let.
-     *
-     * @private
-     * @member {string}
-     */
-    _this.cursor = null;
-
-    /**
-     * ray caster, for survey intersects from 3d-scene
-     *
-     * @private
-     * @member {Raycaster}
-     */
-    _this.raycaster = new three.Raycaster();
-
-    /**
-     * snippet time
-     *
-     * @private
-     * @member {Number}
-     */
-    _this._deltaTime = 0;
-
-    _this.setTargetElement(_this.renderer.domElement);
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is pressed on the display
-     * object.
-     *
-     * @event InteractionManager#mousedown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
-     * on the display object.
-     *
-     * @event InteractionManager#rightdown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is released over the display
-     * object.
-     *
-     * @event InteractionManager#mouseup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is released
-     * over the display object.
-     *
-     * @event InteractionManager#rightup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is pressed and released on
-     * the display object.
-     *
-     * @event InteractionManager#click
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
-     * and released on the display object.
-     *
-     * @event InteractionManager#rightclick
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is released outside the
-     * display object that initially registered a
-     * [mousedown]{@link InteractionManager#event:mousedown}.
-     *
-     * @event InteractionManager#mouseupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is released
-     * outside the display object that initially registered a
-     * [rightdown]{@link InteractionManager#event:rightdown}.
-     *
-     * @event InteractionManager#rightupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved while over the display object
-     *
-     * @event InteractionManager#mousemove
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved onto the display object
-     *
-     * @event InteractionManager#mouseover
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved off the display object
-     *
-     * @event InteractionManager#mouseout
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is pressed on the display object.
-     *
-     * @event InteractionManager#pointerdown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is released over the display object.
-     *
-     * @event InteractionManager#pointerup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when the operating system cancels a pointer event
-     *
-     * @event InteractionManager#pointercancel
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is pressed and released on the display object.
-     *
-     * @event InteractionManager#pointertap
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is released outside the display object that initially
-     * registered a [pointerdown]{@link InteractionManager#event:pointerdown}.
-     *
-     * @event InteractionManager#pointerupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved while over the display object
-     *
-     * @event InteractionManager#pointermove
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved onto the display object
-     *
-     * @event InteractionManager#pointerover
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved off the display object
-     *
-     * @event InteractionManager#pointerout
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is placed on the display object.
-     *
-     * @event InteractionManager#touchstart
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is removed from the display object.
-     *
-     * @event InteractionManager#touchend
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when the operating system cancels a touch
-     *
-     * @event InteractionManager#touchcancel
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is placed and removed from the display object.
-     *
-     * @event InteractionManager#tap
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is removed outside of the display object that initially
-     * registered a [touchstart]{@link InteractionManager#event:touchstart}.
-     *
-     * @event InteractionManager#touchendoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is moved along the display object.
-     *
-     * @event InteractionManager#touchmove
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is pressed on the display.
-     * object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mousedown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
-     * on the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#rightdown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is released over the display
-     * object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mouseup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is released
-     * over the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#rightup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is pressed and released on
-     * the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#click
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
-     * and released on the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#rightclick
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is released outside the
-     * display object that initially registered a
-     * [mousedown]{@link Object3D#event:mousedown}.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mouseupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is released
-     * outside the display object that initially registered a
-     * [rightdown]{@link Object3D#event:rightdown}.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#rightupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved while over the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mousemove
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved onto the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mouseover
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved off the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mouseout
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is pressed on the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointerdown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is released over the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointerup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when the operating system cancels a pointer event.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointercancel
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is pressed and released on the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointertap
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is released outside the display object that initially
-     * registered a [pointerdown]{@link Object3D#event:pointerdown}.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointerupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved while over the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointermove
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved onto the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointerover
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved off the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointerout
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is placed on the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#touchstart
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is removed from the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#touchend
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when the operating system cancels a touch.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#touchcancel
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is placed and removed from the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#tap
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is removed outside of the display object that initially
-     * registered a [touchstart]{@link Object3D#event:touchstart}.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#touchendoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is moved along the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#touchmove
-     * @param {InteractionEvent} event - Interaction event
-     */
-    return _this;
-  }
-
-  /**
-   * Hit tests a point against the display tree, returning the first interactive object that is hit.
-   *
-   * @param {Point} globalPoint - A point to hit test with, in global space.
-   * @param {Object3D} [root] - The root display object to start from. If omitted, defaults
-   * to the last rendered root of the associated renderer.
-   * @return {Object3D} The hit display object, if any.
-   */
-
-
-  createClass(InteractionManager, [{
-    key: 'hitTest',
-    value: function hitTest(globalPoint, root) {
-      // clear the target for our hit test
-      hitTestEvent.target = null;
-      // assign the global point
-      hitTestEvent.data.global = globalPoint;
-      // ensure safety of the root
-      if (!root) {
-        root = this.scene;
-      }
-      // run the hit test
-      this.processInteractive(hitTestEvent, root, null, true);
-      // return our found object - it'll be null if we didn't hit anything
-
-      return hitTestEvent.target;
-    }
-
-    /**
-     * Sets the DOM element which will receive mouse/touch events. This is useful for when you have
-     * other DOM elements on top of the renderers Canvas element. With this you'll be bale to deletegate
-     * another DOM element to receive those events.
-     *
-     * @param {HTMLCanvasElement} element - the DOM element which will receive mouse and touch events.
-     */
-
-  }, {
-    key: 'setTargetElement',
-    value: function setTargetElement(element) {
-      this.removeEvents();
-
-      this.interactionDOMElement = element;
-
-      this.addEvents();
-    }
-
-    /**
-     * Registers all the DOM events
-     *
-     * @private
-     */
-
-  }, {
-    key: 'addEvents',
-    value: function addEvents() {
-      if (!this.interactionDOMElement || this.eventsAdded) {
-        return;
-      }
-
-      this.emit('addevents');
-
-      this.interactionDOMElement.addEventListener('click', this.onClick, true);
-
-      if (window.navigator.msPointerEnabled) {
-        this.interactionDOMElement.style['-ms-content-zooming'] = 'none';
-        this.interactionDOMElement.style['-ms-touch-action'] = 'none';
-      } else if (this.supportsPointerEvents) {
-        this.interactionDOMElement.style['touch-action'] = 'none';
-      }
-
-      /**
-       * These events are added first, so that if pointer events are normalised, they are fired
-       * in the same order as non-normalised events. ie. pointer event 1st, mouse / touch 2nd
-       */
-      if (this.supportsPointerEvents) {
-        window.document.addEventListener('pointermove', this.onPointerMove, true);
-        this.interactionDOMElement.addEventListener('pointerdown', this.onPointerDown, true);
-        // pointerout is fired in addition to pointerup (for touch events) and pointercancel
-        // we already handle those, so for the purposes of what we do in onPointerOut, we only
-        // care about the pointerleave event
-        this.interactionDOMElement.addEventListener('pointerleave', this.onPointerOut, true);
-        this.interactionDOMElement.addEventListener('pointerover', this.onPointerOver, true);
-        window.addEventListener('pointercancel', this.onPointerCancel, true);
-        window.addEventListener('pointerup', this.onPointerUp, true);
-      } else {
-        window.document.addEventListener('mousemove', this.onPointerMove, true);
-        this.interactionDOMElement.addEventListener('mousedown', this.onPointerDown, true);
-        this.interactionDOMElement.addEventListener('mouseout', this.onPointerOut, true);
-        this.interactionDOMElement.addEventListener('mouseover', this.onPointerOver, true);
-        window.addEventListener('mouseup', this.onPointerUp, true);
-      }
-
-      // always look directly for touch events so that we can provide original data
-      // In a future version we should change this to being just a fallback and rely solely on
-      // PointerEvents whenever available
-      if (this.supportsTouchEvents) {
-        this.interactionDOMElement.addEventListener('touchstart', this.onPointerDown, true);
-        this.interactionDOMElement.addEventListener('touchcancel', this.onPointerCancel, true);
-        this.interactionDOMElement.addEventListener('touchend', this.onPointerUp, true);
-        this.interactionDOMElement.addEventListener('touchmove', this.onPointerMove, true);
-      }
-
-      this.eventsAdded = true;
-    }
-
-    /**
-     * Removes all the DOM events that were previously registered
-     *
-     * @private
-     */
-
-  }, {
-    key: 'removeEvents',
-    value: function removeEvents() {
-      if (!this.interactionDOMElement) {
-        return;
-      }
-
-      this.emit('removeevents');
-
-      this.interactionDOMElement.removeEventListener('click', this.onClick, true);
-
-      if (window.navigator.msPointerEnabled) {
-        this.interactionDOMElement.style['-ms-content-zooming'] = '';
-        this.interactionDOMElement.style['-ms-touch-action'] = '';
-      } else if (this.supportsPointerEvents) {
-        this.interactionDOMElement.style['touch-action'] = '';
-      }
-
-      if (this.supportsPointerEvents) {
-        window.document.removeEventListener('pointermove', this.onPointerMove, true);
-        this.interactionDOMElement.removeEventListener('pointerdown', this.onPointerDown, true);
-        this.interactionDOMElement.removeEventListener('pointerleave', this.onPointerOut, true);
-        this.interactionDOMElement.removeEventListener('pointerover', this.onPointerOver, true);
-        window.removeEventListener('pointercancel', this.onPointerCancel, true);
-        window.removeEventListener('pointerup', this.onPointerUp, true);
-      } else {
-        window.document.removeEventListener('mousemove', this.onPointerMove, true);
-        this.interactionDOMElement.removeEventListener('mousedown', this.onPointerDown, true);
-        this.interactionDOMElement.removeEventListener('mouseout', this.onPointerOut, true);
-        this.interactionDOMElement.removeEventListener('mouseover', this.onPointerOver, true);
-        window.removeEventListener('mouseup', this.onPointerUp, true);
-      }
-
-      if (this.supportsTouchEvents) {
-        this.interactionDOMElement.removeEventListener('touchstart', this.onPointerDown, true);
-        this.interactionDOMElement.removeEventListener('touchcancel', this.onPointerCancel, true);
-        this.interactionDOMElement.removeEventListener('touchend', this.onPointerUp, true);
-        this.interactionDOMElement.removeEventListener('touchmove', this.onPointerMove, true);
-      }
-
-      this.interactionDOMElement = null;
-
-      this.eventsAdded = false;
-    }
-
-    /**
-     * Updates the state of interactive objects.
-     * Invoked by a throttled ticker.
-     *
-     * @param {number} deltaTime - time delta since last tick
-     */
-
-  }, {
-    key: 'update',
-    value: function update(_ref) {
-      var snippet = _ref.snippet;
-
-      this._deltaTime += snippet;
-
-      if (this._deltaTime < this.interactionFrequency) {
-        return;
-      }
-
-      this._deltaTime = 0;
-
-      if (!this.interactionDOMElement) {
-        return;
-      }
-
-      // if the user move the mouse this check has already been done using the mouse move!
-      if (this.didMove) {
-        this.didMove = false;
-
-        return;
-      }
-
-      this.cursor = null;
-
-      // Resets the flag as set by a stopPropagation call. This flag is usually reset by a user interaction of any kind,
-      // but there was a scenario of a display object moving under a static mouse cursor.
-      // In this case, mouseover and mouseevents would not pass the flag test in triggerEvent function
-      for (var k in this.activeInteractionData) {
-        // eslint-disable-next-line no-prototype-builtins
-        if (this.activeInteractionData.hasOwnProperty(k)) {
-          var interactionData = this.activeInteractionData[k];
-
-          if (interactionData.originalEvent && interactionData.pointerType !== 'touch') {
-            var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, interactionData.originalEvent, interactionData);
-
-            this.processInteractive(interactionEvent, this.scene, this.processPointerOverOut, true);
-          }
-        }
-      }
-
-      this.setCursorMode(this.cursor);
-
-      // TODO
-    }
-
-    /**
-     * Sets the current cursor mode, handling any callbacks or CSS style changes.
-     *
-     * @param {string} mode - cursor mode, a key from the cursorStyles dictionary
-     */
-
-  }, {
-    key: 'setCursorMode',
-    value: function setCursorMode(mode) {
-      mode = mode || 'default';
-      // if the mode didn't actually change, bail early
-      if (this.currentCursorMode === mode) {
-        return;
-      }
-      this.currentCursorMode = mode;
-      var style = this.cursorStyles[mode];
-
-      // only do things if there is a cursor style for it
-      if (style) {
-        switch (typeof style === 'undefined' ? 'undefined' : _typeof(style)) {
-          case 'string':
-            // string styles are handled as cursor CSS
-            this.interactionDOMElement.style.cursor = style;
-            break;
-          case 'function':
-            // functions are just called, and passed the cursor mode
-            style(mode);
-            break;
-          case 'object':
-            // if it is an object, assume that it is a dictionary of CSS styles,
-            // apply it to the interactionDOMElement
-            Object.assign(this.interactionDOMElement.style, style);
-            break;
-          default:
-            break;
-        }
-      } else if (typeof mode === 'string' && !Object.prototype.hasOwnProperty.call(this.cursorStyles, mode)) {
-        // if it mode is a string (not a Symbol) and cursorStyles doesn't have any entry
-        // for the mode, then assume that the dev wants it to be CSS for the cursor.
-        this.interactionDOMElement.style.cursor = mode;
-      }
-    }
-
-    /**
-     * Dispatches an event on the display object that was interacted with
-     *
-     * @param {Object3D} displayObject - the display object in question
-     * @param {string} eventString - the name of the event (e.g, mousedown)
-     * @param {object} eventData - the event data object
-     * @private
-     */
-
-  }, {
-    key: 'triggerEvent',
-    value: function triggerEvent(displayObject, eventString, eventData) {
-      if (!eventData.stopped) {
-        eventData.currentTarget = displayObject;
-        eventData.type = eventString;
-
-        displayObject.emit(eventString, eventData);
-
-        if (displayObject[eventString]) {
-          displayObject[eventString](eventData);
-        }
-      }
-    }
-
-    /**
-     * This function is provides a neat way of crawling through the scene graph and running a
-     * specified function on all interactive objects it finds. It will also take care of hit
-     * testing the interactive objects and passes the hit across in the function.
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - event containing the point that
-     *  is tested for collision
-     * @param {Object3D} displayObject - the displayObject
-     *  that will be hit test (recursively crawls its children)
-     * @param {Function} [func] - the function that will be called on each interactive object. The
-     *  interactionEvent, displayObject and hit will be passed to the function
-     * @param {boolean} [hitTest] - this indicates if the objects inside should be hit test against the point
-     * @param {boolean} [interactive] - Whether the displayObject is interactive
-     * @return {boolean} returns true if the displayObject hit the point
-     */
-
-  }, {
-    key: 'processInteractive',
-    value: function processInteractive(interactionEvent, displayObject, func, hitTest, interactive) {
-      if (!displayObject || !displayObject.visible) {
-        return false;
-      }
-
-      // Took a little while to rework this function correctly! But now it is done and nice and optimised. ^_^
-      //
-      // This function will now loop through all objects and then only hit test the objects it HAS
-      // to, not all of them. MUCH faster..
-      // An object will be hit test if the following is true:
-      //
-      // 1: It is interactive.
-      // 2: It belongs to a parent that is interactive AND one of the parents children have not already been hit.
-      //
-      // As another little optimisation once an interactive object has been hit we can carry on
-      // through the scenegraph, but we know that there will be no more hits! So we can avoid extra hit tests
-      // A final optimisation is that an object is not hit test directly if a child has already been hit.
-
-      interactive = displayObject.interactive || interactive;
-
-      var hit = false;
-      var interactiveParent = interactive;
-
-      if (displayObject.interactiveChildren && displayObject.children) {
-        var children = displayObject.children;
-
-        for (var i = children.length - 1; i >= 0; i--) {
-          var child = children[i];
-
-          // time to get recursive.. if this function will return if something is hit..
-          var childHit = this.processInteractive(interactionEvent, child, func, hitTest, interactiveParent);
-
-          if (childHit) {
-            // its a good idea to check if a child has lost its parent.
-            // this means it has been removed whilst looping so its best
-            if (!child.parent) {
-              continue;
-            }
-
-            // we no longer need to hit test any more objects in this container as we we
-            // now know the parent has been hit
-            interactiveParent = false;
-
-            // If the child is interactive , that means that the object hit was actually
-            // interactive and not just the child of an interactive object.
-            // This means we no longer need to hit test anything else. We still need to run
-            // through all objects, but we don't need to perform any hit tests.
-
-            if (childHit) {
-              if (interactionEvent.target) {
-                hitTest = false;
-              }
-              hit = true;
-            }
-          }
-        }
-      }
-
-      // no point running this if the item is not interactive or does not have an interactive parent.
-      if (interactive) {
-        // if we are hit testing (as in we have no hit any objects yet)
-        // We also don't need to worry about hit testing if once of the displayObjects children
-        // has already been hit - but only if it was interactive, otherwise we need to keep
-        // looking for an interactive child, just in case we hit one
-        if (hitTest && !interactionEvent.target) {
-          if (interactionEvent.intersects[0] && interactionEvent.intersects[0].object === displayObject) {
-            hit = true;
-          }
-        }
-
-        if (displayObject.interactive) {
-          if (hit && !interactionEvent.target) {
-            interactionEvent.data.target = interactionEvent.target = displayObject;
-          }
-
-          if (func) {
-            func(interactionEvent, displayObject, !!hit);
-          }
-        }
-      }
-
-      return hit;
-    }
-
-    /**
-     * Is called when the click is pressed down on the renderer element
-     *
-     * @private
-     * @param {MouseEvent} originalEvent - The DOM event of a click being pressed down
-     */
-
-  }, {
-    key: 'onClick',
-    value: function onClick(originalEvent) {
-      if (originalEvent.type !== 'click') return;
-
-      var events = this.normalizeToPointerData(originalEvent);
-
-      if (this.autoPreventDefault && events[0].isNormalized) {
-        originalEvent.preventDefault();
-      }
-
-      var interactionData = this.getInteractionDataForPointerId(events[0]);
-
-      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, events[0], interactionData);
-
-      interactionEvent.data.originalEvent = originalEvent;
-
-      this.processInteractive(interactionEvent, this.scene, this.processClick, true);
-
-      this.emit('click', interactionEvent);
-    }
-
-    /**
-     * Processes the result of the click check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     * @param {boolean} hit - the result of the hit test on the display object
-     */
-
-  }, {
-    key: 'processClick',
-    value: function processClick(interactionEvent, displayObject, hit) {
-      if (hit) {
-        this.triggerEvent(displayObject, 'click', interactionEvent);
-      }
-    }
-
-    /**
-     * Is called when the pointer button is pressed down on the renderer element
-     *
-     * @private
-     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being pressed down
-     */
-
-  }, {
-    key: 'onPointerDown',
-    value: function onPointerDown(originalEvent) {
-      // if we support touch events, then only use those for touch events, not pointer events
-      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
-
-      var events = this.normalizeToPointerData(originalEvent);
-
-      /**
-       * No need to prevent default on natural pointer events, as there are no side effects
-       * Normalized events, however, may have the double mousedown/touchstart issue on the native android browser,
-       * so still need to be prevented.
-       */
-
-      // Guaranteed that there will be at least one event in events, and all events must have the same pointer type
-
-      if (this.autoPreventDefault && events[0].isNormalized) {
-        originalEvent.preventDefault();
-      }
-
-      var eventLen = events.length;
-
-      for (var i = 0; i < eventLen; i++) {
-        var event = events[i];
-
-        var interactionData = this.getInteractionDataForPointerId(event);
-
-        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
-
-        interactionEvent.data.originalEvent = originalEvent;
-
-        this.processInteractive(interactionEvent, this.scene, this.processPointerDown, true);
-
-        this.emit('pointerdown', interactionEvent);
-        if (event.pointerType === 'touch') {
-          this.emit('touchstart', interactionEvent);
-        } else if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
-          var isRightButton = event.button === 2;
-
-          this.emit(isRightButton ? 'rightdown' : 'mousedown', this.eventData);
-        }
-      }
-    }
-
-    /**
-     * Processes the result of the pointer down check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     * @param {boolean} hit - the result of the hit test on the display object
-     */
-
-  }, {
-    key: 'processPointerDown',
-    value: function processPointerDown(interactionEvent, displayObject, hit) {
-      var data = interactionEvent.data;
-      var id = interactionEvent.data.identifier;
-
-      if (hit) {
-        if (!displayObject.trackedPointers[id]) {
-          displayObject.trackedPointers[id] = new InteractionTrackingData(id);
-        }
-        this.triggerEvent(displayObject, 'pointerdown', interactionEvent);
-
-        if (data.pointerType === 'touch') {
-          displayObject.started = true;
-          this.triggerEvent(displayObject, 'touchstart', interactionEvent);
-        } else if (data.pointerType === 'mouse' || data.pointerType === 'pen') {
-          var isRightButton = data.button === 2;
-
-          if (isRightButton) {
-            displayObject.trackedPointers[id].rightDown = true;
-          } else {
-            displayObject.trackedPointers[id].leftDown = true;
-          }
-
-          this.triggerEvent(displayObject, isRightButton ? 'rightdown' : 'mousedown', interactionEvent);
-        }
-      }
-    }
-
-    /**
-     * Is called when the pointer button is released on the renderer element
-     *
-     * @private
-     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being released
-     * @param {boolean} cancelled - true if the pointer is cancelled
-     * @param {Function} func - Function passed to {@link processInteractive}
-     */
-
-  }, {
-    key: 'onPointerComplete',
-    value: function onPointerComplete(originalEvent, cancelled, func) {
-      var events = this.normalizeToPointerData(originalEvent);
-
-      var eventLen = events.length;
-
-      // if the event wasn't targeting our canvas, then consider it to be pointerupoutside
-      // in all cases (unless it was a pointercancel)
-      var eventAppend = originalEvent.target !== this.interactionDOMElement ? 'outside' : '';
-
-      for (var i = 0; i < eventLen; i++) {
-        var event = events[i];
-
-        var interactionData = this.getInteractionDataForPointerId(event);
-
-        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
-
-        interactionEvent.data.originalEvent = originalEvent;
-
-        // perform hit testing for events targeting our canvas or cancel events
-        this.processInteractive(interactionEvent, this.scene, func, cancelled || !eventAppend);
-
-        this.emit(cancelled ? 'pointercancel' : 'pointerup' + eventAppend, interactionEvent);
-
-        if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
-          var isRightButton = event.button === 2;
-
-          this.emit(isRightButton ? 'rightup' + eventAppend : 'mouseup' + eventAppend, interactionEvent);
-        } else if (event.pointerType === 'touch') {
-          this.emit(cancelled ? 'touchcancel' : 'touchend' + eventAppend, interactionEvent);
-          this.releaseInteractionDataForPointerId(event.pointerId, interactionData);
-        }
-      }
-    }
-
-    /**
-     * Is called when the pointer button is cancelled
-     *
-     * @private
-     * @param {PointerEvent} event - The DOM event of a pointer button being released
-     */
-
-  }, {
-    key: 'onPointerCancel',
-    value: function onPointerCancel(event) {
-      // if we support touch events, then only use those for touch events, not pointer events
-      if (this.supportsTouchEvents && event.pointerType === 'touch') return;
-
-      this.onPointerComplete(event, true, this.processPointerCancel);
-    }
-
-    /**
-     * Processes the result of the pointer cancel check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     */
-
-  }, {
-    key: 'processPointerCancel',
-    value: function processPointerCancel(interactionEvent, displayObject) {
-      var data = interactionEvent.data;
-
-      var id = interactionEvent.data.identifier;
-
-      if (displayObject.trackedPointers[id] !== undefined) {
-        delete displayObject.trackedPointers[id];
-        this.triggerEvent(displayObject, 'pointercancel', interactionEvent);
-
-        if (data.pointerType === 'touch') {
-          this.triggerEvent(displayObject, 'touchcancel', interactionEvent);
-        }
-      }
-    }
-
-    /**
-     * Is called when the pointer button is released on the renderer element
-     *
-     * @private
-     * @param {PointerEvent} event - The DOM event of a pointer button being released
-     */
-
-  }, {
-    key: 'onPointerUp',
-    value: function onPointerUp(event) {
-      // if we support touch events, then only use those for touch events, not pointer events
-      if (this.supportsTouchEvents && event.pointerType === 'touch') return;
-
-      this.onPointerComplete(event, false, this.processPointerUp);
-    }
-
-    /**
-     * Processes the result of the pointer up check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     * @param {boolean} hit - the result of the hit test on the display object
-     */
-
-  }, {
-    key: 'processPointerUp',
-    value: function processPointerUp(interactionEvent, displayObject, hit) {
-      var data = interactionEvent.data;
-
-      var id = interactionEvent.data.identifier;
-
-      var trackingData = displayObject.trackedPointers[id];
-
-      var isTouch = data.pointerType === 'touch';
-
-      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
-
-      // Mouse only
-      if (isMouse) {
-        var isRightButton = data.button === 2;
-
-        var flags = InteractionTrackingData.FLAGS;
-
-        var test = isRightButton ? flags.RIGHT_DOWN : flags.LEFT_DOWN;
-
-        var isDown = trackingData !== undefined && trackingData.flags & test;
-
-        if (hit) {
-          this.triggerEvent(displayObject, isRightButton ? 'rightup' : 'mouseup', interactionEvent);
-
-          if (isDown) {
-            this.triggerEvent(displayObject, isRightButton ? 'rightclick' : 'leftclick', interactionEvent);
-          }
-        } else if (isDown) {
-          this.triggerEvent(displayObject, isRightButton ? 'rightupoutside' : 'mouseupoutside', interactionEvent);
-        }
-        // update the down state of the tracking data
-        if (trackingData) {
-          if (isRightButton) {
-            trackingData.rightDown = false;
-          } else {
-            trackingData.leftDown = false;
-          }
-        }
-      }
-
-      // Pointers and Touches, and Mouse
-      if (isTouch && displayObject.started) {
-        displayObject.started = false;
-        this.triggerEvent(displayObject, 'touchend', interactionEvent);
-      }
-      if (hit) {
-        this.triggerEvent(displayObject, 'pointerup', interactionEvent);
-
-        if (trackingData) {
-          this.triggerEvent(displayObject, 'pointertap', interactionEvent);
-          if (isTouch) {
-            this.triggerEvent(displayObject, 'tap', interactionEvent);
-            // touches are no longer over (if they ever were) when we get the touchend
-            // so we should ensure that we don't keep pretending that they are
-            trackingData.over = false;
-          }
-        }
-      } else if (trackingData) {
-        this.triggerEvent(displayObject, 'pointerupoutside', interactionEvent);
-        if (isTouch) this.triggerEvent(displayObject, 'touchendoutside', interactionEvent);
-      }
-      // Only remove the tracking data if there is no over/down state still associated with it
-      if (trackingData && trackingData.none) {
-        delete displayObject.trackedPointers[id];
-      }
-    }
-
-    /**
-     * Is called when the pointer moves across the renderer element
-     *
-     * @private
-     * @param {PointerEvent} originalEvent - The DOM event of a pointer moving
-     */
-
-  }, {
-    key: 'onPointerMove',
-    value: function onPointerMove(originalEvent) {
-      // if we support touch events, then only use those for touch events, not pointer events
-      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
-
-      var events = this.normalizeToPointerData(originalEvent);
-
-      if (events[0].pointerType === 'mouse') {
-        this.didMove = true;
-
-        this.cursor = null;
-      }
-
-      var eventLen = events.length;
-
-      for (var i = 0; i < eventLen; i++) {
-        var event = events[i];
-
-        var interactionData = this.getInteractionDataForPointerId(event);
-
-        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
-
-        interactionEvent.data.originalEvent = originalEvent;
-
-        var interactive = event.pointerType === 'touch' ? this.moveWhenInside : true;
-
-        this.processInteractive(interactionEvent, this.scene, this.processPointerMove, interactive);
-        this.emit('pointermove', interactionEvent);
-        if (event.pointerType === 'touch') this.emit('touchmove', interactionEvent);
-        if (event.pointerType === 'mouse' || event.pointerType === 'pen') this.emit('mousemove', interactionEvent);
-      }
-
-      if (events[0].pointerType === 'mouse') {
-        this.setCursorMode(this.cursor);
-
-        // TODO BUG for parents interactive object (border order issue)
-      }
-    }
-
-    /**
-     * Processes the result of the pointer move check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     * @param {boolean} hit - the result of the hit test on the display object
-     */
-
-  }, {
-    key: 'processPointerMove',
-    value: function processPointerMove(interactionEvent, displayObject, hit) {
-      var data = interactionEvent.data;
-
-      var isTouch = data.pointerType === 'touch';
-
-      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
-
-      if (isMouse) {
-        this.processPointerOverOut(interactionEvent, displayObject, hit);
-      }
-
-      if (isTouch && displayObject.started) this.triggerEvent(displayObject, 'touchmove', interactionEvent);
-      if (!this.moveWhenInside || hit) {
-        this.triggerEvent(displayObject, 'pointermove', interactionEvent);
-        if (isMouse) this.triggerEvent(displayObject, 'mousemove', interactionEvent);
-      }
-    }
-
-    /**
-     * Is called when the pointer is moved out of the renderer element
-     *
-     * @private
-     * @param {PointerEvent} originalEvent - The DOM event of a pointer being moved out
-     */
-
-  }, {
-    key: 'onPointerOut',
-    value: function onPointerOut(originalEvent) {
-      // if we support touch events, then only use those for touch events, not pointer events
-      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
-
-      var events = this.normalizeToPointerData(originalEvent);
-
-      // Only mouse and pointer can call onPointerOut, so events will always be length 1
-      var event = events[0];
-
-      if (event.pointerType === 'mouse') {
-        this.mouseOverRenderer = false;
-        this.setCursorMode(null);
-      }
-
-      var interactionData = this.getInteractionDataForPointerId(event);
-
-      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
-
-      interactionEvent.data.originalEvent = event;
-
-      this.processInteractive(interactionEvent, this.scene, this.processPointerOverOut, false);
-
-      this.emit('pointerout', interactionEvent);
-      if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
-        this.emit('mouseout', interactionEvent);
-      } else {
-        // we can get touchleave events after touchend, so we want to make sure we don't
-        // introduce memory leaks
-        this.releaseInteractionDataForPointerId(interactionData.identifier);
-      }
-    }
-
-    /**
-     * Processes the result of the pointer over/out check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     * @param {boolean} hit - the result of the hit test on the display object
-     */
-
-  }, {
-    key: 'processPointerOverOut',
-    value: function processPointerOverOut(interactionEvent, displayObject, hit) {
-      var data = interactionEvent.data;
-
-      var id = interactionEvent.data.identifier;
-
-      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
-
-      var trackingData = displayObject.trackedPointers[id];
-
-      // if we just moused over the display object, then we need to track that state
-      if (hit && !trackingData) {
-        trackingData = displayObject.trackedPointers[id] = new InteractionTrackingData(id);
-      }
-
-      if (trackingData === undefined) return;
-
-      if (hit && this.mouseOverRenderer) {
-        if (!trackingData.over) {
-          trackingData.over = true;
-          this.triggerEvent(displayObject, 'pointerover', interactionEvent);
-          if (isMouse) {
-            this.triggerEvent(displayObject, 'mouseover', interactionEvent);
-          }
-        }
-
-        // only change the cursor if it has not already been changed (by something deeper in the
-        // display tree)
-        if (isMouse && this.cursor === null) {
-          this.cursor = displayObject.cursor;
-        }
-      } else if (trackingData.over) {
-        trackingData.over = false;
-        this.triggerEvent(displayObject, 'pointerout', this.eventData);
-        if (isMouse) {
-          this.triggerEvent(displayObject, 'mouseout', interactionEvent);
-        }
-        // if there is no mouse down information for the pointer, then it is safe to delete
-        if (trackingData.none) {
-          delete displayObject.trackedPointers[id];
-        }
-      }
-    }
-
-    /**
-     * Is called when the pointer is moved into the renderer element
-     *
-     * @private
-     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being moved into the renderer view
-     */
-
-  }, {
-    key: 'onPointerOver',
-    value: function onPointerOver(originalEvent) {
-      var events = this.normalizeToPointerData(originalEvent);
-
-      // Only mouse and pointer can call onPointerOver, so events will always be length 1
-      var event = events[0];
-
-      var interactionData = this.getInteractionDataForPointerId(event);
-
-      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
-
-      interactionEvent.data.originalEvent = event;
-
-      if (event.pointerType === 'mouse') {
-        this.mouseOverRenderer = true;
-      }
-
-      this.emit('pointerover', interactionEvent);
-      if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
-        this.emit('mouseover', interactionEvent);
-      }
-    }
-
-    /**
-     * Get InteractionData for a given pointerId. Store that data as well
-     *
-     * @private
-     * @param {PointerEvent} event - Normalized pointer event, output from normalizeToPointerData
-     * @return {InteractionData} - Interaction data for the given pointer identifier
-     */
-
-  }, {
-    key: 'getInteractionDataForPointerId',
-    value: function getInteractionDataForPointerId(event) {
-      var pointerId = event.pointerId;
-
-      var interactionData = void 0;
-
-      if (pointerId === MOUSE_POINTER_ID || event.pointerType === 'mouse') {
-        interactionData = this.mouse;
-      } else if (this.activeInteractionData[pointerId]) {
-        interactionData = this.activeInteractionData[pointerId];
-      } else {
-        interactionData = this.interactionDataPool.pop() || new InteractionData();
-        interactionData.identifier = pointerId;
-        this.activeInteractionData[pointerId] = interactionData;
-      }
-      // copy properties from the event, so that we can make sure that touch/pointer specific
-      // data is available
-      interactionData._copyEvent(event);
-
-      return interactionData;
-    }
-
-    /**
-     * Return unused InteractionData to the pool, for a given pointerId
-     *
-     * @private
-     * @param {number} pointerId - Identifier from a pointer event
-     */
-
-  }, {
-    key: 'releaseInteractionDataForPointerId',
-    value: function releaseInteractionDataForPointerId(pointerId) {
-      var interactionData = this.activeInteractionData[pointerId];
-
-      if (interactionData) {
-        delete this.activeInteractionData[pointerId];
-        interactionData._reset();
-        this.interactionDataPool.push(interactionData);
-      }
-    }
-
-    /**
-     * Maps x and y coords from a DOM object and maps them correctly to the three.js view. The
-     * resulting value is stored in the point. This takes into account the fact that the DOM
-     * element could be scaled and positioned anywhere on the screen.
-     *
-     * @param  {Vector2} point - the point that the result will be stored in
-     * @param  {number} x - the x coord of the position to map
-     * @param  {number} y - the y coord of the position to map
-     */
-
-  }, {
-    key: 'mapPositionToPoint',
-    value: function mapPositionToPoint(point, x, y) {
-      var rect = void 0;
-
-      // IE 11 fix
-      if (!this.interactionDOMElement.parentElement) {
-        rect = {
-          x: 0,
-          y: 0,
-          left: 0,
-          top: 0,
-          width: 0,
-          height: 0
-        };
-      } else {
-        rect = this.interactionDOMElement.getBoundingClientRect();
-      }
-
-      point.x = (x - rect.left) / rect.width * 2 - 1;
-      point.y = -((y - rect.top) / rect.height) * 2 + 1;
-    }
-
-    /**
-     * Configure an InteractionEvent to wrap a DOM PointerEvent and InteractionData
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The event to be configured
-     * @param {PointerEvent} pointerEvent - The DOM event that will be paired with the InteractionEvent
-     * @param {InteractionData} interactionData - The InteractionData that will be paired
-     *        with the InteractionEvent
-     * @return {InteractionEvent} the interaction event that was passed in
-     */
-
-  }, {
-    key: 'configureInteractionEventForDOMEvent',
-    value: function configureInteractionEventForDOMEvent(interactionEvent, pointerEvent, interactionData) {
-      interactionEvent.data = interactionData;
-
-      this.mapPositionToPoint(interactionData.global, pointerEvent.clientX, pointerEvent.clientY);
-
-      this.raycaster.setFromCamera(interactionData.global, this.camera);
-
-      // Not really sure why this is happening, but it's how a previous version handled things TODO: there should be remove
-      if (pointerEvent.pointerType === 'touch') {
-        pointerEvent.globalX = interactionData.global.x;
-        pointerEvent.globalY = interactionData.global.y;
-      }
-
-      interactionData.originalEvent = pointerEvent;
-      interactionEvent._reset();
-      interactionEvent.intersects = this.raycaster.intersectObjects(this.scene.children, true);
-
-      return interactionEvent;
-    }
-
-    /**
-     * Ensures that the original event object contains all data that a regular pointer event would have
-     *
-     * @private
-     * @param {TouchEvent|MouseEvent|PointerEvent} event - The original event data from a touch or mouse event
-     * @return {PointerEvent[]} An array containing a single normalized pointer event, in the case of a pointer
-     *  or mouse event, or a multiple normalized pointer events if there are multiple changed touches
-     */
-
-  }, {
-    key: 'normalizeToPointerData',
-    value: function normalizeToPointerData(event) {
-      var normalizedEvents = [];
-
-      if (this.supportsTouchEvents && event instanceof TouchEvent) {
-        for (var i = 0, li = event.changedTouches.length; i < li; i++) {
-          var touch = event.changedTouches[i];
-
-          if (typeof touch.button === 'undefined') touch.button = event.touches.length ? 1 : 0;
-          if (typeof touch.buttons === 'undefined') touch.buttons = event.touches.length ? 1 : 0;
-          if (typeof touch.isPrimary === 'undefined') {
-            touch.isPrimary = event.touches.length === 1 && event.type === 'touchstart';
-          }
-          if (typeof touch.width === 'undefined') touch.width = touch.radiusX || 1;
-          if (typeof touch.height === 'undefined') touch.height = touch.radiusY || 1;
-          if (typeof touch.tiltX === 'undefined') touch.tiltX = 0;
-          if (typeof touch.tiltY === 'undefined') touch.tiltY = 0;
-          if (typeof touch.pointerType === 'undefined') touch.pointerType = 'touch';
-          if (typeof touch.pointerId === 'undefined') touch.pointerId = touch.identifier || 0;
-          if (typeof touch.pressure === 'undefined') touch.pressure = touch.force || 0.5;
-          touch.twist = 0;
-          touch.tangentialPressure = 0;
-          // TODO: Remove these, as layerX/Y is not a standard, is deprecated, has uneven
-          // support, and the fill ins are not quite the same
-          // offsetX/Y might be okay, but is not the same as clientX/Y when the canvas's top
-          // left is not 0,0 on the page
-          if (typeof touch.layerX === 'undefined') touch.layerX = touch.offsetX = touch.clientX;
-          if (typeof touch.layerY === 'undefined') touch.layerY = touch.offsetY = touch.clientY;
-
-          // mark the touch as normalized, just so that we know we did it
-          touch.isNormalized = true;
-
-          normalizedEvents.push(touch);
-        }
-      } else if (event instanceof MouseEvent && (!this.supportsPointerEvents || !(event instanceof window.PointerEvent))) {
-        if (typeof event.isPrimary === 'undefined') event.isPrimary = true;
-        if (typeof event.width === 'undefined') event.width = 1;
-        if (typeof event.height === 'undefined') event.height = 1;
-        if (typeof event.tiltX === 'undefined') event.tiltX = 0;
-        if (typeof event.tiltY === 'undefined') event.tiltY = 0;
-        if (typeof event.pointerType === 'undefined') event.pointerType = 'mouse';
-        if (typeof event.pointerId === 'undefined') event.pointerId = MOUSE_POINTER_ID;
-        if (typeof event.pressure === 'undefined') event.pressure = 0.5;
-        event.twist = 0;
-        event.tangentialPressure = 0;
-
-        // mark the mouse event as normalized, just so that we know we did it
-        event.isNormalized = true;
-
-        normalizedEvents.push(event);
-      } else {
-        normalizedEvents.push(event);
-      }
-
-      return normalizedEvents;
-    }
-
-    /**
-     * Destroys the interaction manager
-     *
-     */
-
-  }, {
-    key: 'destroy',
-    value: function destroy() {
-      this.removeEvents();
-
-      this.removeAllListeners();
-
-      this.renderer = null;
-
-      this.mouse = null;
-
-      this.eventData = null;
-
-      this.interactionDOMElement = null;
-
-      this.onPointerDown = null;
-      this.processPointerDown = null;
-
-      this.onPointerUp = null;
-      this.processPointerUp = null;
-
-      this.onPointerCancel = null;
-      this.processPointerCancel = null;
-
-      this.onPointerMove = null;
-      this.processPointerMove = null;
-
-      this.onPointerOut = null;
-      this.processPointerOverOut = null;
-
-      this.onPointerOver = null;
-
-      this._tempPoint = null;
-    }
-  }]);
-  return InteractionManager;
-}(three.EventDispatcher);
-
-var MOUSE_POINTER_ID$1 = 'MOUSE';
-
-// helpers for hitTest() - only used inside hitTest()
-var hitTestEvent$1 = {
-  target: null,
-  data: {
-    global: null
-  }
-};
-
-/**
- * The interaction manager deals with mouse, touch and pointer events. Any DisplayObject can be interactive
- * if its interactive parameter is set to true
- * This manager also supports multitouch.
- *
- * reference to [pixi.js](http://www.pixijs.com/) impl
- *
- * @private
- * @class
- * @extends EventDispatcher
- */
-
-var InteractionLayer = function (_EventDispatcher) {
-  inherits(InteractionLayer, _EventDispatcher);
-
-  /**
-   * @param {WebGLRenderer} renderer - A reference to the current renderer
-   * @param {Object} [options] - The options for the manager.
-   * @param {Boolean} [options.autoPreventDefault=false] - Should the manager automatically prevent default browser actions.
-   * @param {Boolean} [options.autoAttach=true] - Should the manager automatically attach target element.
-   * @param {Number} [options.interactionFrequency=10] - Frequency increases the interaction events will be checked.
-   */
-  function InteractionLayer(renderer, options) {
-    classCallCheck(this, InteractionLayer);
-
-    var _this = possibleConstructorReturn(this, (InteractionLayer.__proto__ || Object.getPrototypeOf(InteractionLayer)).call(this));
-
-    options = options || {};
-
-    /**
-     * The renderer this interaction manager works for.
-     *
-     * @member {WebGLRenderer}
-     */
-    _this.renderer = renderer;
-
-    /**
-     * The renderer this interaction manager works for.
-     *
-     * @member {Layer}
-     */
-    _this.layer = null;
-
-    /**
-     * The renderer this interaction manager works for.
-     *
-     * @member {Scene}
-     */
-    // this.scene = scene;
-
-    /**
-     * The renderer this interaction manager works for.
-     *
-     * @member {Camera}
-     */
-    // this.camera = camera;
-
-    /**
-     * Should default browser actions automatically be prevented.
-     * Does not apply to pointer events for backwards compatibility
-     * preventDefault on pointer events stops mouse events from firing
-     * Thus, for every pointer event, there will always be either a mouse of touch event alongside it.
-     *
-     * @member {boolean}
-     * @default false
-     */
-    _this.autoPreventDefault = options.autoPreventDefault || false;
-
-    /**
-     * Frequency in milliseconds that the mousemove, moveover & mouseout interaction events will be checked.
-     *
-     * @member {number}
-     * @default 10
-     */
-    _this.interactionFrequency = options.interactionFrequency || 10;
-
-    /**
-     * The mouse data
-     *
-     * @member {InteractionData}
-     */
-    _this.mouse = new InteractionData();
-    _this.mouse.identifier = MOUSE_POINTER_ID$1;
-
-    // setting the mouse to start off far off screen will mean that mouse over does
-    //  not get called before we even move the mouse.
-    _this.mouse.global.set(-999999);
-
-    /**
-     * Actively tracked InteractionData
-     *
-     * @private
-     * @member {Object.<number,InteractionData>}
-     */
-    _this.activeInteractionData = {};
-    _this.activeInteractionData[MOUSE_POINTER_ID$1] = _this.mouse;
-
-    /**
-     * Pool of unused InteractionData
-     *
-     * @private
-     * @member {InteractionData[]}
-     */
-    _this.interactionDataPool = [];
-
-    /**
-     * An event data object to handle all the event tracking/dispatching
-     *
-     * @member {object}
-     */
-    _this.eventData = new InteractionEvent();
-
-    /**
-     * The DOM element to bind to.
-     *
-     * @private
-     * @member {HTMLElement}
-     */
-    _this.interactionDOMElement = null;
-
-    /**
-     * This property determines if mousemove and touchmove events are fired only when the cursor
-     * is over the object.
-     * Setting to true will make things work more in line with how the DOM verison works.
-     * Setting to false can make things easier for things like dragging
-     * It is currently set to false as this is how three.js used to work.
-     *
-     * @member {boolean}
-     * @default true
-     */
-    _this.moveWhenInside = true;
-
-    /**
-     * Have events been attached to the dom element?
-     *
-     * @private
-     * @member {boolean}
-     */
-    _this.eventsAdded = false;
-
-    /**
-     * Is the mouse hovering over the renderer?
-     *
-     * @private
-     * @member {boolean}
-     */
-    _this.mouseOverRenderer = false;
-
-    /**
-     * Does the device support touch events
-     * https://www.w3.org/TR/touch-events/
-     *
-     * @readonly
-     * @member {boolean}
-     */
-    _this.supportsTouchEvents = 'ontouchstart' in window;
-
-    /**
-     * Does the device support pointer events
-     * https://www.w3.org/Submission/pointer-events/
-     *
-     * @readonly
-     * @member {boolean}
-     */
-    _this.supportsPointerEvents = !!window.PointerEvent;
-
-    // this will make it so that you don't have to call bind all the time
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onClick = _this.onClick.bind(_this);
-    _this.processClick = _this.processClick.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerUp = _this.onPointerUp.bind(_this);
-    _this.processPointerUp = _this.processPointerUp.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerCancel = _this.onPointerCancel.bind(_this);
-    _this.processPointerCancel = _this.processPointerCancel.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerDown = _this.onPointerDown.bind(_this);
-    _this.processPointerDown = _this.processPointerDown.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerMove = _this.onPointerMove.bind(_this);
-    _this.processPointerMove = _this.processPointerMove.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerOut = _this.onPointerOut.bind(_this);
-    _this.processPointerOverOut = _this.processPointerOverOut.bind(_this);
-
-    /**
-     * @private
-     * @member {Function}
-     */
-    _this.onPointerOver = _this.onPointerOver.bind(_this);
-
-    /**
-     * Dictionary of how different cursor modes are handled. Strings are handled as CSS cursor
-     * values, objects are handled as dictionaries of CSS values for interactionDOMElement,
-     * and functions are called instead of changing the CSS.
-     * Default CSS cursor values are provided for 'default' and 'pointer' modes.
-     * @member {Object.<string, (string|Function|Object.<string, string>)>}
-     */
-    _this.cursorStyles = {
-      default: 'inherit',
-      pointer: 'pointer'
-    };
-
-    /**
-     * The mode of the cursor that is being used.
-     * The value of this is a key from the cursorStyles dictionary.
-     *
-     * @member {string}
-     */
-    _this.currentCursorMode = null;
-
-    /**
-     * Internal cached let.
-     *
-     * @private
-     * @member {string}
-     */
-    _this.cursor = null;
-
-    /**
-     * ray caster, for survey intersects from 3d-scene
-     *
-     * @private
-     * @member {Raycaster}
-     */
-    _this.raycaster = new three.Raycaster();
-
-    /**
-     * snippet time
-     *
-     * @private
-     * @member {Number}
-     */
-    _this._deltaTime = 0;
-
-    _this.setTargetElement(_this.renderer.domElement);
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is pressed on the display
-     * object.
-     *
-     * @event InteractionLayer#mousedown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
-     * on the display object.
-     *
-     * @event InteractionLayer#rightdown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is released over the display
-     * object.
-     *
-     * @event InteractionLayer#mouseup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is released
-     * over the display object.
-     *
-     * @event InteractionLayer#rightup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is pressed and released on
-     * the display object.
-     *
-     * @event InteractionLayer#click
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
-     * and released on the display object.
-     *
-     * @event InteractionLayer#rightclick
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is released outside the
-     * display object that initially registered a
-     * [mousedown]{@link InteractionLayer#event:mousedown}.
-     *
-     * @event InteractionLayer#mouseupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is released
-     * outside the display object that initially registered a
-     * [rightdown]{@link InteractionLayer#event:rightdown}.
-     *
-     * @event InteractionLayer#rightupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved while over the display object
-     *
-     * @event InteractionLayer#mousemove
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved onto the display object
-     *
-     * @event InteractionLayer#mouseover
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved off the display object
-     *
-     * @event InteractionLayer#mouseout
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is pressed on the display object.
-     *
-     * @event InteractionLayer#pointerdown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is released over the display object.
-     *
-     * @event InteractionLayer#pointerup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when the operating system cancels a pointer event
-     *
-     * @event InteractionLayer#pointercancel
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is pressed and released on the display object.
-     *
-     * @event InteractionLayer#pointertap
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is released outside the display object that initially
-     * registered a [pointerdown]{@link InteractionLayer#event:pointerdown}.
-     *
-     * @event InteractionLayer#pointerupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved while over the display object
-     *
-     * @event InteractionLayer#pointermove
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved onto the display object
-     *
-     * @event InteractionLayer#pointerover
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved off the display object
-     *
-     * @event InteractionLayer#pointerout
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is placed on the display object.
-     *
-     * @event InteractionLayer#touchstart
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is removed from the display object.
-     *
-     * @event InteractionLayer#touchend
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when the operating system cancels a touch
-     *
-     * @event InteractionLayer#touchcancel
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is placed and removed from the display object.
-     *
-     * @event InteractionLayer#tap
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is removed outside of the display object that initially
-     * registered a [touchstart]{@link InteractionLayer#event:touchstart}.
-     *
-     * @event InteractionLayer#touchendoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is moved along the display object.
-     *
-     * @event InteractionLayer#touchmove
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is pressed on the display.
-     * object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mousedown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
-     * on the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#rightdown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is released over the display
-     * object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mouseup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is released
-     * over the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#rightup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is pressed and released on
-     * the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#click
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is pressed
-     * and released on the display object. DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#rightclick
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button (usually a mouse left-button) is released outside the
-     * display object that initially registered a
-     * [mousedown]{@link Object3D#event:mousedown}.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mouseupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device secondary button (usually a mouse right-button) is released
-     * outside the display object that initially registered a
-     * [rightdown]{@link Object3D#event:rightdown}.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#rightupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved while over the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mousemove
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved onto the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mouseover
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device (usually a mouse) is moved off the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#mouseout
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is pressed on the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointerdown
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is released over the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointerup
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when the operating system cancels a pointer event.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointercancel
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is pressed and released on the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointertap
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device button is released outside the display object that initially
-     * registered a [pointerdown]{@link Object3D#event:pointerdown}.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointerupoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved while over the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointermove
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved onto the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointerover
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a pointer device is moved off the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#pointerout
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is placed on the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#touchstart
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is removed from the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#touchend
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when the operating system cancels a touch.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#touchcancel
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is placed and removed from the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#tap
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is removed outside of the display object that initially
-     * registered a [touchstart]{@link Object3D#event:touchstart}.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#touchendoutside
-     * @param {InteractionEvent} event - Interaction event
-     */
-
-    /**
-     * Fired when a touch point is moved along the display object.
-     * DisplayObject's `interactive` property must be set to `true` to fire event.
-     *
-     * @event Object3D#touchmove
-     * @param {InteractionEvent} event - Interaction event
-     */
-    return _this;
-  }
-
-  /**
-   * @return {boolean}
-   */
-
-
-  createClass(InteractionLayer, [{
-    key: 'isAble',
-    value: function isAble() {
-      return this.layer && this.layer.interactive;
-    }
-
-    /**
-     * set layer
-     * @param {Layer} layer layer
-     */
-
-  }, {
-    key: 'setLayer',
-    value: function setLayer(layer) {
-      this.layer = layer;
-    }
-
-    /**
-     * Hit tests a point against the display tree, returning the first interactive object that is hit.
-     *
-     * @param {Point} globalPoint - A point to hit test with, in global space.
-     * @param {Object3D} [root] - The root display object to start from. If omitted, defaults
-     * to the last rendered root of the associated renderer.
-     * @return {Object3D} The hit display object, if any.
-     */
-
-  }, {
-    key: 'hitTest',
-    value: function hitTest(globalPoint, root) {
-      if (!this.isAble()) return null;
-      // clear the target for our hit test
-      hitTestEvent$1.target = null;
-      // assign the global point
-      hitTestEvent$1.data.global = globalPoint;
-      // ensure safety of the root
-      if (!root) {
-        root = this.layer.scene;
-      }
-      // run the hit test
-      this.processInteractive(hitTestEvent$1, root, null, true);
-      // return our found object - it'll be null if we didn't hit anything
-
-      return hitTestEvent$1.target;
-    }
-
-    /**
-     * Sets the DOM element which will receive mouse/touch events. This is useful for when you have
-     * other DOM elements on top of the renderers Canvas element. With this you'll be bale to deletegate
-     * another DOM element to receive those events.
-     *
-     * @param {HTMLCanvasElement} element - the DOM element which will receive mouse and touch events.
-     */
-
-  }, {
-    key: 'setTargetElement',
-    value: function setTargetElement(element) {
-      this.removeEvents();
-
-      this.interactionDOMElement = element;
-
-      this.addEvents();
-    }
-
-    /**
-     * Registers all the DOM events
-     *
-     * @private
-     */
-
-  }, {
-    key: 'addEvents',
-    value: function addEvents() {
-      if (!this.interactionDOMElement || this.eventsAdded) {
-        return;
-      }
-
-      this.emit('addevents');
-
-      this.interactionDOMElement.addEventListener('click', this.onClick, true);
-
-      if (window.navigator.msPointerEnabled) {
-        this.interactionDOMElement.style['-ms-content-zooming'] = 'none';
-        this.interactionDOMElement.style['-ms-touch-action'] = 'none';
-      } else if (this.supportsPointerEvents) {
-        this.interactionDOMElement.style['touch-action'] = 'none';
-      }
-
-      /**
-       * These events are added first, so that if pointer events are normalised, they are fired
-       * in the same order as non-normalised events. ie. pointer event 1st, mouse / touch 2nd
-       */
-      if (this.supportsPointerEvents) {
-        window.document.addEventListener('pointermove', this.onPointerMove, true);
-        this.interactionDOMElement.addEventListener('pointerdown', this.onPointerDown, true);
-        // pointerout is fired in addition to pointerup (for touch events) and pointercancel
-        // we already handle those, so for the purposes of what we do in onPointerOut, we only
-        // care about the pointerleave event
-        this.interactionDOMElement.addEventListener('pointerleave', this.onPointerOut, true);
-        this.interactionDOMElement.addEventListener('pointerover', this.onPointerOver, true);
-        window.addEventListener('pointercancel', this.onPointerCancel, true);
-        window.addEventListener('pointerup', this.onPointerUp, true);
-      } else {
-        window.document.addEventListener('mousemove', this.onPointerMove, true);
-        this.interactionDOMElement.addEventListener('mousedown', this.onPointerDown, true);
-        this.interactionDOMElement.addEventListener('mouseout', this.onPointerOut, true);
-        this.interactionDOMElement.addEventListener('mouseover', this.onPointerOver, true);
-        window.addEventListener('mouseup', this.onPointerUp, true);
-      }
-
-      // always look directly for touch events so that we can provide original data
-      // In a future version we should change this to being just a fallback and rely solely on
-      // PointerEvents whenever available
-      if (this.supportsTouchEvents) {
-        this.interactionDOMElement.addEventListener('touchstart', this.onPointerDown, true);
-        this.interactionDOMElement.addEventListener('touchcancel', this.onPointerCancel, true);
-        this.interactionDOMElement.addEventListener('touchend', this.onPointerUp, true);
-        this.interactionDOMElement.addEventListener('touchmove', this.onPointerMove, true);
-      }
-
-      this.eventsAdded = true;
-    }
-
-    /**
-     * Removes all the DOM events that were previously registered
-     *
-     * @private
-     */
-
-  }, {
-    key: 'removeEvents',
-    value: function removeEvents() {
-      if (!this.interactionDOMElement) {
-        return;
-      }
-
-      this.emit('removeevents');
-
-      this.interactionDOMElement.removeEventListener('click', this.onClick, true);
-
-      if (window.navigator.msPointerEnabled) {
-        this.interactionDOMElement.style['-ms-content-zooming'] = '';
-        this.interactionDOMElement.style['-ms-touch-action'] = '';
-      } else if (this.supportsPointerEvents) {
-        this.interactionDOMElement.style['touch-action'] = '';
-      }
-
-      if (this.supportsPointerEvents) {
-        window.document.removeEventListener('pointermove', this.onPointerMove, true);
-        this.interactionDOMElement.removeEventListener('pointerdown', this.onPointerDown, true);
-        this.interactionDOMElement.removeEventListener('pointerleave', this.onPointerOut, true);
-        this.interactionDOMElement.removeEventListener('pointerover', this.onPointerOver, true);
-        window.removeEventListener('pointercancel', this.onPointerCancel, true);
-        window.removeEventListener('pointerup', this.onPointerUp, true);
-      } else {
-        window.document.removeEventListener('mousemove', this.onPointerMove, true);
-        this.interactionDOMElement.removeEventListener('mousedown', this.onPointerDown, true);
-        this.interactionDOMElement.removeEventListener('mouseout', this.onPointerOut, true);
-        this.interactionDOMElement.removeEventListener('mouseover', this.onPointerOver, true);
-        window.removeEventListener('mouseup', this.onPointerUp, true);
-      }
-
-      if (this.supportsTouchEvents) {
-        this.interactionDOMElement.removeEventListener('touchstart', this.onPointerDown, true);
-        this.interactionDOMElement.removeEventListener('touchcancel', this.onPointerCancel, true);
-        this.interactionDOMElement.removeEventListener('touchend', this.onPointerUp, true);
-        this.interactionDOMElement.removeEventListener('touchmove', this.onPointerMove, true);
-      }
-
-      this.interactionDOMElement = null;
-
-      this.eventsAdded = false;
-    }
-
-    /**
-     * Updates the state of interactive objects.
-     * Invoked by a throttled ticker.
-     *
-     * @param {number} deltaTime - time delta since last tick
-     */
-
-  }, {
-    key: 'update',
-    value: function update(_ref) {
-      var snippet = _ref.snippet;
-
-      if (!this.isAble()) return;
-      this._deltaTime += snippet;
-
-      if (this._deltaTime < this.interactionFrequency) {
-        return;
-      }
-
-      this._deltaTime = 0;
-
-      if (!this.interactionDOMElement) {
-        return;
-      }
-
-      // if the user move the mouse this check has already been done using the mouse move!
-      if (this.didMove) {
-        this.didMove = false;
-
-        return;
-      }
-
-      this.cursor = null;
-
-      // Resets the flag as set by a stopPropagation call. This flag is usually reset by a user interaction of any kind,
-      // but there was a scenario of a display object moving under a static mouse cursor.
-      // In this case, mouseover and mouseevents would not pass the flag test in triggerEvent function
-      for (var k in this.activeInteractionData) {
-        // eslint-disable-next-line no-prototype-builtins
-        if (this.activeInteractionData.hasOwnProperty(k)) {
-          var interactionData = this.activeInteractionData[k];
-
-          if (interactionData.originalEvent && interactionData.pointerType !== 'touch') {
-            var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, interactionData.originalEvent, interactionData);
-
-            this.processInteractive(interactionEvent, this.layer.scene, this.processPointerOverOut, true);
-          }
-        }
-      }
-
-      this.setCursorMode(this.cursor);
-
-      // TODO
-    }
-
-    /**
-     * Sets the current cursor mode, handling any callbacks or CSS style changes.
-     *
-     * @param {string} mode - cursor mode, a key from the cursorStyles dictionary
-     */
-
-  }, {
-    key: 'setCursorMode',
-    value: function setCursorMode(mode) {
-      mode = mode || 'default';
-      // if the mode didn't actually change, bail early
-      if (this.currentCursorMode === mode) {
-        return;
-      }
-      this.currentCursorMode = mode;
-      var style = this.cursorStyles[mode];
-
-      // only do things if there is a cursor style for it
-      if (style) {
-        switch (typeof style === 'undefined' ? 'undefined' : _typeof(style)) {
-          case 'string':
-            // string styles are handled as cursor CSS
-            this.interactionDOMElement.style.cursor = style;
-            break;
-          case 'function':
-            // functions are just called, and passed the cursor mode
-            style(mode);
-            break;
-          case 'object':
-            // if it is an object, assume that it is a dictionary of CSS styles,
-            // apply it to the interactionDOMElement
-            Object.assign(this.interactionDOMElement.style, style);
-            break;
-          default:
-            break;
-        }
-      } else if (typeof mode === 'string' && !Object.prototype.hasOwnProperty.call(this.cursorStyles, mode)) {
-        // if it mode is a string (not a Symbol) and cursorStyles doesn't have any entry
-        // for the mode, then assume that the dev wants it to be CSS for the cursor.
-        this.interactionDOMElement.style.cursor = mode;
-      }
-    }
-
-    /**
-     * Dispatches an event on the display object that was interacted with
-     *
-     * @param {Object3D} displayObject - the display object in question
-     * @param {string} eventString - the name of the event (e.g, mousedown)
-     * @param {object} eventData - the event data object
-     * @private
-     */
-
-  }, {
-    key: 'triggerEvent',
-    value: function triggerEvent(displayObject, eventString, eventData) {
-      if (!eventData.stopped) {
-        eventData.currentTarget = displayObject;
-        eventData.type = eventString;
-
-        displayObject.emit(eventString, eventData);
-
-        if (displayObject[eventString]) {
-          displayObject[eventString](eventData);
-        }
-      }
-    }
-
-    /**
-     * This function is provides a neat way of crawling through the scene graph and running a
-     * specified function on all interactive objects it finds. It will also take care of hit
-     * testing the interactive objects and passes the hit across in the function.
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - event containing the point that
-     *  is tested for collision
-     * @param {Object3D} displayObject - the displayObject
-     *  that will be hit test (recursively crawls its children)
-     * @param {Function} [func] - the function that will be called on each interactive object. The
-     *  interactionEvent, displayObject and hit will be passed to the function
-     * @param {boolean} [hitTest] - this indicates if the objects inside should be hit test against the point
-     * @param {boolean} [interactive] - Whether the displayObject is interactive
-     * @return {boolean} returns true if the displayObject hit the point
-     */
-
-  }, {
-    key: 'processInteractive',
-    value: function processInteractive(interactionEvent, displayObject, func, hitTest, interactive) {
-      if (!displayObject || !displayObject.visible) {
-        return false;
-      }
-
-      // Took a little while to rework this function correctly! But now it is done and nice and optimised. ^_^
-      //
-      // This function will now loop through all objects and then only hit test the objects it HAS
-      // to, not all of them. MUCH faster..
-      // An object will be hit test if the following is true:
-      //
-      // 1: It is interactive.
-      // 2: It belongs to a parent that is interactive AND one of the parents children have not already been hit.
-      //
-      // As another little optimisation once an interactive object has been hit we can carry on
-      // through the scenegraph, but we know that there will be no more hits! So we can avoid extra hit tests
-      // A final optimisation is that an object is not hit test directly if a child has already been hit.
-
-      interactive = displayObject.interactive || interactive;
-
-      var hit = false;
-      var interactiveParent = interactive;
-
-      if (displayObject.interactiveChildren && displayObject.children) {
-        var children = displayObject.children;
-
-        for (var i = children.length - 1; i >= 0; i--) {
-          var child = children[i];
-
-          // time to get recursive.. if this function will return if something is hit..
-          var childHit = this.processInteractive(interactionEvent, child, func, hitTest, interactiveParent);
-
-          if (childHit) {
-            // its a good idea to check if a child has lost its parent.
-            // this means it has been removed whilst looping so its best
-            if (!child.parent) {
-              continue;
-            }
-
-            // we no longer need to hit test any more objects in this container as we we
-            // now know the parent has been hit
-            interactiveParent = false;
-
-            // If the child is interactive , that means that the object hit was actually
-            // interactive and not just the child of an interactive object.
-            // This means we no longer need to hit test anything else. We still need to run
-            // through all objects, but we don't need to perform any hit tests.
-
-            if (childHit) {
-              if (interactionEvent.target) {
-                hitTest = false;
-              }
-              hit = true;
-            }
-          }
-        }
-      }
-
-      // no point running this if the item is not interactive or does not have an interactive parent.
-      if (interactive) {
-        // if we are hit testing (as in we have no hit any objects yet)
-        // We also don't need to worry about hit testing if once of the displayObjects children
-        // has already been hit - but only if it was interactive, otherwise we need to keep
-        // looking for an interactive child, just in case we hit one
-        if (hitTest && !interactionEvent.target) {
-          if (interactionEvent.intersects[0] && interactionEvent.intersects[0].object === displayObject) {
-            hit = true;
-          }
-        }
-
-        if (displayObject.interactive) {
-          if (hit && !interactionEvent.target) {
-            interactionEvent.data.target = interactionEvent.target = displayObject;
-          }
-
-          if (func) {
-            func(interactionEvent, displayObject, !!hit);
-          }
-        }
-      }
-
-      return hit;
-    }
-
-    /**
-     * Is called when the click is pressed down on the renderer element
-     *
-     * @private
-     * @param {MouseEvent} originalEvent - The DOM event of a click being pressed down
-     */
-
-  }, {
-    key: 'onClick',
-    value: function onClick(originalEvent) {
-      if (!this.isAble()) return;
-      if (originalEvent.type !== 'click') return;
-
-      var events = this.normalizeToPointerData(originalEvent);
-
-      if (this.autoPreventDefault && events[0].isNormalized) {
-        originalEvent.preventDefault();
-      }
-
-      var interactionData = this.getInteractionDataForPointerId(events[0]);
-
-      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, events[0], interactionData);
-
-      interactionEvent.data.originalEvent = originalEvent;
-
-      this.processInteractive(interactionEvent, this.layer.scene, this.processClick, true);
-
-      this.emit('click', interactionEvent);
-    }
-
-    /**
-     * Processes the result of the click check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     * @param {boolean} hit - the result of the hit test on the display object
-     */
-
-  }, {
-    key: 'processClick',
-    value: function processClick(interactionEvent, displayObject, hit) {
-      if (hit) {
-        this.triggerEvent(displayObject, 'click', interactionEvent);
-      }
-    }
-
-    /**
-     * Is called when the pointer button is pressed down on the renderer element
-     *
-     * @private
-     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being pressed down
-     */
-
-  }, {
-    key: 'onPointerDown',
-    value: function onPointerDown(originalEvent) {
-      if (!this.isAble()) return;
-      // if we support touch events, then only use those for touch events, not pointer events
-      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
-
-      var events = this.normalizeToPointerData(originalEvent);
-
-      /**
-       * No need to prevent default on natural pointer events, as there are no side effects
-       * Normalized events, however, may have the double mousedown/touchstart issue on the native android browser,
-       * so still need to be prevented.
-       */
-
-      // Guaranteed that there will be at least one event in events, and all events must have the same pointer type
-
-      if (this.autoPreventDefault && events[0].isNormalized) {
-        originalEvent.preventDefault();
-      }
-
-      var eventLen = events.length;
-
-      for (var i = 0; i < eventLen; i++) {
-        var event = events[i];
-
-        var interactionData = this.getInteractionDataForPointerId(event);
-
-        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
-
-        interactionEvent.data.originalEvent = originalEvent;
-
-        this.processInteractive(interactionEvent, this.layer.scene, this.processPointerDown, true);
-
-        this.emit('pointerdown', interactionEvent);
-        if (event.pointerType === 'touch') {
-          this.emit('touchstart', interactionEvent);
-        } else if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
-          var isRightButton = event.button === 2;
-
-          this.emit(isRightButton ? 'rightdown' : 'mousedown', this.eventData);
-        }
-      }
-    }
-
-    /**
-     * Processes the result of the pointer down check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     * @param {boolean} hit - the result of the hit test on the display object
-     */
-
-  }, {
-    key: 'processPointerDown',
-    value: function processPointerDown(interactionEvent, displayObject, hit) {
-      var data = interactionEvent.data;
-      var id = interactionEvent.data.identifier;
-
-      if (hit) {
-        if (!displayObject.trackedPointers[id]) {
-          displayObject.trackedPointers[id] = new InteractionTrackingData(id);
-        }
-        this.triggerEvent(displayObject, 'pointerdown', interactionEvent);
-
-        if (data.pointerType === 'touch') {
-          displayObject.started = true;
-          this.triggerEvent(displayObject, 'touchstart', interactionEvent);
-        } else if (data.pointerType === 'mouse' || data.pointerType === 'pen') {
-          var isRightButton = data.button === 2;
-
-          if (isRightButton) {
-            displayObject.trackedPointers[id].rightDown = true;
-          } else {
-            displayObject.trackedPointers[id].leftDown = true;
-          }
-
-          this.triggerEvent(displayObject, isRightButton ? 'rightdown' : 'mousedown', interactionEvent);
-        }
-      }
-    }
-
-    /**
-     * Is called when the pointer button is released on the renderer element
-     *
-     * @private
-     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being released
-     * @param {boolean} cancelled - true if the pointer is cancelled
-     * @param {Function} func - Function passed to {@link processInteractive}
-     */
-
-  }, {
-    key: 'onPointerComplete',
-    value: function onPointerComplete(originalEvent, cancelled, func) {
-      var events = this.normalizeToPointerData(originalEvent);
-
-      var eventLen = events.length;
-
-      // if the event wasn't targeting our canvas, then consider it to be pointerupoutside
-      // in all cases (unless it was a pointercancel)
-      var eventAppend = originalEvent.target !== this.interactionDOMElement ? 'outside' : '';
-
-      for (var i = 0; i < eventLen; i++) {
-        var event = events[i];
-
-        var interactionData = this.getInteractionDataForPointerId(event);
-
-        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
-
-        interactionEvent.data.originalEvent = originalEvent;
-
-        // perform hit testing for events targeting our canvas or cancel events
-        this.processInteractive(interactionEvent, this.layer.scene, func, cancelled || !eventAppend);
-
-        this.emit(cancelled ? 'pointercancel' : 'pointerup' + eventAppend, interactionEvent);
-
-        if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
-          var isRightButton = event.button === 2;
-
-          this.emit(isRightButton ? 'rightup' + eventAppend : 'mouseup' + eventAppend, interactionEvent);
-        } else if (event.pointerType === 'touch') {
-          this.emit(cancelled ? 'touchcancel' : 'touchend' + eventAppend, interactionEvent);
-          this.releaseInteractionDataForPointerId(event.pointerId, interactionData);
-        }
-      }
-    }
-
-    /**
-     * Is called when the pointer button is cancelled
-     *
-     * @private
-     * @param {PointerEvent} event - The DOM event of a pointer button being released
-     */
-
-  }, {
-    key: 'onPointerCancel',
-    value: function onPointerCancel(event) {
-      if (!this.isAble()) return;
-      // if we support touch events, then only use those for touch events, not pointer events
-      if (this.supportsTouchEvents && event.pointerType === 'touch') return;
-
-      this.onPointerComplete(event, true, this.processPointerCancel);
-    }
-
-    /**
-     * Processes the result of the pointer cancel check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     */
-
-  }, {
-    key: 'processPointerCancel',
-    value: function processPointerCancel(interactionEvent, displayObject) {
-      var data = interactionEvent.data;
-
-      var id = interactionEvent.data.identifier;
-
-      if (displayObject.trackedPointers[id] !== undefined) {
-        delete displayObject.trackedPointers[id];
-        this.triggerEvent(displayObject, 'pointercancel', interactionEvent);
-
-        if (data.pointerType === 'touch') {
-          this.triggerEvent(displayObject, 'touchcancel', interactionEvent);
-        }
-      }
-    }
-
-    /**
-     * Is called when the pointer button is released on the renderer element
-     *
-     * @private
-     * @param {PointerEvent} event - The DOM event of a pointer button being released
-     */
-
-  }, {
-    key: 'onPointerUp',
-    value: function onPointerUp(event) {
-      if (!this.isAble()) return;
-      // if we support touch events, then only use those for touch events, not pointer events
-      if (this.supportsTouchEvents && event.pointerType === 'touch') return;
-
-      this.onPointerComplete(event, false, this.processPointerUp);
-    }
-
-    /**
-     * Processes the result of the pointer up check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     * @param {boolean} hit - the result of the hit test on the display object
-     */
-
-  }, {
-    key: 'processPointerUp',
-    value: function processPointerUp(interactionEvent, displayObject, hit) {
-      var data = interactionEvent.data;
-
-      var id = interactionEvent.data.identifier;
-
-      var trackingData = displayObject.trackedPointers[id];
-
-      var isTouch = data.pointerType === 'touch';
-
-      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
-
-      // Mouse only
-      if (isMouse) {
-        var isRightButton = data.button === 2;
-
-        var flags = InteractionTrackingData.FLAGS;
-
-        var test = isRightButton ? flags.RIGHT_DOWN : flags.LEFT_DOWN;
-
-        var isDown = trackingData !== undefined && trackingData.flags & test;
-
-        if (hit) {
-          this.triggerEvent(displayObject, isRightButton ? 'rightup' : 'mouseup', interactionEvent);
-
-          if (isDown) {
-            this.triggerEvent(displayObject, isRightButton ? 'rightclick' : 'leftclick', interactionEvent);
-          }
-        } else if (isDown) {
-          this.triggerEvent(displayObject, isRightButton ? 'rightupoutside' : 'mouseupoutside', interactionEvent);
-        }
-        // update the down state of the tracking data
-        if (trackingData) {
-          if (isRightButton) {
-            trackingData.rightDown = false;
-          } else {
-            trackingData.leftDown = false;
-          }
-        }
-      }
-
-      // Pointers and Touches, and Mouse
-      if (isTouch && displayObject.started) {
-        displayObject.started = false;
-        this.triggerEvent(displayObject, 'touchend', interactionEvent);
-      }
-      if (hit) {
-        this.triggerEvent(displayObject, 'pointerup', interactionEvent);
-
-        if (trackingData) {
-          this.triggerEvent(displayObject, 'pointertap', interactionEvent);
-          if (isTouch) {
-            this.triggerEvent(displayObject, 'tap', interactionEvent);
-            // touches are no longer over (if they ever were) when we get the touchend
-            // so we should ensure that we don't keep pretending that they are
-            trackingData.over = false;
-          }
-        }
-      } else if (trackingData) {
-        this.triggerEvent(displayObject, 'pointerupoutside', interactionEvent);
-        if (isTouch) this.triggerEvent(displayObject, 'touchendoutside', interactionEvent);
-      }
-      // Only remove the tracking data if there is no over/down state still associated with it
-      if (trackingData && trackingData.none) {
-        delete displayObject.trackedPointers[id];
-      }
-    }
-
-    /**
-     * Is called when the pointer moves across the renderer element
-     *
-     * @private
-     * @param {PointerEvent} originalEvent - The DOM event of a pointer moving
-     */
-
-  }, {
-    key: 'onPointerMove',
-    value: function onPointerMove(originalEvent) {
-      if (!this.isAble()) return;
-      // if we support touch events, then only use those for touch events, not pointer events
-      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
-
-      var events = this.normalizeToPointerData(originalEvent);
-
-      if (events[0].pointerType === 'mouse') {
-        this.didMove = true;
-
-        this.cursor = null;
-      }
-
-      var eventLen = events.length;
-
-      for (var i = 0; i < eventLen; i++) {
-        var event = events[i];
-
-        var interactionData = this.getInteractionDataForPointerId(event);
-
-        var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
-
-        interactionEvent.data.originalEvent = originalEvent;
-
-        var interactive = event.pointerType === 'touch' ? this.moveWhenInside : true;
-
-        this.processInteractive(interactionEvent, this.layer.scene, this.processPointerMove, interactive);
-        this.emit('pointermove', interactionEvent);
-        if (event.pointerType === 'touch') this.emit('touchmove', interactionEvent);
-        if (event.pointerType === 'mouse' || event.pointerType === 'pen') this.emit('mousemove', interactionEvent);
-      }
-
-      if (events[0].pointerType === 'mouse') {
-        this.setCursorMode(this.cursor);
-
-        // TODO BUG for parents interactive object (border order issue)
-      }
-    }
-
-    /**
-     * Processes the result of the pointer move check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     * @param {boolean} hit - the result of the hit test on the display object
-     */
-
-  }, {
-    key: 'processPointerMove',
-    value: function processPointerMove(interactionEvent, displayObject, hit) {
-      var data = interactionEvent.data;
-
-      var isTouch = data.pointerType === 'touch';
-
-      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
-
-      if (isMouse) {
-        this.processPointerOverOut(interactionEvent, displayObject, hit);
-      }
-
-      if (isTouch && displayObject.started) this.triggerEvent(displayObject, 'touchmove', interactionEvent);
-      if (!this.moveWhenInside || hit) {
-        this.triggerEvent(displayObject, 'pointermove', interactionEvent);
-        if (isMouse) this.triggerEvent(displayObject, 'mousemove', interactionEvent);
-      }
-    }
-
-    /**
-     * Is called when the pointer is moved out of the renderer element
-     *
-     * @private
-     * @param {PointerEvent} originalEvent - The DOM event of a pointer being moved out
-     */
-
-  }, {
-    key: 'onPointerOut',
-    value: function onPointerOut(originalEvent) {
-      if (!this.isAble()) return;
-      // if we support touch events, then only use those for touch events, not pointer events
-      if (this.supportsTouchEvents && originalEvent.pointerType === 'touch') return;
-
-      var events = this.normalizeToPointerData(originalEvent);
-
-      // Only mouse and pointer can call onPointerOut, so events will always be length 1
-      var event = events[0];
-
-      if (event.pointerType === 'mouse') {
-        this.mouseOverRenderer = false;
-        this.setCursorMode(null);
-      }
-
-      var interactionData = this.getInteractionDataForPointerId(event);
-
-      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
-
-      interactionEvent.data.originalEvent = event;
-
-      this.processInteractive(interactionEvent, this.layer.scene, this.processPointerOverOut, false);
-
-      this.emit('pointerout', interactionEvent);
-      if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
-        this.emit('mouseout', interactionEvent);
-      } else {
-        // we can get touchleave events after touchend, so we want to make sure we don't
-        // introduce memory leaks
-        this.releaseInteractionDataForPointerId(interactionData.identifier);
-      }
-    }
-
-    /**
-     * Processes the result of the pointer over/out check and dispatches the event if need be
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The interaction event wrapping the DOM event
-     * @param {Object3D} displayObject - The display object that was tested
-     * @param {boolean} hit - the result of the hit test on the display object
-     */
-
-  }, {
-    key: 'processPointerOverOut',
-    value: function processPointerOverOut(interactionEvent, displayObject, hit) {
-      var data = interactionEvent.data;
-
-      var id = interactionEvent.data.identifier;
-
-      var isMouse = data.pointerType === 'mouse' || data.pointerType === 'pen';
-
-      var trackingData = displayObject.trackedPointers[id];
-
-      // if we just moused over the display object, then we need to track that state
-      if (hit && !trackingData) {
-        trackingData = displayObject.trackedPointers[id] = new InteractionTrackingData(id);
-      }
-
-      if (trackingData === undefined) return;
-
-      if (hit && this.mouseOverRenderer) {
-        if (!trackingData.over) {
-          trackingData.over = true;
-          this.triggerEvent(displayObject, 'pointerover', interactionEvent);
-          if (isMouse) {
-            this.triggerEvent(displayObject, 'mouseover', interactionEvent);
-          }
-        }
-
-        // only change the cursor if it has not already been changed (by something deeper in the
-        // display tree)
-        if (isMouse && this.cursor === null) {
-          this.cursor = displayObject.cursor;
-        }
-      } else if (trackingData.over) {
-        trackingData.over = false;
-        this.triggerEvent(displayObject, 'pointerout', this.eventData);
-        if (isMouse) {
-          this.triggerEvent(displayObject, 'mouseout', interactionEvent);
-        }
-        // if there is no mouse down information for the pointer, then it is safe to delete
-        if (trackingData.none) {
-          delete displayObject.trackedPointers[id];
-        }
-      }
-    }
-
-    /**
-     * Is called when the pointer is moved into the renderer element
-     *
-     * @private
-     * @param {PointerEvent} originalEvent - The DOM event of a pointer button being moved into the renderer view
-     */
-
-  }, {
-    key: 'onPointerOver',
-    value: function onPointerOver(originalEvent) {
-      if (!this.isAble()) return;
-      var events = this.normalizeToPointerData(originalEvent);
-
-      // Only mouse and pointer can call onPointerOver, so events will always be length 1
-      var event = events[0];
-
-      var interactionData = this.getInteractionDataForPointerId(event);
-
-      var interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
-
-      interactionEvent.data.originalEvent = event;
-
-      if (event.pointerType === 'mouse') {
-        this.mouseOverRenderer = true;
-      }
-
-      this.emit('pointerover', interactionEvent);
-      if (event.pointerType === 'mouse' || event.pointerType === 'pen') {
-        this.emit('mouseover', interactionEvent);
-      }
-    }
-
-    /**
-     * Get InteractionData for a given pointerId. Store that data as well
-     *
-     * @private
-     * @param {PointerEvent} event - Normalized pointer event, output from normalizeToPointerData
-     * @return {InteractionData} - Interaction data for the given pointer identifier
-     */
-
-  }, {
-    key: 'getInteractionDataForPointerId',
-    value: function getInteractionDataForPointerId(event) {
-      var pointerId = event.pointerId;
-
-      var interactionData = void 0;
-
-      if (pointerId === MOUSE_POINTER_ID$1 || event.pointerType === 'mouse') {
-        interactionData = this.mouse;
-      } else if (this.activeInteractionData[pointerId]) {
-        interactionData = this.activeInteractionData[pointerId];
-      } else {
-        interactionData = this.interactionDataPool.pop() || new InteractionData();
-        interactionData.identifier = pointerId;
-        this.activeInteractionData[pointerId] = interactionData;
-      }
-      // copy properties from the event, so that we can make sure that touch/pointer specific
-      // data is available
-      interactionData._copyEvent(event);
-
-      return interactionData;
-    }
-
-    /**
-     * Return unused InteractionData to the pool, for a given pointerId
-     *
-     * @private
-     * @param {number} pointerId - Identifier from a pointer event
-     */
-
-  }, {
-    key: 'releaseInteractionDataForPointerId',
-    value: function releaseInteractionDataForPointerId(pointerId) {
-      var interactionData = this.activeInteractionData[pointerId];
-
-      if (interactionData) {
-        delete this.activeInteractionData[pointerId];
-        interactionData._reset();
-        this.interactionDataPool.push(interactionData);
-      }
-    }
-
-    /**
-     * Maps x and y coords from a DOM object and maps them correctly to the three.js view. The
-     * resulting value is stored in the point. This takes into account the fact that the DOM
-     * element could be scaled and positioned anywhere on the screen.
-     *
-     * @param  {Vector2} point - the point that the result will be stored in
-     * @param  {number} x - the x coord of the position to map
-     * @param  {number} y - the y coord of the position to map
-     */
-
-  }, {
-    key: 'mapPositionToPoint',
-    value: function mapPositionToPoint(point, x, y) {
-      var rect = void 0;
-
-      // IE 11 fix
-      if (!this.interactionDOMElement.parentElement) {
-        rect = {
-          x: 0,
-          y: 0,
-          left: 0,
-          top: 0,
-          width: 0,
-          height: 0
-        };
-      } else {
-        rect = this.interactionDOMElement.getBoundingClientRect();
-      }
-
-      point.x = (x - rect.left) / rect.width * 2 - 1;
-      point.y = -((y - rect.top) / rect.height) * 2 + 1;
-    }
-
-    /**
-     * Configure an InteractionEvent to wrap a DOM PointerEvent and InteractionData
-     *
-     * @private
-     * @param {InteractionEvent} interactionEvent - The event to be configured
-     * @param {PointerEvent} pointerEvent - The DOM event that will be paired with the InteractionEvent
-     * @param {InteractionData} interactionData - The InteractionData that will be paired
-     *        with the InteractionEvent
-     * @return {InteractionEvent} the interaction event that was passed in
-     */
-
-  }, {
-    key: 'configureInteractionEventForDOMEvent',
-    value: function configureInteractionEventForDOMEvent(interactionEvent, pointerEvent, interactionData) {
-      interactionEvent.data = interactionData;
-
-      this.mapPositionToPoint(interactionData.global, pointerEvent.clientX, pointerEvent.clientY);
-
-      if (this.layer && this.layer.interactive) this.raycaster.setFromCamera(interactionData.global, this.layer.camera);
-
-      // Not really sure why this is happening, but it's how a previous version handled things TODO: there should be remove
-      if (pointerEvent.pointerType === 'touch') {
-        pointerEvent.globalX = interactionData.global.x;
-        pointerEvent.globalY = interactionData.global.y;
-      }
-
-      interactionData.originalEvent = pointerEvent;
-      interactionEvent._reset();
-      interactionEvent.intersects = this.raycaster.intersectObjects(this.scene.children, true);
-
-      return interactionEvent;
-    }
-
-    /**
-     * Ensures that the original event object contains all data that a regular pointer event would have
-     *
-     * @private
-     * @param {TouchEvent|MouseEvent|PointerEvent} event - The original event data from a touch or mouse event
-     * @return {PointerEvent[]} An array containing a single normalized pointer event, in the case of a pointer
-     *  or mouse event, or a multiple normalized pointer events if there are multiple changed touches
-     */
-
-  }, {
-    key: 'normalizeToPointerData',
-    value: function normalizeToPointerData(event) {
-      var normalizedEvents = [];
-
-      if (this.supportsTouchEvents && event instanceof TouchEvent) {
-        for (var i = 0, li = event.changedTouches.length; i < li; i++) {
-          var touch = event.changedTouches[i];
-
-          if (typeof touch.button === 'undefined') touch.button = event.touches.length ? 1 : 0;
-          if (typeof touch.buttons === 'undefined') touch.buttons = event.touches.length ? 1 : 0;
-          if (typeof touch.isPrimary === 'undefined') {
-            touch.isPrimary = event.touches.length === 1 && event.type === 'touchstart';
-          }
-          if (typeof touch.width === 'undefined') touch.width = touch.radiusX || 1;
-          if (typeof touch.height === 'undefined') touch.height = touch.radiusY || 1;
-          if (typeof touch.tiltX === 'undefined') touch.tiltX = 0;
-          if (typeof touch.tiltY === 'undefined') touch.tiltY = 0;
-          if (typeof touch.pointerType === 'undefined') touch.pointerType = 'touch';
-          if (typeof touch.pointerId === 'undefined') touch.pointerId = touch.identifier || 0;
-          if (typeof touch.pressure === 'undefined') touch.pressure = touch.force || 0.5;
-          touch.twist = 0;
-          touch.tangentialPressure = 0;
-          // TODO: Remove these, as layerX/Y is not a standard, is deprecated, has uneven
-          // support, and the fill ins are not quite the same
-          // offsetX/Y might be okay, but is not the same as clientX/Y when the canvas's top
-          // left is not 0,0 on the page
-          if (typeof touch.layerX === 'undefined') touch.layerX = touch.offsetX = touch.clientX;
-          if (typeof touch.layerY === 'undefined') touch.layerY = touch.offsetY = touch.clientY;
-
-          // mark the touch as normalized, just so that we know we did it
-          touch.isNormalized = true;
-
-          normalizedEvents.push(touch);
-        }
-      } else if (event instanceof MouseEvent && (!this.supportsPointerEvents || !(event instanceof window.PointerEvent))) {
-        if (typeof event.isPrimary === 'undefined') event.isPrimary = true;
-        if (typeof event.width === 'undefined') event.width = 1;
-        if (typeof event.height === 'undefined') event.height = 1;
-        if (typeof event.tiltX === 'undefined') event.tiltX = 0;
-        if (typeof event.tiltY === 'undefined') event.tiltY = 0;
-        if (typeof event.pointerType === 'undefined') event.pointerType = 'mouse';
-        if (typeof event.pointerId === 'undefined') event.pointerId = MOUSE_POINTER_ID$1;
-        if (typeof event.pressure === 'undefined') event.pressure = 0.5;
-        event.twist = 0;
-        event.tangentialPressure = 0;
-
-        // mark the mouse event as normalized, just so that we know we did it
-        event.isNormalized = true;
-
-        normalizedEvents.push(event);
-      } else {
-        normalizedEvents.push(event);
-      }
-
-      return normalizedEvents;
-    }
-
-    /**
-     * Destroys the interaction manager
-     *
-     */
-
-  }, {
-    key: 'destroy',
-    value: function destroy() {
-      this.removeEvents();
-
-      this.removeAllListeners();
-
-      this.renderer = null;
-
-      this.mouse = null;
-
-      this.eventData = null;
-
-      this.interactionDOMElement = null;
-
-      this.onPointerDown = null;
-      this.processPointerDown = null;
-
-      this.onPointerUp = null;
-      this.processPointerUp = null;
-
-      this.onPointerCancel = null;
-      this.processPointerCancel = null;
-
-      this.onPointerMove = null;
-      this.processPointerMove = null;
-
-      this.onPointerOut = null;
-      this.processPointerOverOut = null;
-
-      this.onPointerOver = null;
-
-      this._tempPoint = null;
-    }
-  }]);
-  return InteractionLayer;
-}(three.EventDispatcher);
-
-(function () {
-  var lastTime = 0;
-  var vendors = ['ms', 'moz', 'webkit', 'o'];
-  for (var x = 0; x < vendors.length && !window.requestAnimationFrame; ++x) {
-    window.requestAnimationFrame = window[vendors[x] + 'RequestAnimationFrame'];
-    window.cancelAnimationFrame = window[vendors[x] + 'CancelAnimationFrame'] || window[vendors[x] + 'CancelRequestAnimationFrame'];
-  }
-
-  if (!window.requestAnimationFrame) {
-    window.requestAnimationFrame = function (callback) {
-      var currTime = new Date().getTime();
-      var timeToCall = Math.max(0, 16 - (currTime - lastTime));
-      var id = window.setTimeout(function () {
-        callback(currTime + timeToCall);
-      }, timeToCall);
-      lastTime = currTime + timeToCall;
-      return id;
-    };
-  }
-
-  if (!window.cancelAnimationFrame) {
-    window.cancelAnimationFrame = function (id) {
-      clearTimeout(id);
-    };
-  }
-
-  window.RAF = window.requestAnimationFrame;
-  window.CAF = window.cancelAnimationFrame;
-})();
-
-/**
- * @extends EventDispatcher
- */
-
-var Ticker = function (_EventDispatcher) {
-  inherits(Ticker, _EventDispatcher);
-
-  /**
-   *
-   */
-  function Ticker() {
-    classCallCheck(this, Ticker);
-
-    var _this = possibleConstructorReturn(this, (Ticker.__proto__ || Object.getPrototypeOf(Ticker)).call(this));
-
-    _this.timer = null;
-    _this.started = false;
-
-    /**
-     * pre-time cache
-     *
-     * @member {Number}
-     * @private
-     */
-    _this.pt = 0;
-
-    /**
-     * how long the time through, at this tick
-     *
-     * @member {Number}
-     * @private
-     */
-    _this.snippet = 0;
-
-    _this.start();
-    return _this;
-  }
-
-  /**
-   * start tick loop
-   */
-
-
-  createClass(Ticker, [{
-    key: 'start',
-    value: function start() {
-      var _this2 = this;
-
-      if (this.started) return;
-      var loop = function loop() {
-        _this2.timeline();
-        _this2.emit('tick', { snippet: _this2.snippet });
-        _this2.timer = RAF(loop);
-      };
-      loop();
-    }
-
-    /**
-     * stop tick loop
-     */
-
-  }, {
-    key: 'stop',
-    value: function stop() {
-      CAF(this.timer);
-      this.started = false;
-    }
-
-    /**
-     * get timeline snippet
-     *
-     * @private
-     */
-
-  }, {
-    key: 'timeline',
-    value: function timeline() {
-      this.snippet = Date.now() - this.pt;
-      if (this.pt === 0 || this.snippet > 200) {
-        this.pt = Date.now();
-        this.snippet = Date.now() - this.pt;
-      }
-
-      this.pt += this.snippet;
-    }
-  }]);
-  return Ticker;
-}(three.EventDispatcher);
-
-/**
- * The interaction manager deals with mouse, touch and pointer events. Any DisplayObject can be interactive
- * if its interactive parameter is set to true
- * This manager also supports multitouch.
- *
- * reference to [pixi.js](http://www.pixijs.com/) impl
- *
- * @example
- * import { Scene, PerspectiveCamera, WebGLRenderer, Mesh, BoxGeometry, MeshBasicMaterial } from 'three';
- * import { Interaction } from 'three.interaction';
- * const renderer = new WebGLRenderer({ canvas: canvasElement });
- * const scene = new Scene();
- * const camera = new PerspectiveCamera(60, width / height, 0.1, 100);
- *
- * const interaction = new Interaction(renderer, scene, camera);
- * // then you can bind every interaction event with any mesh which you had `add` into `scene` before
- * const cube = new Mesh(
- *   new BoxGeometry(1, 1, 1),
- *   new MeshBasicMaterial({ color: 0xffffff }),
- * );
- * scene.add(cube);
- * cube.on('touchstart', ev => {
- *   console.log(ev);
- * });
- *
- * cube.on('mousedown', ev => {
- *   console.log(ev);
- * });
- *
- * cube.on('pointerdown', ev => {
- *   console.log(ev);
- * });
- * // and so on ...
- *
- * // you can also listen on parent-node or any display-tree node,
- * // source event will bubble up along with display-tree.
- * // you can stop the bubble-up by invoke ev.stopPropagation function.
- * scene.on('touchstart', ev => {
- *   console.log(ev);
- * })
- *
- * @class
- * @extends InteractionManager
- */
-
-var Interaction = function (_InteractionManager) {
-  inherits(Interaction, _InteractionManager);
-
-  /**
-   * @param {WebGLRenderer} renderer - A reference to the current renderer
-   * @param {Scene} scene - A reference to the current scene
-   * @param {Camera} camera - A reference to the current camera
-   * @param {Object} [options] - The options for the manager.
-   * @param {Boolean} [options.autoPreventDefault=false] - Should the manager automatically prevent default browser actions.
-   * @param {Boolean} [options.autoAttach=false] - Should the manager automatically attach target element.
-   * @param {Number} [options.interactionFrequency=10] - Frequency increases the interaction events will be checked.
-   */
-  function Interaction(renderer, scene, camera, options) {
-    classCallCheck(this, Interaction);
-
-    options = Object.assign({ autoAttach: false }, options);
-
-    /**
-     * a ticker
-     *
-     * @private
-     * @member {Ticker}
-     */
-    var _this = possibleConstructorReturn(this, (Interaction.__proto__ || Object.getPrototypeOf(Interaction)).call(this, renderer, scene, camera, options));
-
-    _this.ticker = new Ticker();
-
-    /**
-     * update for some over event
-     *
-     * @private
-     */
-    _this.update = _this.update.bind(_this);
-
-    _this.on('addevents', function () {
-      _this.ticker.on('tick', _this.update);
-    });
-
-    _this.on('removeevents', function () {
-      _this.ticker.off('tick', _this.update);
-    });
-
-    _this.setTargetElement(_this.renderer.domElement);
-    return _this;
-  }
-
-  return Interaction;
-}(InteractionManager);
-
-exports.InteractionManager = InteractionManager;
-exports.InteractionLayer = InteractionLayer;
-exports.Interaction = Interaction;
-
-Object.defineProperty(exports, '__esModule', { value: true });
-
-})));
-
-
-},{"three":7}],7:[function(require,module,exports){
-arguments[4][2][0].apply(exports,arguments)
-},{"dup":2}],8:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58110,7 +58108,7 @@ var EventDispatcherWithOptions = /*#__PURE__*/function (_EventDispatcher) {
 
 exports["default"] = EventDispatcherWithOptions;
 
-},{"@perry-rylance/event-dispatcher":1}],9:[function(require,module,exports){
+},{"@perry-rylance/event-dispatcher":1}],8:[function(require,module,exports){
 "use strict";
 
 function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
@@ -58223,7 +58221,7 @@ $(window).on("load", function (event) {
   payload.init();
 });
 
-},{"./assets/Assets":11,"./game/Game":14,"./game/Player":16,"./game/weapons/default/Set":27,"camera-controls":3,"stats.js":5,"three":7}],10:[function(require,module,exports){
+},{"./assets/Assets":10,"./game/Game":13,"./game/Player":15,"./game/weapons/default/Set":25,"camera-controls":2,"stats.js":4,"three":6}],9:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58291,7 +58289,7 @@ var Asset = /*#__PURE__*/function () {
 
 exports["default"] = Asset;
 
-},{}],11:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58408,7 +58406,7 @@ var Assets = /*#__PURE__*/function (_EventDispatcher) {
 
 exports["default"] = Assets;
 
-},{"./Collection":12,"@perry-rylance/event-dispatcher":1}],12:[function(require,module,exports){
+},{"./Collection":11,"@perry-rylance/event-dispatcher":1}],11:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58466,12 +58464,12 @@ var Collection = /*#__PURE__*/function () {
 
 exports["default"] = Collection;
 
-},{"./Asset":10}],13:[function(require,module,exports){
+},{"./Asset":9}],12:[function(require,module,exports){
 "use strict";
 
 require("./Payload");
 
-},{"./Payload":9}],14:[function(require,module,exports){
+},{"./Payload":8}],13:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58580,7 +58578,7 @@ Game.STATUS_LOBBY = "lobby";
 Game.STATUS_PLAYING = "playing";
 Game.STATUS_ENDED = "ended";
 
-},{"../EventDispatcherWithOptions":8,"./Player":16,"./UI":17,"./World":19}],15:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":7,"./Player":15,"./UI":16,"./World":18}],14:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58630,7 +58628,7 @@ var Interaction = /*#__PURE__*/function () {
 
 exports["default"] = Interaction;
 
-},{"camera-controls":3,"three.interaction":6}],16:[function(require,module,exports){
+},{"camera-controls":2,"three.interaction":5}],15:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58676,7 +58674,7 @@ var Player = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = Player;
 
-},{"../EventDispatcherWithOptions":8}],17:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":7}],16:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58735,6 +58733,9 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
     $("#launch").on("click", function (event) {
       return _this.onLaunch(event);
     });
+    $("#fire").on("click", function (event) {
+      return _this.onFire(event);
+    });
     return _this;
   }
 
@@ -58763,6 +58764,13 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
       });
     }
   }, {
+    key: "getSelectedWeapon",
+    value: function getSelectedWeapon() {
+      var $option = $("menu#weapons select > option:selected");
+      var weapon = $option.data("payloadWeaponClass");
+      return weapon;
+    }
+  }, {
     key: "onReCenter",
     value: function onReCenter(event) {
       var ship = this.game.currentPlayer.ship;
@@ -58783,6 +58791,32 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
         power: power
       }); // TODO: Lock controls, wait for ship to become stationary
     }
+  }, {
+    key: "onFire",
+    value: function onFire(event) {
+      // NB: Repeated
+      var ship = this.game.currentPlayer.ship;
+      var degrees = $("input[name='degrees']").val();
+      var radians = degrees * Math.PI / 180;
+      var mult = $("input[name='power']").val() / 100;
+      var power = mult * this.game.world.options.ship.launchFullPower;
+      var constructor = this.getSelectedWeapon();
+      var radius = 4 * this.game.world.options.ship.radius;
+      var offset = {
+        x: Math.cos(radians) * radius,
+        y: Math.sin(radians) * radius
+      };
+      var position = {
+        x: ship.object3d.position.x + offset.x,
+        y: ship.object3d.position.y + offset.y
+      };
+      var weapon = new constructor(this.game.world);
+      weapon.fire({
+        degrees: degrees,
+        power: mult * this.game.world.options.projectile.launchFullPower,
+        position: position
+      }); // TODO: Listen for weapon complete event
+    }
   }]);
 
   return UI;
@@ -58790,7 +58824,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = UI;
 
-},{"../EventDispatcherWithOptions":8,"./entities/Compass":20}],18:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":7,"./entities/Compass":19}],17:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58813,7 +58847,7 @@ Units.g2p = Units.graphicsToPhysics;
 var _default = Units;
 exports["default"] = _default;
 
-},{}],19:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58834,8 +58868,6 @@ var _Entity = _interopRequireDefault(require("./entities/Entity"));
 var _Planet = _interopRequireDefault(require("./entities/Planet"));
 
 var _Ship = _interopRequireDefault(require("./entities/Ship"));
-
-var _Emitter = _interopRequireDefault(require("./entities/particles/Emitter"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
@@ -58985,8 +59017,6 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
   }, {
     key: "initShipForPlayer",
     value: function initShipForPlayer(player, options) {
-      var _this3 = this;
-
       // A single debug ship
       // TODO: Move this to a spawn / teleport function on the ship ideally. It'll need to be reused for teleport.
       // NB: Maximum of 64 attempts to place the ship. Placing a ship inside a planet causes very odd behaviour with Box2D
@@ -59011,13 +59041,6 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       }));
       this.add(ship);
       player.ship = ship;
-      $(window).on("keydown", function (event) {
-        if (event.which == 69) {
-          var tempExplosion = new _Emitter["default"](_this3);
-
-          _this3.add(tempExplosion);
-        }
-      }); // tempExplosion.attachTo(ship);
     }
   }, {
     key: "add",
@@ -59177,10 +59200,14 @@ World.defaults = {
     friction: 0.9,
     restitution: 0.15,
     angularDamping: 0.3
+  },
+  projectile: {
+    radius: 10,
+    launchFullPower: 2000
   }
 };
 
-},{"../EventDispatcherWithOptions":8,"./Game":14,"./Interaction":15,"./Units":18,"./entities/Entity":21,"./entities/Planet":22,"./entities/Ship":23,"./entities/particles/Emitter":25}],20:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":7,"./Game":13,"./Interaction":14,"./Units":17,"./entities/Entity":20,"./entities/Planet":21,"./entities/Ship":22}],19:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59333,7 +59360,7 @@ var Compass = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Compass;
 
-},{"./Entity":21}],21:[function(require,module,exports){
+},{"./Entity":20}],20:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59371,6 +59398,7 @@ function _isNativeReflectConstruct() { if (typeof Reflect === "undefined" || !Re
 
 function _getPrototypeOf(o) { _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf : function _getPrototypeOf(o) { return o.__proto__ || Object.getPrototypeOf(o); }; return _getPrototypeOf(o); }
 
+// import Emitter from "./particles/Emitter"; // NB: Circular dependency
 var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
   _inherits(Entity, _EventDispatcherWithO);
 
@@ -59410,8 +59438,11 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
     }
   }, {
     key: "initPhysics",
-    value: function initPhysics() {
-      if (this.b2Body) this.b2Body.entity = this;
+    value: function initPhysics(options) {
+      if (this.b2Body) {
+        this.b2Body.entity = this;
+        if (options && options.position) this.position = options.position;
+      }
     }
   }, {
     key: "initGraphics",
@@ -59516,6 +59547,13 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
       this.b2Body.ApplyLinearImpulse(impulse, this.b2Body.GetWorldCenter());
     }
   }, {
+    key: "explode",
+    value: function explode(options) {
+      var explosion = new Emitter(this);
+      this.world.add(explosion);
+      this.remove();
+    }
+  }, {
     key: "position",
     get: function get() {
       if (this.b2Body) {
@@ -59571,7 +59609,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = Entity;
 
-},{"../../EventDispatcherWithOptions":8,"../Units":18,"../World":19}],22:[function(require,module,exports){
+},{"../../EventDispatcherWithOptions":7,"../Units":17,"../World":18}],21:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60063,7 +60101,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Planet;
 
-},{"../Units":18,"./Entity":21,"d3-delaunay":4}],23:[function(require,module,exports){
+},{"../Units":17,"./Entity":20,"d3-delaunay":3}],22:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60181,100 +60219,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Ship;
 
-},{"../Units":18,"./Entity":21}],24:[function(require,module,exports){
-"use strict";
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports["default"] = void 0;
-
-var _THREE = require("THREE");
-
-function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
-
-function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
-
-function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
-
-function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function"); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, writable: true, configurable: true } }); if (superClass) _setPrototypeOf(subClass, superClass); }
-
-function _setPrototypeOf(o, p) { _setPrototypeOf = Object.setPrototypeOf || function _setPrototypeOf(o, p) { o.__proto__ = p; return o; }; return _setPrototypeOf(o, p); }
-
-function _createSuper(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
-
-function _possibleConstructorReturn(self, call) { if (call && (_typeof(call) === "object" || typeof call === "function")) { return call; } return _assertThisInitialized(self); }
-
-function _assertThisInitialized(self) { if (self === void 0) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return self; }
-
-function _isNativeReflectConstruct() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Date.prototype.toString.call(Reflect.construct(Date, [], function () {})); return true; } catch (e) { return false; } }
-
-function _getPrototypeOf(o) { _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf : function _getPrototypeOf(o) { return o.__proto__ || Object.getPrototypeOf(o); }; return _getPrototypeOf(o); }
-
-var AnimatedParticleGeometry = /*#__PURE__*/function (_PlaneGeometry) {
-  _inherits(AnimatedParticleGeometry, _PlaneGeometry);
-
-  var _super = _createSuper(AnimatedParticleGeometry);
-
-  function AnimatedParticleGeometry(size, cells, frames) {
-    var _this;
-
-    _classCallCheck(this, AnimatedParticleGeometry);
-
-    _this = _super.call(this, size, size);
-    Payload.assert(cells instanceof THREE.Vector2);
-    Payload.assert(Number.isInteger(frames));
-    _this._size = size;
-    _this._cells = cells;
-    _this._numFrames = frames;
-    _this._frame = 0;
-    return _this;
-  }
-
-  _createClass(AnimatedParticleGeometry, [{
-    key: "clone",
-    value: function clone() {
-      return new AnimatedParticleGeometry(this._size, this._cells, this._numFrames);
-    }
-  }, {
-    key: "frame",
-    get: function get() {
-      return this._frame;
-    },
-    set: function set(value) {
-      var frame = value % this._numFrames;
-      var column = frame % this._cells.x;
-      var row = Math.floor(frame / this._cells.x);
-      var faces = this.faceVertexUvs[0];
-      var w = 1 / this._cells.x;
-      var h = -1 / this._cells.y;
-      var x = w * column;
-      var y = 1 - -h * row;
-      faces[0][0].x = x;
-      faces[0][0].y = y + h;
-      faces[0][1].x = x;
-      faces[0][1].y = y;
-      faces[0][2].x = x + w;
-      faces[0][2].y = y + h;
-      faces[1][0].x = x;
-      faces[1][0].y = y;
-      faces[1][1].x = x + w;
-      faces[1][1].y = y;
-      faces[1][2].x = x + w;
-      faces[1][2].y = y + h;
-      this.uvsNeedUpdate = true;
-      this._frame = frame;
-    }
-  }]);
-
-  return AnimatedParticleGeometry;
-}(_THREE.PlaneGeometry);
-
-exports["default"] = AnimatedParticleGeometry;
-
-},{"THREE":2}],25:[function(require,module,exports){
+},{"../Units":17,"./Entity":20}],23:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60284,7 +60229,7 @@ exports["default"] = void 0;
 
 var _Entity2 = _interopRequireDefault(require("../Entity"));
 
-var _AnimatedParticleGeometry = _interopRequireDefault(require("./AnimatedParticleGeometry"));
+var _Units = _interopRequireDefault(require("../../Units"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
@@ -60314,141 +60259,51 @@ function _isNativeReflectConstruct() { if (typeof Reflect === "undefined" || !Re
 
 function _getPrototypeOf(o) { _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf : function _getPrototypeOf(o) { return o.__proto__ || Object.getPrototypeOf(o); }; return _getPrototypeOf(o); }
 
-var Emitter = /*#__PURE__*/function (_Entity) {
-  _inherits(Emitter, _Entity);
+var Projectile = /*#__PURE__*/function (_Entity) {
+  _inherits(Projectile, _Entity);
 
-  var _super = _createSuper(Emitter);
+  var _super = _createSuper(Projectile);
 
-  function Emitter(world, options) {
-    var _this;
+  function Projectile(world, options) {
+    _classCallCheck(this, Projectile);
 
-    _classCallCheck(this, Emitter);
-
-    var scale = 2;
-    if (!Emitter.defaultGeometry) Emitter.defaultGeometry = new _AnimatedParticleGeometry["default"](80 * scale, new THREE.Vector2(5, 5), 23);
-    if (!Emitter.defaultMaterial) Emitter.defaultMaterial = new THREE.MeshBasicMaterial({
-      depthWrite: false,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      map: payload.assets.sprites.assets["explosion.png"].resource
-    });
-    var defaults = {
-      geometry: Emitter.defaultGeometry,
-      material: Emitter.defaultMaterial,
-      maxParticleCount: 23,
-      life: 23 * 2,
-      fadeOverTime: false,
-      spawnRate: 0,
-      spawnPoint: new THREE.Vector3(0, 0, 0),
-      spawnInitial: 23,
-      callbacks: {
-        position: function position() {
-          return new THREE.Vector3(scale * 0.5 * (Math.random() - 0.5), scale * 0.5 * (Math.random() - 0.5), 0);
-        },
-        rotation: function rotation() {
-          return Math.random() * 2 * Math.PI;
-        },
-        scale: function scale() {
-          return new THREE.Vector3(1, 1, 1);
-        },
-        velocity: function velocity() {
-          return new THREE.Vector3(scale * 2 * (Math.random() - 0.5), scale * 2 * (Math.random() - 0.5), 0);
-        }
-      }
-    };
-    if (!options) options = {};
-    options = $.extend(true, defaults, options);
-    _this = _super.call(this, world, options);
-    _this._particles = [];
-    _this._nextParticle = 0;
-    _this._attachment = null;
-    _this._spawnAccumulator = _this.spawnInitial;
-    return _this;
+    return _super.call(this, world, options);
   }
 
-  _createClass(Emitter, [{
+  _createClass(Projectile, [{
+    key: "initPhysics",
+    value: function initPhysics(options) {
+      var radius = this.world.options.projectile.radius * _Units["default"].GRAPHICS_TO_PHYSICS;
+      var circleShape = new Box2D.b2CircleShape();
+      circleShape.set_m_radius(radius);
+      var fixtureDef = new Box2D.b2FixtureDef();
+      fixtureDef.set_density(2.5);
+      fixtureDef.set_friction(0.6);
+      fixtureDef.set_shape(circleShape);
+      this.b2BodyDef = new Box2D.b2BodyDef();
+      this.b2BodyDef.set_type(Box2D.b2_dynamicBody);
+      this.b2Body = this.world.b2World.CreateBody(this.b2BodyDef);
+      this.b2Body.CreateFixture(fixtureDef);
+
+      _get(_getPrototypeOf(Projectile.prototype), "initPhysics", this).call(this, options);
+    }
+  }, {
     key: "initGraphics",
-    value: function initGraphics() {
-      this.object3d = new THREE.Object3D();
-    }
-  }, {
-    key: "detach",
-    value: function detach() {// TODO: Remove removal listener
-    }
-  }, {
-    key: "attachTo",
-    value: function attachTo(entity) {
-      Payload.assert(entity instanceof _Entity2["default"]);
-      this._attachment = entity; // TODO: Listen for removal, detach and remove self on removal
-    }
-  }, {
-    key: "spawn",
-    value: function spawn() {
-      var particle;
-      var index = this._nextParticle++;
-      this._nextParticle %= this.maxParticleCount;
+    value: function initGraphics(options) {
+      var radius = this.world.options.projectile.radius; // NB: Temporary
 
-      if (this._particles[index]) {
-        particle = this._particles[index];
-        particle.visible = true;
-      } else {
-        particle = new THREE.Mesh(this.geometry.clone(), this.material.clone());
-
-        this._particles.push(particle);
-
-        this.object3d.add(particle);
-      }
-
-      particle.age = 0;
-      particle.position.copy(this.callbacks.position());
-      particle.position.add(this.spawnPoint);
-      particle.scale.copy(this.callbacks.scale());
-      particle.rotation.z = this.callbacks.rotation();
-      particle.velocity = this.callbacks.velocity();
-    }
-  }, {
-    key: "updateParticle",
-    value: function updateParticle(particle) {
-      if (this.fadeOverTime) particle.material.opacity = 1 - particle.age / this.life;
-      particle.position.add(particle.velocity);
-      particle.age++;
-      if (particle.geometry instanceof _AnimatedParticleGeometry["default"]) particle.geometry.frame = Math.floor(particle.age / 2); // NB: 30fps
-    }
-  }, {
-    key: "update",
-    value: function update() {
-      var i, spawnCount;
-      if (this._attachment) this.spawnPoint.copy(this._attachment.object3d.position);
-
-      _get(_getPrototypeOf(Emitter.prototype), "update", this).call(this);
-
-      if (--this.life <= 0) {
-        this.remove();
-        return;
-      }
-
-      this._spawnAccumulator += this.spawnRate;
-
-      if ((spawnCount = Math.floor(this._spawnAccumulator)) > 0) {
-        this._spawnAccumulator -= spawnCount;
-
-        for (i = 0; i < spawnCount; i++) {
-          this.spawn();
-        }
-      }
-
-      for (i = 0; i < this._particles.length; i++) {
-        this.updateParticle(this._particles[i]);
-      }
+      this.object3d = new THREE.Mesh(new THREE.SphereGeometry(radius), new THREE.MeshBasicMaterial({
+        color: 0xff0000
+      }));
     }
   }]);
 
-  return Emitter;
+  return Projectile;
 }(_Entity2["default"]);
 
-exports["default"] = Emitter;
+exports["default"] = Projectile;
 
-},{"../Entity":21,"./AnimatedParticleGeometry":24}],26:[function(require,module,exports){
+},{"../../Units":17,"../Entity":20}],24:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60457,6 +60312,8 @@ Object.defineProperty(exports, "__esModule", {
 exports["default"] = void 0;
 
 var _Weapon2 = _interopRequireDefault(require("./Weapon"));
+
+var _Projectile = _interopRequireDefault(require("../../entities/weapons/Projectile"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
@@ -60487,16 +60344,21 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
 
   var _super = _createSuper(Bomb);
 
-  function Bomb() {
+  function Bomb(world) {
     _classCallCheck(this, Bomb);
 
-    return _super.call(this);
+    return _super.call(this, world);
   }
 
   _createClass(Bomb, [{
     key: "fire",
-    value: function fire() {
-      alert("Firing");
+    value: function fire(options) {
+      var projectile = new _Projectile["default"](this.world, options);
+      projectile.on("collision", function (event) {
+        projectile.explode();
+      });
+      projectile.launch(options);
+      this.world.add(projectile);
     }
   }]);
 
@@ -60505,7 +60367,7 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
 
 exports["default"] = Bomb;
 
-},{"./Weapon":28}],27:[function(require,module,exports){
+},{"../../entities/weapons/Projectile":23,"./Weapon":26}],25:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60545,7 +60407,7 @@ var _default = {
 };
 exports["default"] = _default;
 
-},{"./instantiatable/LargeBomb":29,"./instantiatable/MediumBomb":30,"./instantiatable/MegaBomb":31,"./instantiatable/SmallBomb":32}],28:[function(require,module,exports){
+},{"./instantiatable/LargeBomb":27,"./instantiatable/MediumBomb":28,"./instantiatable/MegaBomb":29,"./instantiatable/SmallBomb":30}],26:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60584,10 +60446,14 @@ var Weapon = /*#__PURE__*/function (_EventDispatcher) {
 
   var _super = _createSuper(Weapon);
 
-  function Weapon() {
+  function Weapon(world) {
+    var _this;
+
     _classCallCheck(this, Weapon);
 
-    return _super.call(this);
+    _this = _super.call(this);
+    _this.world = world;
+    return _this;
   }
 
   _createClass(Weapon, [{
@@ -60602,7 +60468,7 @@ var Weapon = /*#__PURE__*/function (_EventDispatcher) {
 
 exports["default"] = Weapon;
 
-},{"@perry-rylance/event-dispatcher":1}],29:[function(require,module,exports){
+},{"@perry-rylance/event-dispatcher":1}],27:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60641,10 +60507,10 @@ var LargeBomb = /*#__PURE__*/function (_Bomb) {
 
   var _super = _createSuper(LargeBomb);
 
-  function LargeBomb() {
+  function LargeBomb(world) {
     _classCallCheck(this, LargeBomb);
 
-    return _super.call(this);
+    return _super.call(this, world);
   }
 
   _createClass(LargeBomb, [{
@@ -60664,7 +60530,7 @@ var LargeBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = LargeBomb;
 
-},{"../Bomb":26}],30:[function(require,module,exports){
+},{"../Bomb":24}],28:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60703,10 +60569,10 @@ var MediumBomb = /*#__PURE__*/function (_Bomb) {
 
   var _super = _createSuper(MediumBomb);
 
-  function MediumBomb() {
+  function MediumBomb(world) {
     _classCallCheck(this, MediumBomb);
 
-    return _super.call(this);
+    return _super.call(this, world);
   }
 
   _createClass(MediumBomb, [{
@@ -60726,7 +60592,7 @@ var MediumBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MediumBomb;
 
-},{"../Bomb":26}],31:[function(require,module,exports){
+},{"../Bomb":24}],29:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60765,10 +60631,10 @@ var MegaBomb = /*#__PURE__*/function (_Bomb) {
 
   var _super = _createSuper(MegaBomb);
 
-  function MegaBomb() {
+  function MegaBomb(world) {
     _classCallCheck(this, MegaBomb);
 
-    return _super.call(this);
+    return _super.call(this, world);
   }
 
   _createClass(MegaBomb, [{
@@ -60788,7 +60654,7 @@ var MegaBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MegaBomb;
 
-},{"../Bomb":26}],32:[function(require,module,exports){
+},{"../Bomb":24}],30:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60827,10 +60693,10 @@ var SmallBomb = /*#__PURE__*/function (_Bomb) {
 
   var _super = _createSuper(SmallBomb);
 
-  function SmallBomb() {
+  function SmallBomb(world) {
     _classCallCheck(this, SmallBomb);
 
-    return _super.call(this);
+    return _super.call(this, world);
   }
 
   _createClass(SmallBomb, [{
@@ -60850,7 +60716,7 @@ var SmallBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = SmallBomb;
 
-},{"../Bomb":26}],33:[function(require,module,exports){
+},{"../Bomb":24}],31:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.MTLLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -61234,7 +61100,7 @@ THREE.MTLLoader.MaterialCreator.prototype = {
   }
 };
 
-},{}],34:[function(require,module,exports){
+},{}],32:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.OBJLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -61812,6 +61678,6 @@ THREE.OBJLoader = function () {
   return OBJLoader;
 }();
 
-},{}]},{},[13,33,34])
+},{}]},{},[12,31,32])
 
 });//# sourceMappingURL=entry.js.map

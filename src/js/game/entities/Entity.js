@@ -1,6 +1,7 @@
 import EventDispatcherWithOptions from "../../EventDispatcherWithOptions";
 import Units from "../Units";
 import World from "../World";
+// import Emitter from "./particles/Emitter"; // NB: Circular dependency
 
 export default class Entity extends EventDispatcherWithOptions
 {
@@ -110,10 +111,15 @@ export default class Entity extends EventDispatcherWithOptions
 		);
 	}
 	
-	initPhysics()
+	initPhysics(options)
 	{
 		if(this.b2Body)
+		{
 			this.b2Body.entity = this;
+			
+			if(options && options.position)
+				this.position = options.position;
+		}
 	}
 	
 	initGraphics()
@@ -246,5 +252,13 @@ export default class Entity extends EventDispatcherWithOptions
 		
 		this.b2Body.SetAwake(1);
 		this.b2Body.ApplyLinearImpulse(impulse, this.b2Body.GetWorldCenter());
+	}
+	
+	explode(options)
+	{
+		var explosion = new Emitter(this);
+		this.world.add(explosion);
+		
+		this.remove();
 	}
 }

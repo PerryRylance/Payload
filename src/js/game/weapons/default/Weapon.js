@@ -2,9 +2,11 @@ import EventDispatcher from "@perry-rylance/event-dispatcher";
 
 export default class Weapon extends EventDispatcher
 {
-	constructor()
+	constructor(world)
 	{
 		super();
+		
+		this.world = world;
 	}
 	
 	fire(options)

@@ -2,9 +2,9 @@ import Bomb from "../Bomb";
 
 export default class SmallBomb extends Bomb
 {
-	constructor()
+	constructor(world)
 	{
-		super();
+		super(world);
 	}
 	
 	get radius()
