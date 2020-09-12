@@ -101,7 +101,6 @@ export default class Entity extends EventDispatcherWithOptions
 		bbox.setFromObject(target);
 		
 		this._isometricContainer	= new THREE.Object3D();
-		this._isometricContainer.position.y	= -(bbox.min.z + bbox.max.z) / 2;
 		this._isometricContainer.rotation.set(-60 * Math.PI / 180, 0, 0);
 		
 		this._isometricContainer.add(target);

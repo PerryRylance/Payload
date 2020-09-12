@@ -54723,22 +54723,31 @@ var Compass = /*#__PURE__*/function (_Entity) {
         geom: new THREE.PlaneGeometry(radius, radius),
         material: new THREE.MeshBasicMaterial({
           map: payload.assets.sprites.compass.assets["outer.png"].resource,
-          transparent: true
+          transparent: true,
+          depthTest: false,
+          depthWrite: false
         })
       };
       this.inner = {
         geom: new THREE.PlaneGeometry(radius * 0.7, radius * 0.7),
         material: new THREE.MeshBasicMaterial({
           map: payload.assets.sprites.compass.inner.random(this.world.game).resource,
-          transparent: true
+          transparent: true,
+          depthTest: false,
+          depthWrite: false
         })
       };
       this.outer.mesh = new THREE.Mesh(this.outer.geom, this.outer.material);
       this.inner.mesh = new THREE.Mesh(this.inner.geom, this.inner.material);
-      this.object3d.add(this.outer.mesh);
-      this.object3d.add(this.inner.mesh);
+      var group = new THREE.Group();
+      group.add(this.outer.mesh);
+      group.add(this.inner.mesh); // Compensate for sprite rotation
+
+      group.rotation.z = 45 * Math.PI / 180;
+      this.object3d.add(this._makeIsometric(group));
       this.innerAngularVelocity = 0;
       this.innerRemainingFrames = 0;
+      this.zIndex = 200;
     }
   }, {
     key: "update",
@@ -54845,7 +54854,6 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
       this._isIsometric = true;
       bbox.setFromObject(target);
       this._isometricContainer = new THREE.Object3D();
-      this._isometricContainer.position.y = -(bbox.min.z + bbox.max.z) / 2;
 
       this._isometricContainer.rotation.set(-60 * Math.PI / 180, 0, 0);
 
@@ -55565,9 +55573,13 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
       bbox.setFromObject(this.model);
       var scale = radius / Math.abs(Math.max(bbox.min.x - bbox.max.x, bbox.min.y - bbox.max.y, bbox.min.z - bbox.max.z)) * 2;
-      this.model.scale.set(scale, scale, scale); // Isometric display
+      this.model.scale.set(scale, scale, scale); // Center model
 
-      this.object3d.add(this._makeIsometric(this.model)); // Debugging...
+      var container = this._makeIsometric(this.model);
+
+      container.position.y = -(bbox.min.z + bbox.max.z) / 2; // Isometric display
+
+      this.object3d.add(container); // Debugging...
 
       /*var geometry = new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2);
       var material = new THREE.MeshBasicMaterial({color: 0xff0000});

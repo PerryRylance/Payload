@@ -70,8 +70,13 @@ export default class Ship extends Entity
 		
 		this.model.scale.set(scale, scale, scale);
 		
+		// Center model
+		let container = this._makeIsometric(this.model);
+		
+		container.position.y	= -(bbox.min.z + bbox.max.z) / 2;
+		
 		// Isometric display
-		this.object3d.add(this._makeIsometric(this.model));
+		this.object3d.add(container);
 		
 		// Debugging...
 		/*var geometry = new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2);

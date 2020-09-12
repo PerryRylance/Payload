@@ -17,7 +17,9 @@ export default class Compass extends Entity
 			geom:				new THREE.PlaneGeometry(radius, radius),
 			material:			new THREE.MeshBasicMaterial({
 				map:			payload.assets.sprites.compass.assets["outer.png"].resource,
-				transparent:	true
+				transparent:	true,
+				depthTest:		false,
+				depthWrite:		false
 			})
 		};
 		
@@ -25,18 +27,29 @@ export default class Compass extends Entity
 			geom:				new THREE.PlaneGeometry(radius * 0.7, radius * 0.7),
 			material:			new THREE.MeshBasicMaterial({
 				map:			payload.assets.sprites.compass.inner.random(this.world.game).resource,
-				transparent:	true
+				transparent:	true,
+				depthTest:		false,
+				depthWrite:		false
 			})
 		};
 		
 		this.outer.mesh		= new THREE.Mesh(this.outer.geom, this.outer.material);
 		this.inner.mesh		= new THREE.Mesh(this.inner.geom, this.inner.material);
 		
-		this.object3d.add(this.outer.mesh);
-		this.object3d.add(this.inner.mesh);
+		let group = new THREE.Group();
+		
+		group.add(this.outer.mesh);
+		group.add(this.inner.mesh);
+		
+		// Compensate for sprite rotation
+		group.rotation.z = 45 * Math.PI / 180;
+		
+		this.object3d.add(this._makeIsometric(group));
 		
 		this.innerAngularVelocity = 0;
 		this.innerRemainingFrames = 0;
+		
+		this.zIndex = 200;
 	}
 	
 	update()
