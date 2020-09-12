@@ -41,12 +41,25 @@ export default class Ship extends Entity
 		let radius = options.radius;
 		let bbox = new THREE.Box3();
 		
+		// Temporary code
 		this.model = payload.assets.models.ships.assets["Low_poly_UFO.obj"].resource;
 		this.material = payload.assets.models.ships.assets["Low_poly_UFO.mtl"].resource.materials.UFO_texture;
 		
+		// Temporary, remove alpha map
 		this.material.alphaMap = null;
+		
+		// Apply the material
+		this.model.traverse( (child) => {
+			
+			if(child.isMesh)
+				child.material = this.material;
+			
+		} );
+		
+		// Correct rotation
 		this.model.rotation.x = 90 * Math.PI / 180;
 
+		// Scale the modal to match the ships radius
 		bbox.setFromObject(this.model);
 		
 		let scale = radius / Math.abs( Math.max(
@@ -57,22 +70,8 @@ export default class Ship extends Entity
 		
 		this.model.scale.set(scale, scale, scale);
 		
-		this.model.traverse( (child) => {
-			
-			if(child.isMesh)
-				child.material = this.material;
-			
-		} );
-		
-		var container = new THREE.Object3D();
-		container.position.y = -(bbox.min.z + bbox.max.z) / 2;
-		
-		container.add(this.model);
-		
-		this.modelContainer = container;
-		this.modelContainer.rotation.set(-60 * Math.PI / 180, 0, 0);
-		
-		this.object3d.add(container);
+		// Isometric display
+		this.object3d.add(this._makeIsometric(this.model));
 		
 		// Debugging...
 		/*var geometry = new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2);
@@ -82,11 +81,5 @@ export default class Ship extends Entity
 		this.object3d.add(mesh);*/
 		
 		this.zIndex = 100;
-	}
-	
-	_setAngle(angle)
-	{
-		this.modelContainer.rotation.z = angle;
-		// this.box.rotation.z = angle;
 	}
 }

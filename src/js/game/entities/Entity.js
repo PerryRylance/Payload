@@ -69,6 +69,11 @@ export default class Entity extends EventDispatcherWithOptions
 		return true;
 	}
 	
+	get isIsometric()
+	{
+		return this._isIsometric;
+	}
+	
 	initPhysics()
 	{
 		if(this.b2Body)
@@ -77,7 +82,7 @@ export default class Entity extends EventDispatcherWithOptions
 	
 	initGraphics()
 	{
-		
+		this._isIsometric = false;
 	}
 	
 	initAudio()
@@ -85,9 +90,31 @@ export default class Entity extends EventDispatcherWithOptions
 		
 	}
 	
+	_makeIsometric(target)
+	{
+		Payload.assert(!this.isIsometric);
+		
+		let bbox = new THREE.Box3();
+		
+		this._isIsometric			= true;
+		
+		bbox.setFromObject(target);
+		
+		this._isometricContainer	= new THREE.Object3D();
+		this._isometricContainer.position.y	= -(bbox.min.z + bbox.max.z) / 2;
+		this._isometricContainer.rotation.set(-60 * Math.PI / 180, 0, 0);
+		
+		this._isometricContainer.add(target);
+		
+		return this._isometricContainer;
+	}
+	
 	_setAngle(angle)
 	{
-		this.object3d.rotation.z = angle;
+		if(!this.isIsometric)
+			this.object3d.rotation.z = angle;
+		else
+			this._isometricContainer.rotation.z = angle;
 	}
 	
 	update()

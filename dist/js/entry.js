@@ -54831,14 +54831,32 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
     }
   }, {
     key: "initGraphics",
-    value: function initGraphics() {}
+    value: function initGraphics() {
+      this._isIsometric = false;
+    }
   }, {
     key: "initAudio",
     value: function initAudio() {}
   }, {
+    key: "_makeIsometric",
+    value: function _makeIsometric(target) {
+      Payload.assert(!this.isIsometric);
+      var bbox = new THREE.Box3();
+      this._isIsometric = true;
+      bbox.setFromObject(target);
+      this._isometricContainer = new THREE.Object3D();
+      this._isometricContainer.position.y = -(bbox.min.z + bbox.max.z) / 2;
+
+      this._isometricContainer.rotation.set(-60 * Math.PI / 180, 0, 0);
+
+      this._isometricContainer.add(target);
+
+      return this._isometricContainer;
+    }
+  }, {
     key: "_setAngle",
     value: function _setAngle(angle) {
-      this.object3d.rotation.z = angle;
+      if (!this.isIsometric) this.object3d.rotation.z = angle;else this._isometricContainer.rotation.z = angle;
     }
   }, {
     key: "update",
@@ -54947,6 +54965,11 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
     get: function get() {
       if (!this.b2Body) return false;
       return true;
+    }
+  }, {
+    key: "isIsometric",
+    get: function get() {
+      return this._isIsometric;
     }
   }]);
 
@@ -55527,23 +55550,24 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
       this.object3d = new THREE.Object3D();
       var radius = options.radius;
-      var bbox = new THREE.Box3();
+      var bbox = new THREE.Box3(); // Temporary code
+
       this.model = payload.assets.models.ships.assets["Low_poly_UFO.obj"].resource;
-      this.material = payload.assets.models.ships.assets["Low_poly_UFO.mtl"].resource.materials.UFO_texture;
-      this.material.alphaMap = null;
-      this.model.rotation.x = 90 * Math.PI / 180;
-      bbox.setFromObject(this.model);
-      var scale = radius / Math.abs(Math.max(bbox.min.x - bbox.max.x, bbox.min.y - bbox.max.y, bbox.min.z - bbox.max.z)) * 2;
-      this.model.scale.set(scale, scale, scale);
+      this.material = payload.assets.models.ships.assets["Low_poly_UFO.mtl"].resource.materials.UFO_texture; // Temporary, remove alpha map
+
+      this.material.alphaMap = null; // Apply the material
+
       this.model.traverse(function (child) {
         if (child.isMesh) child.material = _this.material;
-      });
-      var container = new THREE.Object3D();
-      container.position.y = -(bbox.min.z + bbox.max.z) / 2;
-      container.add(this.model);
-      this.modelContainer = container;
-      this.modelContainer.rotation.set(-60 * Math.PI / 180, 0, 0);
-      this.object3d.add(container); // Debugging...
+      }); // Correct rotation
+
+      this.model.rotation.x = 90 * Math.PI / 180; // Scale the modal to match the ships radius
+
+      bbox.setFromObject(this.model);
+      var scale = radius / Math.abs(Math.max(bbox.min.x - bbox.max.x, bbox.min.y - bbox.max.y, bbox.min.z - bbox.max.z)) * 2;
+      this.model.scale.set(scale, scale, scale); // Isometric display
+
+      this.object3d.add(this._makeIsometric(this.model)); // Debugging...
 
       /*var geometry = new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2);
       var material = new THREE.MeshBasicMaterial({color: 0xff0000});
@@ -55552,11 +55576,6 @@ var Ship = /*#__PURE__*/function (_Entity) {
       this.object3d.add(mesh);*/
 
       this.zIndex = 100;
-    }
-  }, {
-    key: "_setAngle",
-    value: function _setAngle(angle) {
-      this.modelContainer.rotation.z = angle; // this.box.rotation.z = angle;
     }
   }]);
 
