@@ -7,8 +7,6 @@ import Entity from "./entities/Entity";
 import Planet from "./entities/Planet";
 import Ship from "./entities/Ship";
 
-import Emitter from "./entities/particles/Emitter";
-
 export default class World extends EventDispatcherWithOptions
 {
 	constructor(game, options)
@@ -184,18 +182,6 @@ export default class World extends EventDispatcherWithOptions
 		
 		this.add(ship);
 		player.ship = ship;
-		
-		$(window).on("keydown", (event) => {
-			
-			if(event.which == 69)
-			{
-				var tempExplosion = new Emitter(this);
-				this.add(tempExplosion);
-			}
-			
-		});
-		
-		// tempExplosion.attachTo(ship);
 	}
 	
 	add(entity)
@@ -409,5 +395,9 @@ World.defaults = {
 		friction:			0.9,
 		restitution:		0.15,
 		angularDamping:		0.3
+	},
+	projectile: {
+		radius:				10,
+		launchFullPower:	2000
 	}
 };
