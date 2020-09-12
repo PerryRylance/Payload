@@ -111,12 +111,44 @@ dialog.loading
     animation-duration: 2.0s;
 }
 
-select.weapon
+input, select.weapon
 {
     background: black;
     padding: 0.5em;
-    width: 100%;
+    
     font-size: 12pt;
     border: 1px solid #fe0005;
     box-shadow: 0 0 5px #fe0005;
+}
+
+select.weapon
+{
+	width: 100%;
+}
+
+#degrees-and-power
+{
+	display: flex;
+	padding-bottom: 0.5em;
+	align-items: center;
+}
+
+#degrees-and-power input
+{
+	flex: 1;
+	width: 16px; /* For some reason this is required for flex to work properly */
+	text-align: right;
+}
+
+#degrees-and-power span.degrees
+{
+    font-family: sans-serif; /* The degrees symbol in the Earth Orbiter font is almost invisible */
+    padding-right: 0.33em;
+}
+
+#hud input,
+	#hud select,
+	#hud button
+{
+	outline: none;
 }

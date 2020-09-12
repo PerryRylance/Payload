@@ -58753,8 +58753,14 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
   }, {
     key: "initCompass",
     value: function initCompass() {
+      var _this2 = this;
+
       this.compass = new _Compass["default"](this.game.world);
       this.game.world.add(this.compass);
+      $("input[name='degrees']").on("input", function (event) {
+        var radians = $(event.target).val() * Math.PI / 180;
+        _this2.compass.angle = radians;
+      });
     }
   }, {
     key: "onReCenter",
@@ -58770,7 +58776,8 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
     value: function onLaunch(event) {
       var ship = this.game.currentPlayer.ship;
       var degrees = $("input[name='degrees']").val();
-      var power = this.game.world.options.ship.launchFullPower;
+      var mult = $("input[name='power']").val() / 100;
+      var power = mult * this.game.world.options.ship.launchFullPower;
       ship.launch({
         degrees: degrees,
         power: power
@@ -59311,8 +59318,7 @@ var Compass = /*#__PURE__*/function (_Entity) {
       var mouse = new THREE.Vector2(event.clientX, event.clientY); // First orientate the compass
 
       var delta = new THREE.Vector2();
-      delta.subVectors(mouse, screen); // delta.normalize();
-
+      delta.subVectors(mouse, screen);
       this.angle = Math.atan2(-delta.y, delta.x / 2); // Now populate the UI field
 
       var degrees = Math.atan2(-delta.y, delta.x) / Math.PI * 180;

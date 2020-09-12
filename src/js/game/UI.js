@@ -39,6 +39,13 @@ export default class UI extends EventDispatcherWithOptions
 		this.compass = new Compass(this.game.world);
 		
 		this.game.world.add(this.compass);
+		
+		$("input[name='degrees']").on("input", (event) => {
+			
+			let radians = $(event.target).val() * Math.PI / 180;
+			this.compass.angle = radians;
+			
+		});
 	}
 	
 	onReCenter(event)
@@ -55,7 +62,8 @@ export default class UI extends EventDispatcherWithOptions
 	{
 		let ship		= this.game.currentPlayer.ship;
 		let degrees		= $("input[name='degrees']").val();
-		let power		= this.game.world.options.ship.launchFullPower;
+		let mult		= $("input[name='power']").val() / 100;
+		let power		= mult * this.game.world.options.ship.launchFullPower;
 		
 		ship.launch({
 			degrees:	degrees,

@@ -109,7 +109,6 @@ export default class Compass extends Entity
 		let delta		= new THREE.Vector2();
 		
 		delta.subVectors(mouse, screen);
-		// delta.normalize();
 		
 		this.angle		= Math.atan2(-delta.y, delta.x / 2);
 		
