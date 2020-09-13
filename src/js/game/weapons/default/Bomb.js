@@ -10,9 +10,9 @@ export default class Bomb extends Weapon
 	
 	fire(options)
 	{
-		var projectile = new Projectile(this.world, options);
+		let projectile		= new Projectile(this.world, options);
 		
-		projectile.on("collision", (event) => {
+		projectile.once("collision", (event) => {
 			projectile.explode();
 		});
 		

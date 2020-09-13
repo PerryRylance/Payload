@@ -1,7 +1,9 @@
 import EventDispatcherWithOptions from "../../EventDispatcherWithOptions";
 import Units from "../Units";
 import World from "../World";
-// import Emitter from "./particles/Emitter"; // NB: Circular dependency
+
+// import Emitter from "./particles/Emitter";
+// import Explosion from "./Explosion";
 
 export default class Entity extends EventDispatcherWithOptions
 {
@@ -122,9 +124,13 @@ export default class Entity extends EventDispatcherWithOptions
 		}
 	}
 	
-	initGraphics()
+	initGraphics(options)
 	{
 		this._isIsometric = false;
+		
+		// NB: Physics will take care of positioning, if we don't have a physical body, then set position here
+		if(!this.b2Body && options && options.position)
+			this.position = options.position;
 	}
 	
 	initAudio()
@@ -199,7 +205,11 @@ export default class Entity extends EventDispatcherWithOptions
 	{
 		if(this.b2Body)
 		{
-			this.world.b2World.DestroyBody(this.b2Body);
+			if(!this.world.b2World.IsLocked())
+				this.world.b2World.DestroyBody(this.b2Body);
+			else
+				this.world.bodyDestructionQueue.push(this.b2Body);
+			
 			this.b2Body = null;
 		}
 		
@@ -256,7 +266,13 @@ export default class Entity extends EventDispatcherWithOptions
 	
 	explode(options)
 	{
-		var explosion = new Emitter(this);
+		if(!options)
+			options = {};
+		
+		var explosion = new Payload.Explosion(this.world, $.extend(true, options, {
+			position: this.position
+		}));
+		
 		this.world.add(explosion);
 		
 		this.remove();

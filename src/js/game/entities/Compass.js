@@ -59,7 +59,7 @@ export default class Compass extends Entity
 		this.innerRemainingFrames = 0;
 		
 		// Z Index
-		this.zIndex = 200;
+		this.zIndex = 110;
 	}
 	
 	update()
