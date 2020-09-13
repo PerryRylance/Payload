@@ -7,6 +7,9 @@ import Entity from "./entities/Entity";
 import Planet from "./entities/Planet";
 import Ship from "./entities/Ship";
 
+import Emitter from "./entities/particles/Emitter";
+import Explosion from "./entities/Explosion";
+
 export default class World extends EventDispatcherWithOptions
 {
 	constructor(game, options)
@@ -21,6 +24,8 @@ export default class World extends EventDispatcherWithOptions
 		super(options);
 		
 		this.options	= options;
+		
+		this._bodyDestructionQueue = [];
 		
 		this.game		= game;
 		this.entities	= [];
@@ -184,6 +189,11 @@ export default class World extends EventDispatcherWithOptions
 		player.ship = ship;
 	}
 	
+	get bodyDestructionQueue()
+	{
+		return this._bodyDestructionQueue;
+	}
+	
 	add(entity)
 	{
 		Payload.assert(entity instanceof Entity, "Not an Entity");
@@ -293,6 +303,9 @@ export default class World extends EventDispatcherWithOptions
 		var start	= new Date().getTime();
 		
 		this.b2World.Step(1 / 30, 10, 10);
+		
+		for(var i = this._bodyDestructionQueue.length - 1; i >= 0; i--)
+			this.b2World.DestroyBody(this._bodyDestructionQueue.pop());
 		
 		var end		= new Date().getTime();
 		var delta	= end - start;

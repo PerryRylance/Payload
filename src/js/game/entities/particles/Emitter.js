@@ -5,17 +5,12 @@ export default class Emitter extends Entity
 {
 	constructor(world, options)
 	{
-		var scale = 2;
-		
 		if(!Emitter.defaultGeometry)
-			Emitter.defaultGeometry = new AnimatedParticleGeometry(80 * scale, new THREE.Vector2(5, 5), 23);
+			Emitter.defaultGeometry = new THREE.PlaneGeometry(10, 10);
 		
 		if(!Emitter.defaultMaterial)
 			Emitter.defaultMaterial = new THREE.MeshBasicMaterial({
-				depthWrite:		false,
-				transparent:	true,
-				blending:		THREE.AdditiveBlending,
-				map:			payload.assets.sprites.assets["explosion.png"].resource
+				color: 0xff0000
 			});
 		
 		var defaults = {
@@ -32,10 +27,10 @@ export default class Emitter extends Entity
 			spawnInitial:		23,
 			
 			callbacks: {
-				position:		function() { return new THREE.Vector3(scale * 0.5 * (Math.random() - 0.5), scale * 0.5 * (Math.random() - 0.5), 0); },
-				rotation:		function() { return Math.random() * 2 * Math.PI },
+				position:		function() { return new THREE.Vector3(0, 0, 0); },
+				rotation:		function() { return 0; },
 				scale:			function() { return new THREE.Vector3(1, 1, 1); },
-				velocity:		function() { return new THREE.Vector3(scale * 2 * (Math.random() - 0.5), scale * 2 * (Math.random() - 0.5), 0); }
+				velocity:		function() { return new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, 0); }
 			}
 			
 		};
@@ -53,9 +48,11 @@ export default class Emitter extends Entity
 		this._spawnAccumulator = this.spawnInitial;
 	}
 	
-	initGraphics()
+	initGraphics(options)
 	{
 		this.object3d = new THREE.Object3D();
+		
+		super.initGraphics(options);
 	}
 	
 	detach()
@@ -145,7 +142,5 @@ export default class Emitter extends Entity
 		
 		for(i = 0; i < this._particles.length; i++)
 			this.updateParticle(this._particles[i]);
-		
-		
 	}
 }
