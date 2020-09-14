@@ -473,6 +473,8 @@ export default class Planet extends Entity
 		entity.b2Body.ApplyForceToCenter(delta);
 	}
 	
+	
+	
 	applyFixtureDamage(fixture)
 	{
 		if(this._fixtureDestructionQueue.indexOf(fixture) > -1)
