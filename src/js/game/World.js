@@ -69,8 +69,8 @@ export default class World extends EventDispatcherWithOptions
 			
 			if(entityA && entityB)
 			{
-				entityA.onCollision(entityB, fixtureA, fixtureB);
-				entityB.onCollision(entityA, fixtureB, fixtureA);
+				entityA._onCollision(entityB, fixtureA, fixtureB);
+				entityB._onCollision(entityA, fixtureB, fixtureA);
 			}
 			
 		};

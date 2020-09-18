@@ -58969,8 +58969,9 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
         Payload.assert(entityB != null, "No entity associated with body, did you forget to call Payload.Entity.initPhysics after initalising body?");
 
         if (entityA && entityB) {
-          entityA.onCollision(entityB, fixtureA, fixtureB);
-          entityB.onCollision(entityA, fixtureB, fixtureA);
+          entityA._onCollision(entityB, fixtureA, fixtureB);
+
+          entityB._onCollision(entityA, fixtureB, fixtureA);
         }
       }; // Empty implementations for unused methods.
 
@@ -59443,6 +59444,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
 
     Payload.assert(world instanceof _World["default"]);
     _this = _super.call(this, options);
+    _this._collisionEventQueue = [];
     _this.world = world;
     _this.zIndex = 0;
 
@@ -59509,6 +59511,12 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
   }, {
     key: "update",
     value: function update() {
+      while (this._collisionEventQueue.length > 0) {
+        var event = this._collisionEventQueue.shift();
+
+        this.trigger(event);
+      }
+
       if (this.b2Body && this.object3d) {
         var position = this.b2Body.GetWorldCenter();
         var angle = this.b2Body.GetAngle();
@@ -59532,9 +59540,9 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
       }
     }
   }, {
-    key: "onCollision",
-    value: function onCollision(entity, localFixture, otherFixture) {
-      this.trigger({
+    key: "_onCollision",
+    value: function _onCollision(entity, localFixture, otherFixture) {
+      this._collisionEventQueue.push({
         type: "collision",
         entity: entity
       });
@@ -59660,6 +59668,8 @@ var _AnimatedParticleGeometry = _interopRequireDefault(require("./particles/Anim
 
 var _Units = _interopRequireDefault(require("../Units"));
 
+var _Planet = _interopRequireDefault(require("./Planet"));
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
 function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
@@ -59698,10 +59708,10 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
 
     _classCallCheck(this, Explosion);
 
-    var scale = 2;
+    var scale = options.radius ? options.radius / 25 : 1;
     var cells = new THREE.Vector2(5, 5);
     var frames = 23;
-    _this = _super.call(this, world, $.extend(true, options, {
+    _this = _super.call(this, world, $.extend(true, {
       radius: 50,
       maxParticleCount: 23,
       life: 23 * 2,
@@ -59719,7 +59729,7 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
           return new THREE.Vector3(scale * 2 * (Math.random() - 0.5), scale * 2 * (Math.random() - 0.5), 0);
         }
       }
-    }));
+    }, options));
     _this.geometry = new _AnimatedParticleGeometry["default"](80 * scale, cells, frames);
     _this.material = new THREE.MeshBasicMaterial({
       depthWrite: false,
@@ -59727,32 +59737,52 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
       blending: THREE.AdditiveBlending,
       map: payload.assets.sprites.assets["explosion.png"].resource
     });
+    _this._physicsQueryDone = false;
     return _this;
   }
 
   _createClass(Explosion, [{
-    key: "initPhysics",
-    value: function initPhysics(options) {
-      Payload.assert(!isNaN(options.radius));
-      var radius = options.radius * _Units["default"];
-      var circleShape = new Box2D.b2CircleShape();
-      var fixtureDef = new Box2D.b2FixtureDef();
-      circleShape.set_m_radius(radius * _Units["default"].GRAPHICS_TO_PHYSICS);
-      fixtureDef.set_shape(circleShape);
-      var bodyDef = new Box2D.b2BodyDef(); // NB: This could be kinematic, no?
-
-      bodyDef.set_type(Box2D.b2_dynamicBody);
-      this.b2Body = this.world.b2World.CreateBody(this.b2BodyDef);
-      this.b2Body.CreateFixture(fixtureDef);
-
-      _get(_getPrototypeOf(Explosion.prototype), "initPhysics", this).call(this, options);
-    }
-  }, {
     key: "initGraphics",
     value: function initGraphics(options) {
-      _get(_getPrototypeOf(Explosion.prototype), "initGraphics", this).call(this, options);
+      _get(_getPrototypeOf(Explosion.prototype), "initGraphics", this).call(this, options); // TODO: Remove debug code
 
+
+      var geom = new THREE.CircleGeometry(this.radius, 16);
+      var material = new THREE.MeshBasicMaterial({
+        color: 0xff0000
+      });
+      var mesh = new THREE.Mesh(geom, material);
+      this.object3d.add(mesh);
       this.zIndex = 200;
+    }
+  }, {
+    key: "update",
+    value: function update() {
+      _get(_getPrototypeOf(Explosion.prototype), "update", this).call(this);
+
+      if (!this._physicsQueryDone) {
+        var callback = new Box2D.JSQueryCallback();
+
+        callback.ReportFixture = function (fixturePtr) {
+          var fixture = Box2D.wrapPointer(fixturePtr, Box2D.b2Fixture);
+          var body = fixture.GetBody();
+          var entity = body.entity; // TODO: Check that at least one point is within range, because we are querying a square
+
+          if (entity instanceof _Planet["default"]) entity.applyFixtureDamage(fixture); // TODO: Propel ships
+
+          return true;
+        };
+
+        var halfRadius = this.radius / 2 * _Units["default"].GRAPHICS_TO_PHYSICS;
+        var aabb = new Box2D.b2AABB();
+        var position = this.position;
+        position.x *= _Units["default"].GRAPHICS_TO_PHYSICS;
+        position.y *= _Units["default"].GRAPHICS_TO_PHYSICS;
+        aabb.set_lowerBound(new Box2D.b2Vec2(position.x - halfRadius, position.y - halfRadius));
+        aabb.set_upperBound(new Box2D.b2Vec2(position.x + halfRadius, position.y + halfRadius));
+        this.world.b2World.QueryAABB(callback, aabb);
+        this._physicsQueryDone = true;
+      }
     }
   }]);
 
@@ -59765,7 +59795,7 @@ jQuery(function ($) {
   Payload.Explosion = Explosion;
 });
 
-},{"../Units":18,"./particles/AnimatedParticleGeometry":25,"./particles/Emitter":26}],23:[function(require,module,exports){
+},{"../Units":18,"./Planet":23,"./particles/AnimatedParticleGeometry":25,"./particles/Emitter":26}],23:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59896,7 +59926,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
 
       for (var i = 0; i < inner; i++) {
         var a = game.random() * 2 * Math.PI;
-        var r = radius * 0.9 * Math.pow(game.random(), 1 / power);
+        var r = radius * Math.pow(game.random(), 1 / power);
         sites.push([Math.sin(a) * r, Math.cos(a) * r]);
       }
     }
@@ -60158,23 +60188,83 @@ var Planet = /*#__PURE__*/function (_Entity) {
       this._fixtureDestructionQueue.push(fixture);
     }
   }, {
-    key: "handleMeshDestruction",
-    value: function handleMeshDestruction() {
+    key: "getFaceArea",
+    value: function getFaceArea(face) {
+      var va = this.vertices[face.a];
+      var vb = this.vertices[face.b];
+      var vc = this.vertices[face.c];
+      var x1 = va[0];
+      var x2 = vb[0];
+      var x3 = vc[0];
+      var y1 = va[1];
+      var y2 = vb[1];
+      var y3 = vc[1];
+      return Math.abs(0.5 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)));
+    }
+  }, {
+    key: "getArea",
+    value: function getArea() {
       var _this3 = this;
 
-      return;
+      var area = 0;
+      this.geometry.faces.forEach(function (face) {
+        area += _this3.getFaceArea(face);
+      });
+      return area;
+    }
+  }, {
+    key: "getFaceCentroid",
+    value: function getFaceCentroid(face) {
+      var va = this.vertices[face.a];
+      var vb = this.vertices[face.b];
+      var vc = this.vertices[face.c];
+      var x1 = va[0];
+      var x2 = vb[0];
+      var x3 = vc[0];
+      var y1 = va[1];
+      var y2 = vb[1];
+      var y3 = vc[1];
+      return {
+        x: (x1 + x2 + x3) / 3,
+        y: (y1 + y2 + y3) / 3
+      };
+    }
+  }, {
+    key: "getCentroid",
+    value: function getCentroid() {
+      var _this4 = this;
+
+      var result = {
+        x: 0,
+        y: 0
+      };
+      this.geometry.faces.forEach(function (face) {
+        var centroid = _this4.getFaceCentroid(face);
+
+        result.x += centroid.x;
+        result.y += centroid.y;
+      });
+      result.x /= this.geometry.faces.length;
+      result.y /= this.geometry.faces.length;
+      return result;
+    }
+  }, {
+    key: "handleMeshDestruction",
+    value: function handleMeshDestruction() {
+      var _this5 = this;
+
       var self = this;
       var updateMesh = this._fixtureDestructionQueue.length > 0;
 
       while (this._fixtureDestructionQueue.length) {
         var fixture = this._fixtureDestructionQueue.pop();
 
-        fixtures.faces.forEach(function (face) {
-          var index = _this3.geometry.faces.indexOf(face);
+        fixture.faces.forEach(function (face) {
+          var index = _this5.geometry.faces.indexOf(face);
 
-          _this3.geometry.faces.splice(index, 1);
+          _this5.geometry.faces.splice(index, 1);
 
-          _this3.geometry.faceVertexUvs[0].splice(index, 1);
+          _this5.geometry.faceVertexUvs[0].splice(index, 1);
         });
         this.b2Body.DestroyFixture(fixture);
       }
@@ -60190,45 +60280,11 @@ var Planet = /*#__PURE__*/function (_Entity) {
       } // Calculate new center of mass and area
 
 
-      var vertexIDsByKey = {};
-      var areaRemaining = 0;
-      var initialArea = Math.PI * (this._radius * this._radius);
-
-      function area(ia, ib, ic) {
-        var va = self.vertices[ia];
-        var vb = self.vertices[ib];
-        var vc = self.vertices[ic];
-        var x1 = va[0];
-        var x2 = vb[0];
-        var x3 = vc[0];
-        var y1 = va[1];
-        var y2 = vb[1];
-        var y3 = vc[1];
-        return Math.abs(0.5 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)));
-      }
-
-      for (var i = 0; i < this.geometry.faces.length; i++) {
-        var face = this.geometry.faces[i];
-        vertexIDsByKey[face.a] = true;
-        vertexIDsByKey[face.b] = true;
-        vertexIDsByKey[face.c] = true;
-        areaRemaining += area(face.a, face.b, face.c);
-      }
-
-      var usedVertexIDs = Object.keys(vertexIDsByKey);
-      var centerOfMass = {
-        x: 0,
-        y: 0
-      };
-      usedVertexIDs.forEach(function (index) {
-        var vertex = self._vertices[index];
-        centerOfMass.x += vertex[0];
-        centerOfMass.y += vertex[1];
-      });
-      centerOfMass.x /= usedVertexIDs.length;
-      centerOfMass.y /= usedVertexIDs.length;
-      this.b2CenterOfGravity = new Box2D.b2Vec2(Payload.Units.g2p(centerOfMass.x), Payload.Units.g2p(centerOfMass.y));
-      if (areaDestroyed > 0) this._destructionGravityMultiplier = areaDestroyed / initialArea;
+      var areaInitial = Math.PI * (this._radius * this._radius);
+      var areaRemaining = this.getArea();
+      this._destructionGravityMultiplier = areaRemaining / areaInitial;
+      var centroid = this.getCentroid();
+      this.b2CenterOfGravity = new Box2D.b2Vec2(centroid.x * _Units["default"].GRAPHICS_TO_PHYSICS, centroid.y * _Units["default"].GRAPHICS_TO_PHYSICS);
     }
   }, {
     key: "handleGravity",
@@ -60242,8 +60298,10 @@ var Planet = /*#__PURE__*/function (_Entity) {
   }, {
     key: "update",
     value: function update() {
-      this.handleMeshDestruction();
+      _get(_getPrototypeOf(Planet.prototype), "update", this).call(this);
+
       this.handleGravity();
+      this.handleMeshDestruction();
     }
   }, {
     key: "isAffectedByGravity",
@@ -60774,9 +60832,13 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
   _createClass(Bomb, [{
     key: "fire",
     value: function fire(options) {
+      var _this = this;
+
       var projectile = new _Projectile["default"](this.world, options);
       projectile.once("collision", function (event) {
-        projectile.explode();
+        projectile.explode({
+          radius: _this.radius
+        });
       });
       projectile.launch(options);
       this.world.add(projectile);

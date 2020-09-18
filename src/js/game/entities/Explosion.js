@@ -1,16 +1,17 @@
 import Emitter from "./particles/Emitter";
 import AnimatedParticleGeometry from "./particles/AnimatedParticleGeometry";
 import Units from "../Units";
+import Planet from "./Planet";
 
 export default class Explosion extends Emitter
 {
 	constructor(world, options)
 	{
-		let scale	= 2;
+		let scale	= (options.radius ? options.radius / 25 : 1);
 		let cells	= new THREE.Vector2(5, 5);
 		let frames	= 23;
 		
-		super(world, $.extend(true, options, {
+		super(world, $.extend(true, {
 			radius:				50,
 			maxParticleCount:	23,
 			life:				23 * 2,
@@ -18,11 +19,20 @@ export default class Explosion extends Emitter
 			spawnRate:			0,
 			spawnInitial:		23,
 			callbacks: {
-				position:		function() { return new THREE.Vector3(scale * 0.5 * (Math.random() - 0.5), scale * 0.5 * (Math.random() - 0.5), 0); },
-				rotation:		function() { return Math.random() * 2 * Math.PI },
-				velocity:		function() { return new THREE.Vector3(scale * 2 * (Math.random() - 0.5), scale * 2 * (Math.random() - 0.5), 0); }
+				position:		function() { return new THREE.Vector3(
+					scale * 0.5 * (Math.random() - 0.5), 
+					scale * 0.5 * (Math.random() - 0.5), 
+					0);
+				},
+				rotation:		function() { 
+					return Math.random() * 2 * Math.PI 
+				},
+				velocity:		function() { return new THREE.Vector3(
+					scale * 2 * (Math.random() - 0.5), 
+					scale * 2 * (Math.random() - 0.5), 0); 
+				}
 			}
-		}));
+		}, options));
 		
 		this.geometry = new AnimatedParticleGeometry(80 * scale, cells, frames);
 		
@@ -32,36 +42,62 @@ export default class Explosion extends Emitter
 			blending:		THREE.AdditiveBlending,
 			map:			payload.assets.sprites.assets["explosion.png"].resource
 		});
-	}
-	
-	initPhysics(options)
-	{
-		Payload.assert(!isNaN(options.radius));
 		
-		let radius		= options.radius * Units;
-		let circleShape	= new Box2D.b2CircleShape();
-		let fixtureDef	= new Box2D.b2FixtureDef();
-		
-		circleShape.set_m_radius(radius * Units.GRAPHICS_TO_PHYSICS);
-		
-		fixtureDef.set_shape( circleShape );
-		
-		let bodyDef		= new Box2D.b2BodyDef();
-		
-		// NB: This could be kinematic, no?
-		bodyDef.set_type(Box2D.b2_dynamicBody);
-		
-		this.b2Body		= this.world.b2World.CreateBody(this.b2BodyDef);
-		this.b2Body.CreateFixture( fixtureDef );
-		
-		super.initPhysics(options);
+		this._physicsQueryDone = false;
 	}
 	
 	initGraphics(options)
 	{
 		super.initGraphics(options);
 		
+		// TODO: Remove debug code
+		var geom		= new THREE.CircleGeometry(this.radius, 16);
+		var material	= new THREE.MeshBasicMaterial({color: 0xff0000});
+		var mesh		= new THREE.Mesh(geom, material);
+		
+		this.object3d.add(mesh);
+		
 		this.zIndex = 200;
+	}
+	
+	update()
+	{
+		super.update();
+		
+		if(!this._physicsQueryDone)
+		{
+			var callback = new Box2D.JSQueryCallback();
+			
+			callback.ReportFixture = function(fixturePtr)
+			{
+				var fixture	= Box2D.wrapPointer(fixturePtr, Box2D.b2Fixture);
+				var body	= fixture.GetBody();
+				var entity	= body.entity;
+				
+				// TODO: Check that at least one point is within range, because we are querying a square
+				
+				if(entity instanceof Planet)
+					entity.applyFixtureDamage(fixture);
+				
+				// TODO: Propel ships
+				
+				return true;
+			}
+			
+			var halfRadius	= this.radius / 2 * Units.GRAPHICS_TO_PHYSICS;
+			var aabb		= new Box2D.b2AABB();
+			var position	= this.position;
+			
+			position.x		*= Units.GRAPHICS_TO_PHYSICS;
+			position.y		*= Units.GRAPHICS_TO_PHYSICS;
+			
+			aabb.set_lowerBound(new Box2D.b2Vec2(position.x - halfRadius, position.y - halfRadius));
+			aabb.set_upperBound(new Box2D.b2Vec2(position.x + halfRadius, position.y + halfRadius));
+			
+			this.world.b2World.QueryAABB(callback, aabb);
+			
+			this._physicsQueryDone = true;
+		}
 	}
 }
 

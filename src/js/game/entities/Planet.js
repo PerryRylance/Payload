@@ -124,7 +124,7 @@ export default class Planet extends Entity
 		for(var i = 0; i < inner; i++)
 		{
 			var a = game.random() * 2 * Math.PI;
-			var r = radius * 0.9 * Math.pow(game.random(), 1 / power);
+			var r = radius * Math.pow(game.random(), 1 / power);
 			
 			sites.push([
 				Math.sin(a) * r,
@@ -473,8 +473,6 @@ export default class Planet extends Entity
 		entity.b2Body.ApplyForceToCenter(delta);
 	}
 	
-	
-	
 	applyFixtureDamage(fixture)
 	{
 		if(this._fixtureDestructionQueue.indexOf(fixture) > -1)
@@ -483,10 +481,79 @@ export default class Planet extends Entity
 		this._fixtureDestructionQueue.push(fixture);
 	}
 	
+	getFaceArea(face)
+	{
+		let va = this.vertices[face.a];
+		let vb = this.vertices[face.b];
+		let vc = this.vertices[face.c];
+		
+		let x1 = va[0];
+		let x2 = vb[0];
+		let x3 = vc[0];
+		
+		let y1 = va[1];
+		let y2 = vb[1];
+		let y3 = vc[1];
+		
+		return Math.abs(0.5*(x1*(y2-y3)+x2*(y3-y1)+x3*(y1-y2)));
+	}
+	
+	getArea()
+	{
+		var area = 0;
+		
+		this.geometry.faces.forEach( (face) => {
+			
+			area += this.getFaceArea(face);
+			
+		});
+		
+		return area;
+	}
+	
+	getFaceCentroid(face)
+	{
+		let va = this.vertices[face.a];
+		let vb = this.vertices[face.b];
+		let vc = this.vertices[face.c];
+		
+		let x1 = va[0];
+		let x2 = vb[0];
+		let x3 = vc[0];
+		
+		let y1 = va[1];
+		let y2 = vb[1];
+		let y3 = vc[1];
+		
+		return {
+			x: (x1 + x2 + x3) / 3,
+			y: (y1 + y2 + y3) / 3
+		};
+	}
+	
+	getCentroid()
+	{
+		let result = {
+			x: 0,
+			y: 0
+		};
+		
+		this.geometry.faces.forEach( face => {
+			
+			var centroid = this.getFaceCentroid(face);
+			result.x += centroid.x;
+			result.y += centroid.y;
+			
+		} );
+		
+		result.x	/= this.geometry.faces.length;
+		result.y	/= this.geometry.faces.length;
+		
+		return result;
+	}
+	
 	handleMeshDestruction()
 	{
-		return;
-		
 		var self = this;
 		var updateMesh = this._fixtureDestructionQueue.length > 0;
 		
@@ -494,7 +561,7 @@ export default class Planet extends Entity
 		{
 			var fixture = this._fixtureDestructionQueue.pop();
 			
-			fixtures.faces.forEach( (face) => {
+			fixture.faces.forEach( (face) => {
 				
 				var index = this.geometry.faces.indexOf(face);
 				this.geometry.faces.splice(index, 1);
@@ -520,60 +587,17 @@ export default class Planet extends Entity
 		}
 		
 		// Calculate new center of mass and area
-		var vertexIDsByKey = {};
-		var areaRemaining = 0;
-		var initialArea = Math.PI * (this._radius * this._radius);
+		let areaInitial		= Math.PI * (this._radius * this._radius);
+		let areaRemaining	= this.getArea();
 		
-		function area(ia, ib, ic)
-		{
-			var va = self.vertices[ia];
-			var vb = self.vertices[ib];
-			var vc = self.vertices[ic];
-			
-			var x1 = va[0];
-			var x2 = vb[0];
-			var x3 = vc[0];
-			
-			var y1 = va[1];
-			var y2 = vb[1];
-			var y3 = vc[1];
-			
-			return Math.abs(0.5*(x1*(y2-y3)+x2*(y3-y1)+x3*(y1-y2)));
-		}
+		this._destructionGravityMultiplier = areaRemaining / areaInitial;
 		
-		for(var i = 0; i < this.geometry.faces.length; i++)
-		{
-			var face = this.geometry.faces[i];
-			
-			vertexIDsByKey[face.a] = true;
-			vertexIDsByKey[face.b] = true;
-			vertexIDsByKey[face.c] = true;
-			
-			areaRemaining += area(face.a, face.b, face.c);
-		}
-		
-		var usedVertexIDs = Object.keys(vertexIDsByKey);
-		var centerOfMass = {x: 0, y: 0};
-		
-		usedVertexIDs.forEach(function(index) {
-			
-			var vertex = self._vertices[index];
-			
-			centerOfMass.x += vertex[0];
-			centerOfMass.y += vertex[1];
-			
-		});
-		
-		centerOfMass.x /= usedVertexIDs.length;
-		centerOfMass.y /= usedVertexIDs.length;
+		let centroid		= this.getCentroid();
 		
 		this.b2CenterOfGravity = new Box2D.b2Vec2(
-			Payload.Units.g2p(centerOfMass.x),
-			Payload.Units.g2p(centerOfMass.y)
+			centroid.x * Units.GRAPHICS_TO_PHYSICS,
+			centroid.y * Units.GRAPHICS_TO_PHYSICS
 		);
-		
-		if(areaDestroyed > 0)
-			this._destructionGravityMultiplier = areaDestroyed / initialArea;
 	}
 	
 	handleGravity()
@@ -591,7 +615,9 @@ export default class Planet extends Entity
 	
 	update()
 	{
-		this.handleMeshDestruction();
+		super.update();
+		
 		this.handleGravity();
+		this.handleMeshDestruction();
 	}
 }

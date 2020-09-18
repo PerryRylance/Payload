@@ -13,6 +13,8 @@ export default class Entity extends EventDispatcherWithOptions
 		
 		super(options);
 		
+		this._collisionEventQueue = [];
+		
 		this.world = world;
 		this.zIndex = 0;
 		
@@ -166,6 +168,12 @@ export default class Entity extends EventDispatcherWithOptions
 	
 	update()
 	{
+		while(this._collisionEventQueue.length > 0)
+		{
+			var event = this._collisionEventQueue.shift();
+			this.trigger(event);
+		}
+		
 		if(this.b2Body && this.object3d)
 		{
 			var position	= this.b2Body.GetWorldCenter();
@@ -193,9 +201,9 @@ export default class Entity extends EventDispatcherWithOptions
 		}
 	}
 	
-	onCollision(entity, localFixture, otherFixture)
+	_onCollision(entity, localFixture, otherFixture)
 	{
-		this.trigger({
+		this._collisionEventQueue.push({
 			type:	"collision",
 			entity:	entity
 		});
