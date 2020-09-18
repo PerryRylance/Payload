@@ -61123,7 +61123,7 @@ var MegaBomb = /*#__PURE__*/function (_Bomb) {
   _createClass(MegaBomb, [{
     key: "radius",
     get: function get() {
-      return 60;
+      return 300;
     }
   }, {
     key: "damage",
