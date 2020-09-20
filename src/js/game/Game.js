@@ -41,6 +41,9 @@ export default class Game extends EventDispatcherWithOptions
 		this.weapons	= Payload.weapons["default"];
 		this.ui			= new UI(this);
 		
+		// Set the world turning!
+		this.world.step();
+		
 		var index		= Math.floor(this.random() * this.players.length);
 		this.startTurn(this.players[index]);
 	}

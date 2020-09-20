@@ -58237,7 +58237,7 @@ $(window).on("load", function (event) {
   payload.init();
 });
 
-},{"./assets/Assets":11,"./game/Game":14,"./game/Player":16,"./game/weapons/default/Set":29,"camera-controls":3,"stats.js":5,"three":7}],10:[function(require,module,exports){
+},{"./assets/Assets":11,"./game/Game":14,"./game/Player":16,"./game/weapons/default/Set":31,"camera-controls":3,"stats.js":5,"three":7}],10:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58562,7 +58562,9 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
       this.random = PRNG.Alea(this.seed);
       this.world = new _World["default"](this);
       this.weapons = Payload.weapons["default"];
-      this.ui = new _UI["default"](this);
+      this.ui = new _UI["default"](this); // Set the world turning!
+
+      this.world.step();
       var index = Math.floor(this.random() * this.players.length);
       this.startTurn(this.players[index]);
     }
@@ -58840,7 +58842,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = UI;
 
-},{"../EventDispatcherWithOptions":8,"./entities/Compass":20}],18:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":8,"./entities/Compass":22}],18:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58880,6 +58882,8 @@ var _Units = _interopRequireDefault(require("./Units"));
 var _Interaction = _interopRequireDefault(require("./Interaction"));
 
 var _Entity = _interopRequireDefault(require("./entities/Entity"));
+
+var _Background = _interopRequireDefault(require("./background/Background"));
 
 var _Planet = _interopRequireDefault(require("./entities/Planet"));
 
@@ -58944,9 +58948,6 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 
     _this.currentStep = 0;
-
-    _this.step();
-
     return _this;
   }
 
@@ -59000,7 +59001,9 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       });
       this.renderer.setSize(width, height); // Add renderer DOM element
 
-      document.querySelector("#scene").appendChild(this.renderer.domElement); // Add lighting
+      document.querySelector("#scene").appendChild(this.renderer.domElement); // Add the background
+
+      this.background = new _Background["default"](this.game, this.scene); // Add lighting
 
       var light = new THREE.AmbientLight(0x7f7f7f); // soft white light
 
@@ -59149,7 +59152,8 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
         this.entities[i].update();
       }
 
-      this.interaction.update(); // Rendering
+      this.interaction.update();
+      this.background.update(); // Rendering
 
       this.renderer.render(this.scene, this.camera);
 
@@ -59239,7 +59243,120 @@ World.defaults = {
   }
 };
 
-},{"../EventDispatcherWithOptions":8,"./Game":14,"./Interaction":15,"./Units":18,"./entities/Entity":21,"./entities/Explosion":22,"./entities/Planet":23,"./entities/Ship":24,"./entities/particles/Emitter":26}],20:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":8,"./Game":14,"./Interaction":15,"./Units":18,"./background/Background":20,"./entities/Entity":23,"./entities/Explosion":24,"./entities/Planet":25,"./entities/Ship":26,"./entities/particles/Emitter":28}],20:[function(require,module,exports){
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+
+var _Starfield = _interopRequireDefault(require("./Starfield"));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+var Background = /*#__PURE__*/function () {
+  function Background(game, scene) {
+    _classCallCheck(this, Background);
+
+    this.starfield = new _Starfield["default"](game);
+    this.object3d = new THREE.Group();
+    this.object3d.add(this.starfield.object3d);
+    scene.add(this.object3d);
+  }
+
+  _createClass(Background, [{
+    key: "update",
+    value: function update() {
+      this.starfield.update();
+    }
+  }]);
+
+  return Background;
+}();
+
+exports["default"] = Background;
+
+},{"./Starfield":21}],21:[function(require,module,exports){
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+var Starfield = /*#__PURE__*/function () {
+  function Starfield(game) {
+    _classCallCheck(this, Starfield);
+
+    this.game = game;
+    this.layers = [];
+    this.object3d = new THREE.Group();
+    this.initLayers();
+  }
+
+  _createClass(Starfield, [{
+    key: "initLayers",
+    value: function initLayers() {
+      for (var index = 0; index < 3; index++) {
+        var points = void 0;
+        var vertices = [];
+        var geometry = new THREE.BufferGeometry(); //  { size: size, map: sprite, blending: THREE.AdditiveBlending, depthTest: false, transparent: true } 
+
+        var material = new THREE.PointsMaterial({
+          size: 16 + Math.random() * 16,
+          map: payload.assets.sprites.stars.random(this.game).resource,
+          blending: THREE.AdditiveBlending,
+          // depthTest: false,
+          transparent: true
+        });
+
+        for (var count = 0; count < 5000; count++) {
+          var a = Math.random() * 2 * Math.PI;
+          var r = 35000 * Math.sqrt(Math.random());
+          vertices.push(Math.sin(a) * r, Math.cos(a) * r, 0);
+        }
+
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+        points = new THREE.Points(geometry, material);
+        this.layers.push(points);
+        this.object3d.add(points);
+      }
+    }
+  }, {
+    key: "update",
+    value: function update() {
+      var camera = this.game.world.camera;
+
+      for (var i = 0; i < this.layers.length; i++) {
+        var layer = this.layers[i];
+        var scale = 1 / (i + 2);
+        layer.position.set(camera.position.x * scale, camera.position.y * scale, 0);
+      }
+
+      this.object3d.position.set(0, 0, -100); //let scale		= 1 / (camera.zoom / 2);
+      //this.object3d.scale.set(scale, scale, 1);
+    }
+  }]);
+
+  return Starfield;
+}();
+
+exports["default"] = Starfield;
+
+},{}],22:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59392,7 +59509,7 @@ var Compass = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Compass;
 
-},{"./Entity":21}],21:[function(require,module,exports){
+},{"./Entity":23}],23:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59654,7 +59771,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = Entity;
 
-},{"../../EventDispatcherWithOptions":8,"../Units":18,"../World":19}],22:[function(require,module,exports){
+},{"../../EventDispatcherWithOptions":8,"../Units":18,"../World":19}],24:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59795,7 +59912,7 @@ jQuery(function ($) {
   Payload.Explosion = Explosion;
 });
 
-},{"../Units":18,"./Planet":23,"./particles/AnimatedParticleGeometry":25,"./particles/Emitter":26}],23:[function(require,module,exports){
+},{"../Units":18,"./Planet":25,"./particles/AnimatedParticleGeometry":27,"./particles/Emitter":28}],25:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59925,6 +60042,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
       var inner = Math.round(Math.sqrt(area) / 8); // * density;
 
       for (var i = 0; i < inner; i++) {
+        // NB: This isn't uniform
         var a = game.random() * 2 * Math.PI;
         var r = radius * Math.pow(game.random(), 1 / power);
         sites.push([Math.sin(a) * r, Math.cos(a) * r]);
@@ -60315,7 +60433,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Planet;
 
-},{"../Units":18,"./Entity":21,"d3-delaunay":4}],24:[function(require,module,exports){
+},{"../Units":18,"./Entity":23,"d3-delaunay":4}],26:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60433,7 +60551,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Ship;
 
-},{"../Units":18,"./Entity":21}],25:[function(require,module,exports){
+},{"../Units":18,"./Entity":23}],27:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60526,7 +60644,7 @@ var AnimatedParticleGeometry = /*#__PURE__*/function (_PlaneGeometry) {
 
 exports["default"] = AnimatedParticleGeometry;
 
-},{"THREE":2}],26:[function(require,module,exports){
+},{"THREE":2}],28:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60698,7 +60816,7 @@ var Emitter = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Emitter;
 
-},{"../Entity":21,"./AnimatedParticleGeometry":25}],27:[function(require,module,exports){
+},{"../Entity":23,"./AnimatedParticleGeometry":27}],29:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60782,7 +60900,7 @@ var Projectile = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Projectile;
 
-},{"../../Units":18,"../Entity":21}],28:[function(require,module,exports){
+},{"../../Units":18,"../Entity":23}],30:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60850,7 +60968,7 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
 
 exports["default"] = Bomb;
 
-},{"../../entities/weapons/Projectile":27,"./Weapon":30}],29:[function(require,module,exports){
+},{"../../entities/weapons/Projectile":29,"./Weapon":32}],31:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60890,7 +61008,7 @@ var _default = {
 };
 exports["default"] = _default;
 
-},{"./instantiatable/LargeBomb":31,"./instantiatable/MediumBomb":32,"./instantiatable/MegaBomb":33,"./instantiatable/SmallBomb":34}],30:[function(require,module,exports){
+},{"./instantiatable/LargeBomb":33,"./instantiatable/MediumBomb":34,"./instantiatable/MegaBomb":35,"./instantiatable/SmallBomb":36}],32:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60951,7 +61069,7 @@ var Weapon = /*#__PURE__*/function (_EventDispatcher) {
 
 exports["default"] = Weapon;
 
-},{"@perry-rylance/event-dispatcher":1}],31:[function(require,module,exports){
+},{"@perry-rylance/event-dispatcher":1}],33:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61013,7 +61131,7 @@ var LargeBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = LargeBomb;
 
-},{"../Bomb":28}],32:[function(require,module,exports){
+},{"../Bomb":30}],34:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61075,7 +61193,7 @@ var MediumBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MediumBomb;
 
-},{"../Bomb":28}],33:[function(require,module,exports){
+},{"../Bomb":30}],35:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61137,7 +61255,7 @@ var MegaBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MegaBomb;
 
-},{"../Bomb":28}],34:[function(require,module,exports){
+},{"../Bomb":30}],36:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61199,7 +61317,7 @@ var SmallBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = SmallBomb;
 
-},{"../Bomb":28}],35:[function(require,module,exports){
+},{"../Bomb":30}],37:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.MTLLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -61583,7 +61701,7 @@ THREE.MTLLoader.MaterialCreator.prototype = {
   }
 };
 
-},{}],36:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.OBJLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -62161,6 +62279,6 @@ THREE.OBJLoader = function () {
   return OBJLoader;
 }();
 
-},{}]},{},[13,35,36])
+},{}]},{},[13,37,38])
 
 });//# sourceMappingURL=entry.js.map

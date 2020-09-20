@@ -123,6 +123,7 @@ export default class Planet extends Entity
 		
 		for(var i = 0; i < inner; i++)
 		{
+			// NB: This isn't uniform
 			var a = game.random() * 2 * Math.PI;
 			var r = radius * Math.pow(game.random(), 1 / power);
 			

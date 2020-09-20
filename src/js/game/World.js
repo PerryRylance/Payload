@@ -4,6 +4,8 @@ import Units from "./Units";
 import Interaction from "./Interaction";
 import Entity from "./entities/Entity";
 
+import Background from "./background/Background";
+
 import Planet from "./entities/Planet";
 import Ship from "./entities/Ship";
 
@@ -41,7 +43,6 @@ export default class World extends EventDispatcherWithOptions
 		// this.enableDebugDraw();
 		
 		this.currentStep = 0;
-		this.step();
 	}
 	
 	initPhysics()
@@ -112,6 +113,9 @@ export default class World extends EventDispatcherWithOptions
 		
 		// Add renderer DOM element
 		document.querySelector("#scene").appendChild(this.renderer.domElement);
+		
+		// Add the background
+		this.background = new Background(this.game, this.scene);
 		
 		// Add lighting
 		var light = new THREE.AmbientLight( 0x7f7f7f ); // soft white light
@@ -315,6 +319,7 @@ export default class World extends EventDispatcherWithOptions
 			this.entities[i].update();
 		
 		this.interaction.update();
+		this.background.update();
 		
 		// Rendering
 		this.renderer.render(this.scene, this.camera);
