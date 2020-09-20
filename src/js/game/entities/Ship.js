@@ -1,11 +1,19 @@
 import Entity from "./Entity";
 import Units from "../Units";
+import Player from "../Player";
 
 export default class Ship extends Entity
 {
-	constructor(world, options)
+	constructor(world, player, options)
 	{
+		Payload.assert(player instanceof Player);
+		
 		super(world, options);
+		
+		this.health	= world.options.ship.health;
+		this.player = player;
+		
+		this.initLabels();
 	}
 	
 	initPhysics(options)
@@ -85,6 +93,36 @@ export default class Ship extends Entity
 		this.zIndex = 100;
 	}
 	
+	initLabels()
+	{
+		this.labels = [];
+		
+		this.$label = $("<div class='player'><div class='name'></div><progress class='health'></progress></div>");
+		
+		this.$label.find(".name").text(this.player.name);
+		this.$label.find(".health")
+			.attr("max", this.world.options.ship.health)
+			.val(this.health);
+		
+		this.labels.push(this.$label);
+		
+		$("#hud").append(this.$label);
+	}
+	
+	update()
+	{
+		super.update();
+		
+		let position = this.getScreenCoordinates();
+		
+		this.labels.forEach( $element => {
+			$element.css({
+				left: position.x + "px",
+				top: position.y + "px"
+			});
+		} );
+	}
+	
 	launch(options)
 	{
 		super.launch(options);
@@ -100,6 +138,28 @@ export default class Ship extends Entity
 	
 	damage(amount)
 	{
-		console.log(amount);
+		let spread = 64;
+		let x = (Math.random() - 0.5) * 2 * spread;
+		let y = (Math.random() - 0.5) * 2 * spread;
+		let $element = $("<span class='damage'><span class='inner'></span></span>");
+		let $inner = $($element).find(".inner");
+		
+		amount = Math.round(amount);
+		
+		this.health -= amount;
+		
+		// The label
+		$inner.text(-amount);
+		
+		this.labels.push($element);
+		$("#hud").append($element);
+		
+		$inner.css({
+			left: x + "px",
+			top: y + "px"
+		}).fadeOut(1000);
+		
+		// The health bar
+		this.$label.find(".health").val(this.health);
 	}
 }

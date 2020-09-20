@@ -8,6 +8,7 @@ import Background from "./background/Background";
 
 import Planet from "./entities/Planet";
 import Ship from "./entities/Ship";
+import Player from "./Player";
 
 import Emitter from "./entities/particles/Emitter";
 import Explosion from "./entities/Explosion";
@@ -16,7 +17,7 @@ export default class World extends EventDispatcherWithOptions
 {
 	constructor(game, options)
 	{
-		Payload.assert(game instanceof Game)
+		Payload.assert(game instanceof Game);
 		
 		if(!options)
 			options = {};
@@ -190,7 +191,7 @@ export default class World extends EventDispatcherWithOptions
 		if(attempt > max * 0.8)
 			console.warn("High number of attempts to find spawn point for ship");
 		
-		var ship		= new Ship(this, 
+		var ship		= new Ship(this, player,
 			$.extend({}, options.ship, {
 				position: position
 			})
@@ -419,7 +420,9 @@ World.defaults = {
 		density:			1,
 		friction:			0.9,
 		restitution:		0.15,
-		angularDamping:		0.3
+		angularDamping:		0.3,
+		
+		health:				100
 	},
 	projectile: {
 		radius:				10,

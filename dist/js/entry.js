@@ -58758,6 +58758,7 @@ var Player = /*#__PURE__*/function (_EventDispatcherWithO) {
 
     _this = _super.call(this, options);
     _this.name = "Unnamed Player";
+    if (options && options.name) _this.name = options.name;
     return _this;
   }
 
@@ -58971,6 +58972,8 @@ var _Planet = _interopRequireDefault(require("./entities/Planet"));
 
 var _Ship = _interopRequireDefault(require("./entities/Ship"));
 
+var _Player = _interopRequireDefault(require("./Player"));
+
 var _Emitter = _interopRequireDefault(require("./entities/particles/Emitter"));
 
 var _Explosion = _interopRequireDefault(require("./entities/Explosion"));
@@ -59151,7 +59154,7 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
 
       if (attempt == max) throw new Error("Maximum number of attempts to place ship hit");
       if (attempt > max * 0.8) console.warn("High number of attempts to find spawn point for ship");
-      var ship = new _Ship["default"](this, $.extend({}, options.ship, {
+      var ship = new _Ship["default"](this, player, $.extend({}, options.ship, {
         position: position
       }));
       this.add(ship);
@@ -59325,7 +59328,8 @@ World.defaults = {
     density: 1,
     friction: 0.9,
     restitution: 0.15,
-    angularDamping: 0.3
+    angularDamping: 0.3,
+    health: 100
   },
   projectile: {
     radius: 10,
@@ -59336,7 +59340,7 @@ World.defaults = {
   }
 };
 
-},{"../EventDispatcherWithOptions":8,"./Game":15,"./Interaction":16,"./Units":19,"./background/Background":21,"./entities/Entity":24,"./entities/Explosion":25,"./entities/Planet":26,"./entities/Ship":27,"./entities/particles/Emitter":29}],21:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":8,"./Game":15,"./Interaction":16,"./Player":17,"./Units":19,"./background/Background":21,"./entities/Entity":24,"./entities/Explosion":25,"./entities/Planet":26,"./entities/Ship":27,"./entities/particles/Emitter":29}],21:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60571,6 +60575,8 @@ var _Entity2 = _interopRequireDefault(require("./Entity"));
 
 var _Units = _interopRequireDefault(require("../Units"));
 
+var _Player = _interopRequireDefault(require("../Player"));
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
 function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
@@ -60604,10 +60610,19 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
   var _super = _createSuper(Ship);
 
-  function Ship(world, options) {
+  function Ship(world, player, options) {
+    var _this;
+
     _classCallCheck(this, Ship);
 
-    return _super.call(this, world, options);
+    Payload.assert(player instanceof _Player["default"]);
+    _this = _super.call(this, world, options);
+    _this.health = world.options.ship.health;
+    _this.player = player;
+
+    _this.initLabels();
+
+    return _this;
   }
 
   _createClass(Ship, [{
@@ -60633,7 +60648,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
   }, {
     key: "initGraphics",
     value: function initGraphics(options) {
-      var _this = this;
+      var _this2 = this;
 
       _get(_getPrototypeOf(Ship.prototype), "initGraphics", this).call(this, options);
 
@@ -60651,7 +60666,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
       geometries.forEach(function (geom) {
         var mesh = new THREE.Mesh(geom, material);
 
-        _this.model.add(mesh);
+        _this2.model.add(mesh);
       }); // Correct rotation
 
       this.model.rotation.x = 90 * Math.PI / 180; // Scale the modal to match the ships radius
@@ -60669,6 +60684,29 @@ var Ship = /*#__PURE__*/function (_Entity) {
       this.zIndex = 100;
     }
   }, {
+    key: "initLabels",
+    value: function initLabels() {
+      this.labels = [];
+      this.$label = $("<div class='player'><div class='name'></div><progress class='health'></progress></div>");
+      this.$label.find(".name").text(this.player.name);
+      this.$label.find(".health").attr("max", this.world.options.ship.health).val(this.health);
+      this.labels.push(this.$label);
+      $("#hud").append(this.$label);
+    }
+  }, {
+    key: "update",
+    value: function update() {
+      _get(_getPrototypeOf(Ship.prototype), "update", this).call(this);
+
+      var position = this.getScreenCoordinates();
+      this.labels.forEach(function ($element) {
+        $element.css({
+          left: position.x + "px",
+          top: position.y + "px"
+        });
+      });
+    }
+  }, {
     key: "launch",
     value: function launch(options) {
       _get(_getPrototypeOf(Ship.prototype), "launch", this).call(this, options); // TODO: Need some kind of sound system really. A sound should be an entity so that it can dispatch an event
@@ -60682,7 +60720,23 @@ var Ship = /*#__PURE__*/function (_Entity) {
   }, {
     key: "damage",
     value: function damage(amount) {
-      console.log(amount);
+      var spread = 64;
+      var x = (Math.random() - 0.5) * 2 * spread;
+      var y = (Math.random() - 0.5) * 2 * spread;
+      var $element = $("<span class='damage'><span class='inner'></span></span>");
+      var $inner = $($element).find(".inner");
+      amount = Math.round(amount);
+      this.health -= amount; // The label
+
+      $inner.text(-amount);
+      this.labels.push($element);
+      $("#hud").append($element);
+      $inner.css({
+        left: x + "px",
+        top: y + "px"
+      }).fadeOut(1000); // The health bar
+
+      this.$label.find(".health").val(this.health);
     }
   }]);
 
@@ -60691,7 +60745,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Ship;
 
-},{"../Units":19,"./Entity":24}],28:[function(require,module,exports){
+},{"../Player":17,"../Units":19,"./Entity":24}],28:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
