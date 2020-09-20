@@ -58894,14 +58894,14 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
   }, {
     key: "onFire",
     value: function onFire(event) {
-      // NB: Repeated
+      // TODO: Consider delegating a lot of this to the Ship module instead
       var ship = this.game.currentPlayer.ship;
       var degrees = $("input[name='degrees']").val();
       var radians = degrees * Math.PI / 180;
       var mult = $("input[name='power']").val() / 100;
       var power = mult * this.game.world.options.ship.launchFullPower;
       var constructor = this.getSelectedWeapon();
-      var radius = Math.sqrt(2) * this.game.world.options.ship.radius;
+      var radius = 2 * this.game.world.options.ship.radius;
       var offset = {
         x: Math.cos(radians) * radius,
         y: Math.sin(radians) * radius
@@ -59332,7 +59332,7 @@ World.defaults = {
     launchFullPower: 2000
   },
   explosion: {
-    forceMultiplier: 15000
+    forceMultiplier: 4000
   }
 };
 
@@ -59991,21 +59991,23 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
               x: foreign.x - local.x,
               y: foreign.y - local.y
             };
+            var _radius = self.radius;
             var length = Math.sqrt(delta.x * delta.x + delta.y * delta.y);
+            var factor = 1 - length / _radius; // NB: Because we use a square for detection, but a radius for force calculations, probably should check factor is positive here
 
-            if (length <= self.radius) {
-              var factor = length / self.radius;
-              var force = self.radius * factor * _Units["default"].GRAPHICS_TO_PHYSICS * self.world.options.explosion.forceMultiplier; // NB: For now, use the explosions radius to determine this
+            if (factor < 0) return true;
+            console.log(length, _radius, factor);
+            var force = _radius * factor * _Units["default"].GRAPHICS_TO_PHYSICS * self.world.options.explosion.forceMultiplier; // NB: For now, use the explosions radius to determine this
 
-              var normalized = {
-                x: delta.x / length,
-                y: delta.y / length
-              };
-              var vec = new Box2D.b2Vec2(normalized.x * force, normalized.y * force);
-              entity.b2Body.ApplyLinearImpulse(vec);
-              var damage = Math.round(self.damage * factor);
-              entity.damage(damage);
-            }
+            var normalized = {
+              x: delta.x / length,
+              y: delta.y / length
+            };
+            var vec = new Box2D.b2Vec2(normalized.x * force, normalized.y * force);
+            entity.b2Body.SetAwake(1);
+            entity.b2Body.ApplyLinearImpulse(vec);
+            var damage = Math.round(self.damage * factor);
+            entity.damage(damage);
           } // TODO: Propel ships
 
           return true;
@@ -60669,7 +60671,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
       _get(_getPrototypeOf(Ship.prototype), "launch", this).call(this, options); // TODO: Need some kind of sound system really. A sound should be an entity so that it can dispatch an event
 
 
-      var buffer = payload.assets.sounds.assets["334268__projectsu012__launching-1.wav"].resource;
+      var buffer = payload.assets.sounds.assets["521377__jarusca__rocket-launch.mp3"].resource;
       var sound = new THREE.Audio(this.world.listener);
       sound.setBuffer(buffer);
       sound.play();

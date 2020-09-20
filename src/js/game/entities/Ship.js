@@ -91,7 +91,7 @@ export default class Ship extends Entity
 		
 		// TODO: Need some kind of sound system really. A sound should be an entity so that it can dispatch an event
 		
-		var buffer	= payload.assets.sounds.assets["334268__projectsu012__launching-1.wav"].resource;
+		var buffer	= payload.assets.sounds.assets["521377__jarusca__rocket-launch.mp3"].resource;
 		var sound	= new THREE.Audio(this.world.listener);
 		
 		sound.setBuffer(buffer);

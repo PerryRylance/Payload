@@ -91,7 +91,8 @@ export default class UI extends EventDispatcherWithOptions
 	
 	onFire(event)
 	{
-		// NB: Repeated
+		// TODO: Consider delegating a lot of this to the Ship module instead
+		
 		let ship		= this.game.currentPlayer.ship;
 		let degrees		= $("input[name='degrees']").val();
 		let radians		= degrees * Math.PI / 180;
@@ -99,7 +100,7 @@ export default class UI extends EventDispatcherWithOptions
 		let mult		= $("input[name='power']").val() / 100;
 		let power		= mult * this.game.world.options.ship.launchFullPower;
 		let constructor	= this.getSelectedWeapon();
-		let radius		= Math.sqrt(2) * this.game.world.options.ship.radius;
+		let radius		= 2 * this.game.world.options.ship.radius;
 		
 		let offset		= {
 			x:			Math.cos(radians) * radius,

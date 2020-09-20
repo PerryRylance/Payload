@@ -95,31 +95,38 @@ export default class Explosion extends Emitter
 						y: foreign.y - local.y
 					};
 					
+					let radius	= self.radius;
 					let length	= Math.sqrt(delta.x * delta.x + delta.y * delta.y);
 					
-					if(length <= self.radius)
-					{
-						let factor		= length / self.radius;
-						let force		= self.radius 
-							* factor 
-							* Units.GRAPHICS_TO_PHYSICS 
-							* self.world.options.explosion.forceMultiplier; // NB: For now, use the explosions radius to determine this
-						let normalized	= {
-							x: delta.x / length,
-							y: delta.y / length
-						};
+					let factor		= 1 - (length / radius);
+					
+					// NB: Because we use a square for detection, but a radius for force calculations, probably should check factor is positive here
+					if(factor < 0)
+						return true;
+					
+					console.log(length, radius, factor);
+					
+					let force		= radius 
+						* factor 
+						* Units.GRAPHICS_TO_PHYSICS 
+						* self.world.options.explosion.forceMultiplier; // NB: For now, use the explosions radius to determine this
 						
-						let vec		= new Box2D.b2Vec2(
-							normalized.x * force,
-							normalized.y * force
-						);
-						
-						entity.b2Body.ApplyLinearImpulse(vec);
-						
-						let damage	= Math.round(self.damage * factor);
-						
-						entity.damage(damage);
-					}
+					let normalized	= {
+						x: delta.x / length,
+						y: delta.y / length
+					};
+					
+					let vec		= new Box2D.b2Vec2(
+						normalized.x * force,
+						normalized.y * force
+					);
+					
+					entity.b2Body.SetAwake(1);
+					entity.b2Body.ApplyLinearImpulse(vec);
+					
+					let damage	= Math.round(self.damage * factor);
+					
+					entity.damage(damage);
 				}
 				
 				// TODO: Propel ships
