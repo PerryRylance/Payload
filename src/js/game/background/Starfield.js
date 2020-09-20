@@ -31,7 +31,7 @@ export default class Starfield
 			for(var count = 0; count < 5000; count++)
 			{
 				let a = Math.random() * 2 * Math.PI;
-				let r = 35000 * Math.sqrt(Math.random());
+				let r = 80000 * Math.sqrt(Math.random());
 				
 				vertices.push(
 					Math.sin(a) * r,

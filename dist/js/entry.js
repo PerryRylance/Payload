@@ -58269,7 +58269,21 @@ var Asset = /*#__PURE__*/function () {
     });
   }
 
-  _createClass(Asset, null, [{
+  _createClass(Asset, [{
+    key: "getGeometries",
+    value: function getGeometries() {
+      var results = [];
+      this.resource.traverse(function (child) {
+        if (child instanceof THREE.Mesh) results.push(child.geometry);
+      });
+      return results;
+    }
+  }, {
+    key: "getMaterials",
+    value: function getMaterials() {
+      return this.resource.materials;
+    }
+  }], [{
     key: "getLoaderFromFilename",
     value: function getLoaderFromFilename(filename) {
       var m = /\.[a-z0-9]+$/i.exec(filename);
@@ -59404,7 +59418,7 @@ var Starfield = /*#__PURE__*/function () {
 
         for (var count = 0; count < 5000; count++) {
           var a = Math.random() * 2 * Math.PI;
-          var r = 35000 * Math.sqrt(Math.random());
+          var r = 80000 * Math.sqrt(Math.random());
           vertices.push(Math.sin(a) * r, Math.cos(a) * r, 0);
         }
 
@@ -60620,15 +60634,19 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
       this.object3d = new THREE.Object3D();
       var radius = options.radius;
-      var bbox = new THREE.Box3(); // Temporary code
+      var bbox = new THREE.Box3();
+      var name = "Low_poly_UFO";
+      var geometries = payload.assets.models.ships.assets[name + ".obj"].getGeometries();
+      var materials = payload.assets.models.ships.assets[name + ".mtl"].getMaterials();
+      var keys = Object.keys(materials);
+      var material = materials[keys[0]]; // Temporary, remove alpha map (for demo saucer)
 
-      this.model = payload.assets.models.ships.assets["Low_poly_UFO.obj"].resource;
-      this.material = payload.assets.models.ships.assets["Low_poly_UFO.mtl"].resource.materials.UFO_texture; // Temporary, remove alpha map
+      material.alphaMap = null;
+      this.model = new THREE.Group();
+      geometries.forEach(function (geom) {
+        var mesh = new THREE.Mesh(geom, material);
 
-      this.material.alphaMap = null; // Apply the material
-
-      this.model.traverse(function (child) {
-        if (child.isMesh) child.material = _this.material;
+        _this.model.add(mesh);
       }); // Correct rotation
 
       this.model.rotation.x = 90 * Math.PI / 180; // Scale the modal to match the ships radius
@@ -60641,15 +60659,20 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
       container.position.y = -(bbox.min.z + bbox.max.z) / 2; // Isometric display
 
-      this.object3d.add(container); // Debugging...
-
-      /*var geometry = new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2);
-      var material = new THREE.MeshBasicMaterial({color: 0xff0000});
-      var mesh = new THREE.Mesh(geometry, material);
-      this.box = mesh;
-      this.object3d.add(mesh);*/
+      this.object3d.add(container); // Set z-index
 
       this.zIndex = 100;
+    }
+  }, {
+    key: "launch",
+    value: function launch(options) {
+      _get(_getPrototypeOf(Ship.prototype), "launch", this).call(this, options); // TODO: Need some kind of sound system really. A sound should be an entity so that it can dispatch an event
+
+
+      var buffer = payload.assets.sounds.assets["334268__projectsu012__launching-1.wav"].resource;
+      var sound = new THREE.Audio(this.world.listener);
+      sound.setBuffer(buffer);
+      sound.play();
     }
   }, {
     key: "damage",
