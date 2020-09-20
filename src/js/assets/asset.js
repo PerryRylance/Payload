@@ -62,4 +62,23 @@ export default class Asset
 				break;
 		}
 	}
+	
+	getGeometries()
+	{
+		let results = [];
+		
+		this.resource.traverse( (child) => {
+			
+			if(child instanceof THREE.Mesh)
+				results.push(child.geometry);
+			
+		} );
+		
+		return results;
+	}
+	
+	getMaterials()
+	{
+		return this.resource.materials;
+	}
 }

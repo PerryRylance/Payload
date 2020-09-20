@@ -58198,10 +58198,13 @@ var Payload = /*#__PURE__*/function () {
       $("dialog.loading").removeAttr("open"); // Temp code, just start up a game here
 
       this.player = new _Player["default"]({
-        "name": "Pez"
+        name: "Pez"
       });
       this.game = new _Game["default"]();
       this.game.addPlayer(this.player);
+      this.game.addPlayer(new _Player["default"]({
+        name: "Computer"
+      }));
       this.game.start();
     }
   }], [{
@@ -58237,7 +58240,7 @@ $(window).on("load", function (event) {
   payload.init();
 });
 
-},{"./assets/Assets":11,"./game/Game":14,"./game/Player":16,"./game/weapons/default/Set":29,"camera-controls":3,"stats.js":5,"three":7}],10:[function(require,module,exports){
+},{"./assets/Assets":11,"./game/Game":15,"./game/Player":17,"./game/weapons/default/Set":32,"camera-controls":3,"stats.js":5,"three":7}],10:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58266,7 +58269,21 @@ var Asset = /*#__PURE__*/function () {
     });
   }
 
-  _createClass(Asset, null, [{
+  _createClass(Asset, [{
+    key: "getGeometries",
+    value: function getGeometries() {
+      var results = [];
+      this.resource.traverse(function (child) {
+        if (child instanceof THREE.Mesh) results.push(child.geometry);
+      });
+      return results;
+    }
+  }, {
+    key: "getMaterials",
+    value: function getMaterials() {
+      return this.resource.materials;
+    }
+  }], [{
     key: "getLoaderFromFilename",
     value: function getLoaderFromFilename(filename) {
       var m = /\.[a-z0-9]+$/i.exec(filename);
@@ -58493,6 +58510,50 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports["default"] = void 0;
 
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+var Announcer = /*#__PURE__*/function () {
+  function Announcer(game) {
+    var _this = this;
+
+    _classCallCheck(this, Announcer);
+
+    this.game = game;
+    this.element = $("#announcement");
+    game.on("turnstart", function (event) {
+      return _this.onTurnStart(event);
+    });
+  }
+
+  _createClass(Announcer, [{
+    key: "announce",
+    value: function announce(html) {
+      this.element.html(html).show().delay(2000).fadeOut();
+    }
+  }, {
+    key: "onTurnStart",
+    value: function onTurnStart(event) {
+      this.announce(event.player.name + "'s turn");
+    }
+  }]);
+
+  return Announcer;
+}();
+
+exports["default"] = Announcer;
+
+},{}],15:[function(require,module,exports){
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+
 var _EventDispatcherWithOptions = _interopRequireDefault(require("../EventDispatcherWithOptions"));
 
 var _Player = _interopRequireDefault(require("./Player"));
@@ -58500,6 +58561,8 @@ var _Player = _interopRequireDefault(require("./Player"));
 var _World = _interopRequireDefault(require("./World"));
 
 var _UI = _interopRequireDefault(require("./UI"));
+
+var _Announcer = _interopRequireDefault(require("./Announcer"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
@@ -58538,12 +58601,7 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
     _this = _super.call(this, options);
     _this.players = [];
     _this.currentPlayer = null;
-    _this.status = Game.STATUS_LOBBY; // NB: Put this in the UI module
-    // this.weaponSelect	= new WeaponSelect($("select.weapon"))
-    // $("menu#actions button").on("click",  function(event) {
-    // self.onActionButtonClicked(event);
-    // });
-
+    _this.status = Game.STATUS_LOBBY;
     return _this;
   }
 
@@ -58563,6 +58621,10 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
       this.world = new _World["default"](this);
       this.weapons = Payload.weapons["default"];
       this.ui = new _UI["default"](this);
+      this.announcer = new _Announcer["default"](this); // Set the world turning!
+
+      this.world.step();
+      this.trigger("gamestart");
       var index = Math.floor(this.random() * this.players.length);
       this.startTurn(this.players[index]);
     }
@@ -58571,11 +58633,19 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
     value: function startTurn(player) {
       Payload.assert(player instanceof _Player["default"]);
       this.currentPlayer = player;
+      this.trigger({
+        type: "turnstart",
+        player: player
+      });
     }
   }, {
     key: "endTurn",
     value: function endTurn() {
       Payload.assert(this.currentPlayer != null);
+      this.trigger({
+        type: "turnend",
+        player: this.currentPlayer
+      });
       var currentPlayerIndex = this.players.indexOf(this.currentPlayer);
       Payload.assert(currentPlayerIndex > -1);
       var nextIndex = currentPlayerIndex++ % this.players.length;
@@ -58583,7 +58653,9 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
     }
   }, {
     key: "end",
-    value: function end() {}
+    value: function end() {
+      this.trigger("gameend");
+    }
   }]);
 
   return Game;
@@ -58594,7 +58666,7 @@ Game.STATUS_LOBBY = "lobby";
 Game.STATUS_PLAYING = "playing";
 Game.STATUS_ENDED = "ended";
 
-},{"../EventDispatcherWithOptions":8,"./Player":16,"./UI":17,"./World":19}],15:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":8,"./Announcer":14,"./Player":17,"./UI":18,"./World":20}],16:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58644,7 +58716,7 @@ var Interaction = /*#__PURE__*/function () {
 
 exports["default"] = Interaction;
 
-},{"camera-controls":3,"three.interaction":6}],16:[function(require,module,exports){
+},{"camera-controls":3,"three.interaction":6}],17:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58680,9 +58752,14 @@ var Player = /*#__PURE__*/function (_EventDispatcherWithO) {
   var _super = _createSuper(Player);
 
   function Player(options) {
+    var _this;
+
     _classCallCheck(this, Player);
 
-    return _super.call(this, options);
+    _this = _super.call(this, options);
+    _this.name = "Unnamed Player";
+    if (options && options.name) _this.name = options.name;
+    return _this;
   }
 
   return Player;
@@ -58690,7 +58767,7 @@ var Player = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = Player;
 
-},{"../EventDispatcherWithOptions":8}],17:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":8}],18:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58752,6 +58829,9 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
     $("#fire").on("click", function (event) {
       return _this.onFire(event);
     });
+    game.on("turnstart", function (event) {
+      return _this.onTurnStart(event);
+    });
     return _this;
   }
 
@@ -58796,6 +58876,11 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
       controls.zoomTo(1, true);
     }
   }, {
+    key: "onTurnStart",
+    value: function onTurnStart(event) {
+      this.onReCenter(event);
+    }
+  }, {
     key: "onLaunch",
     value: function onLaunch(event) {
       var ship = this.game.currentPlayer.ship;
@@ -58810,14 +58895,14 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
   }, {
     key: "onFire",
     value: function onFire(event) {
-      // NB: Repeated
+      // TODO: Consider delegating a lot of this to the Ship module instead
       var ship = this.game.currentPlayer.ship;
       var degrees = $("input[name='degrees']").val();
       var radians = degrees * Math.PI / 180;
       var mult = $("input[name='power']").val() / 100;
       var power = mult * this.game.world.options.ship.launchFullPower;
       var constructor = this.getSelectedWeapon();
-      var radius = 4 * this.game.world.options.ship.radius;
+      var radius = 2 * this.game.world.options.ship.radius;
       var offset = {
         x: Math.cos(radians) * radius,
         y: Math.sin(radians) * radius
@@ -58840,7 +58925,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = UI;
 
-},{"../EventDispatcherWithOptions":8,"./entities/Compass":20}],18:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":8,"./entities/Compass":23}],19:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58863,7 +58948,7 @@ Units.g2p = Units.graphicsToPhysics;
 var _default = Units;
 exports["default"] = _default;
 
-},{}],19:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58881,9 +58966,13 @@ var _Interaction = _interopRequireDefault(require("./Interaction"));
 
 var _Entity = _interopRequireDefault(require("./entities/Entity"));
 
+var _Background = _interopRequireDefault(require("./background/Background"));
+
 var _Planet = _interopRequireDefault(require("./entities/Planet"));
 
 var _Ship = _interopRequireDefault(require("./entities/Ship"));
+
+var _Player = _interopRequireDefault(require("./Player"));
 
 var _Emitter = _interopRequireDefault(require("./entities/particles/Emitter"));
 
@@ -58938,15 +59027,14 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
 
     _this.initGraphics();
 
+    _this.initAudio();
+
     _this.initPlanets(options);
 
     _this.initShips(options); // this.enableDebugDraw();
 
 
     _this.currentStep = 0;
-
-    _this.step();
-
     return _this;
   }
 
@@ -58969,8 +59057,9 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
         Payload.assert(entityB != null, "No entity associated with body, did you forget to call Payload.Entity.initPhysics after initalising body?");
 
         if (entityA && entityB) {
-          entityA.onCollision(entityB, fixtureA, fixtureB);
-          entityB.onCollision(entityA, fixtureB, fixtureA);
+          entityA._onCollision(entityB, fixtureA, fixtureB);
+
+          entityB._onCollision(entityA, fixtureB, fixtureA);
         }
       }; // Empty implementations for unused methods.
 
@@ -58999,7 +59088,9 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       });
       this.renderer.setSize(width, height); // Add renderer DOM element
 
-      document.querySelector("#scene").appendChild(this.renderer.domElement); // Add lighting
+      document.querySelector("#scene").appendChild(this.renderer.domElement); // Add the background
+
+      this.background = new _Background["default"](this.game, this.scene); // Add lighting
 
       var light = new THREE.AmbientLight(0x7f7f7f); // soft white light
 
@@ -59009,6 +59100,12 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       this.scene.add(light); // And mouse interaction
 
       this.interaction = new _Interaction["default"](this, this.renderer.domElement);
+    }
+  }, {
+    key: "initAudio",
+    value: function initAudio() {
+      this.listener = new THREE.AudioListener();
+      this.camera.add(this.listener);
     }
   }, {
     key: "initPlanets",
@@ -59057,7 +59154,7 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
 
       if (attempt == max) throw new Error("Maximum number of attempts to place ship hit");
       if (attempt > max * 0.8) console.warn("High number of attempts to find spawn point for ship");
-      var ship = new _Ship["default"](this, $.extend({}, options.ship, {
+      var ship = new _Ship["default"](this, player, $.extend({}, options.ship, {
         position: position
       }));
       this.add(ship);
@@ -59135,7 +59232,7 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       var self = this;
       if (window.stats) window.stats.begin();
       var start = new Date().getTime();
-      this.b2World.Step(1 / 30, 10, 10);
+      this.b2World.Step(1 / 20, 10, 10);
 
       for (var i = this._bodyDestructionQueue.length - 1; i >= 0; i--) {
         this.b2World.DestroyBody(this._bodyDestructionQueue.pop());
@@ -59148,7 +59245,8 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
         this.entities[i].update();
       }
 
-      this.interaction.update(); // Rendering
+      this.interaction.update();
+      this.background.update(); // Rendering
 
       this.renderer.render(this.scene, this.camera);
 
@@ -59230,15 +59328,132 @@ World.defaults = {
     density: 1,
     friction: 0.9,
     restitution: 0.15,
-    angularDamping: 0.3
+    angularDamping: 0.3,
+    health: 100
   },
   projectile: {
     radius: 10,
     launchFullPower: 2000
+  },
+  explosion: {
+    forceMultiplier: 3
   }
 };
 
-},{"../EventDispatcherWithOptions":8,"./Game":14,"./Interaction":15,"./Units":18,"./entities/Entity":21,"./entities/Explosion":22,"./entities/Planet":23,"./entities/Ship":24,"./entities/particles/Emitter":26}],20:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":8,"./Game":15,"./Interaction":16,"./Player":17,"./Units":19,"./background/Background":21,"./entities/Entity":24,"./entities/Explosion":25,"./entities/Planet":26,"./entities/Ship":27,"./entities/particles/Emitter":29}],21:[function(require,module,exports){
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+
+var _Starfield = _interopRequireDefault(require("./Starfield"));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+var Background = /*#__PURE__*/function () {
+  function Background(game, scene) {
+    _classCallCheck(this, Background);
+
+    this.starfield = new _Starfield["default"](game);
+    this.object3d = new THREE.Group();
+    this.object3d.add(this.starfield.object3d);
+    scene.add(this.object3d);
+  }
+
+  _createClass(Background, [{
+    key: "update",
+    value: function update() {
+      this.starfield.update();
+    }
+  }]);
+
+  return Background;
+}();
+
+exports["default"] = Background;
+
+},{"./Starfield":22}],22:[function(require,module,exports){
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+var Starfield = /*#__PURE__*/function () {
+  function Starfield(game) {
+    _classCallCheck(this, Starfield);
+
+    this.game = game;
+    this.layers = [];
+    this.object3d = new THREE.Group();
+    this.initLayers();
+  }
+
+  _createClass(Starfield, [{
+    key: "initLayers",
+    value: function initLayers() {
+      for (var index = 0; index < 3; index++) {
+        var points = void 0;
+        var vertices = [];
+        var geometry = new THREE.BufferGeometry(); //  { size: size, map: sprite, blending: THREE.AdditiveBlending, depthTest: false, transparent: true } 
+
+        var material = new THREE.PointsMaterial({
+          size: 16 + Math.random() * 16,
+          map: payload.assets.sprites.stars.random(this.game).resource,
+          blending: THREE.AdditiveBlending,
+          // depthTest: false,
+          transparent: true
+        });
+
+        for (var count = 0; count < 5000; count++) {
+          var a = Math.random() * 2 * Math.PI;
+          var r = 80000 * Math.sqrt(Math.random());
+          vertices.push(Math.sin(a) * r, Math.cos(a) * r, 0);
+        }
+
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+        points = new THREE.Points(geometry, material);
+        this.layers.push(points);
+        this.object3d.add(points);
+      }
+    }
+  }, {
+    key: "update",
+    value: function update() {
+      var camera = this.game.world.camera;
+
+      for (var i = 0; i < this.layers.length; i++) {
+        var layer = this.layers[i];
+        var scale = 1 / (i + 2);
+        layer.position.set(camera.position.x * scale, camera.position.y * scale, 0);
+      }
+
+      this.object3d.position.set(0, 0, -100); //let scale		= 1 / (camera.zoom / 2);
+      //this.object3d.scale.set(scale, scale, 1);
+    }
+  }]);
+
+  return Starfield;
+}();
+
+exports["default"] = Starfield;
+
+},{}],23:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59391,7 +59606,7 @@ var Compass = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Compass;
 
-},{"./Entity":21}],21:[function(require,module,exports){
+},{"./Entity":24}],24:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59443,6 +59658,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
 
     Payload.assert(world instanceof _World["default"]);
     _this = _super.call(this, options);
+    _this._collisionEventQueue = [];
     _this.world = world;
     _this.zIndex = 0;
 
@@ -59509,6 +59725,12 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
   }, {
     key: "update",
     value: function update() {
+      while (this._collisionEventQueue.length > 0) {
+        var event = this._collisionEventQueue.shift();
+
+        this.trigger(event);
+      }
+
       if (this.b2Body && this.object3d) {
         var position = this.b2Body.GetWorldCenter();
         var angle = this.b2Body.GetAngle();
@@ -59532,9 +59754,9 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
       }
     }
   }, {
-    key: "onCollision",
-    value: function onCollision(entity, localFixture, otherFixture) {
-      this.trigger({
+    key: "_onCollision",
+    value: function _onCollision(entity, localFixture, otherFixture) {
+      this._collisionEventQueue.push({
         type: "collision",
         entity: entity
       });
@@ -59646,7 +59868,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = Entity;
 
-},{"../../EventDispatcherWithOptions":8,"../Units":18,"../World":19}],22:[function(require,module,exports){
+},{"../../EventDispatcherWithOptions":8,"../Units":19,"../World":20}],25:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59659,6 +59881,10 @@ var _Emitter2 = _interopRequireDefault(require("./particles/Emitter"));
 var _AnimatedParticleGeometry = _interopRequireDefault(require("./particles/AnimatedParticleGeometry"));
 
 var _Units = _interopRequireDefault(require("../Units"));
+
+var _Planet = _interopRequireDefault(require("./Planet"));
+
+var _Ship = _interopRequireDefault(require("./Ship"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
@@ -59698,10 +59924,10 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
 
     _classCallCheck(this, Explosion);
 
-    var scale = 2;
+    var scale = options.radius ? options.radius / 25 : 1;
     var cells = new THREE.Vector2(5, 5);
     var frames = 23;
-    _this = _super.call(this, world, $.extend(true, options, {
+    _this = _super.call(this, world, $.extend(true, {
       radius: 50,
       maxParticleCount: 23,
       life: 23 * 2,
@@ -59719,7 +59945,7 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
           return new THREE.Vector3(scale * 2 * (Math.random() - 0.5), scale * 2 * (Math.random() - 0.5), 0);
         }
       }
-    }));
+    }, options));
     _this.geometry = new _AnimatedParticleGeometry["default"](80 * scale, cells, frames);
     _this.material = new THREE.MeshBasicMaterial({
       depthWrite: false,
@@ -59727,32 +59953,83 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
       blending: THREE.AdditiveBlending,
       map: payload.assets.sprites.assets["explosion.png"].resource
     });
+    _this._physicsQueryDone = false;
     return _this;
   }
 
   _createClass(Explosion, [{
-    key: "initPhysics",
-    value: function initPhysics(options) {
-      Payload.assert(!isNaN(options.radius));
-      var radius = options.radius * _Units["default"];
-      var circleShape = new Box2D.b2CircleShape();
-      var fixtureDef = new Box2D.b2FixtureDef();
-      circleShape.set_m_radius(radius * _Units["default"].GRAPHICS_TO_PHYSICS);
-      fixtureDef.set_shape(circleShape);
-      var bodyDef = new Box2D.b2BodyDef(); // NB: This could be kinematic, no?
-
-      bodyDef.set_type(Box2D.b2_dynamicBody);
-      this.b2Body = this.world.b2World.CreateBody(this.b2BodyDef);
-      this.b2Body.CreateFixture(fixtureDef);
-
-      _get(_getPrototypeOf(Explosion.prototype), "initPhysics", this).call(this, options);
-    }
-  }, {
     key: "initGraphics",
     value: function initGraphics(options) {
       _get(_getPrototypeOf(Explosion.prototype), "initGraphics", this).call(this, options);
 
       this.zIndex = 200;
+    }
+  }, {
+    key: "initAudio",
+    value: function initAudio() {
+      var size = this.radius <= 100 ? "small" : "large";
+      var buffer = payload.assets.sounds.explosions[size].random(this.world.game).resource;
+      this.audio = new THREE.Audio(this.world.listener);
+      this.audio.setBuffer(buffer);
+      this.audio.play();
+    }
+  }, {
+    key: "update",
+    value: function update() {
+      var self = this;
+
+      _get(_getPrototypeOf(Explosion.prototype), "update", this).call(this);
+
+      if (!this._physicsQueryDone) {
+        var callback = new Box2D.JSQueryCallback();
+
+        callback.ReportFixture = function (fixturePtr) {
+          var fixture = Box2D.wrapPointer(fixturePtr, Box2D.b2Fixture);
+          var body = fixture.GetBody();
+          var entity = body.entity; // TODO: Check that at least one point is within range, because we are querying a square
+
+          if (entity instanceof _Planet["default"]) entity.applyFixtureDamage(fixture);else if (entity instanceof _Ship["default"]) {
+            var local = self.position;
+            var foreign = entity.position;
+            var delta = {
+              x: foreign.x - local.x,
+              y: foreign.y - local.y
+            };
+            var _radius = self.radius;
+            var length = Math.sqrt(delta.x * delta.x + delta.y * delta.y);
+            var factor = 1 - length / _radius; // NB: Because we use a square for detection, but a radius for force calculations, probably should check factor is positive here
+
+            if (factor < 0) return true;
+            console.log(length, _radius, factor);
+            var force = _radius * factor * _Units["default"].GRAPHICS_TO_PHYSICS * self.world.options.explosion.forceMultiplier; // NB: For now, use the explosions radius to determine this
+
+            var normalized = {
+              x: delta.x / length,
+              y: delta.y / length
+            };
+            var vec = new Box2D.b2Vec2(normalized.x * force, normalized.y * force);
+            entity.b2Body.SetAwake(1);
+            entity.b2Body.ApplyLinearImpulse(vec); // NB: A damage falloff would be nice
+
+            if (self.damage) {
+              var damage = Math.round(self.damage * factor);
+              entity.damage(damage);
+            }
+          } // TODO: Propel ships
+
+          return true;
+        };
+
+        var radius = this.radius * _Units["default"].GRAPHICS_TO_PHYSICS;
+        var aabb = new Box2D.b2AABB();
+        var position = this.position;
+        position.x *= _Units["default"].GRAPHICS_TO_PHYSICS;
+        position.y *= _Units["default"].GRAPHICS_TO_PHYSICS;
+        aabb.set_lowerBound(new Box2D.b2Vec2(position.x - radius, position.y - radius));
+        aabb.set_upperBound(new Box2D.b2Vec2(position.x + radius, position.y + radius));
+        this.world.b2World.QueryAABB(callback, aabb);
+        this._physicsQueryDone = true;
+      }
     }
   }]);
 
@@ -59765,7 +60042,7 @@ jQuery(function ($) {
   Payload.Explosion = Explosion;
 });
 
-},{"../Units":18,"./particles/AnimatedParticleGeometry":25,"./particles/Emitter":26}],23:[function(require,module,exports){
+},{"../Units":19,"./Planet":26,"./Ship":27,"./particles/AnimatedParticleGeometry":28,"./particles/Emitter":29}],26:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59895,8 +60172,9 @@ var Planet = /*#__PURE__*/function (_Entity) {
       var inner = Math.round(Math.sqrt(area) / 8); // * density;
 
       for (var i = 0; i < inner; i++) {
+        // NB: This isn't uniform
         var a = game.random() * 2 * Math.PI;
-        var r = radius * 0.9 * Math.pow(game.random(), 1 / power);
+        var r = radius * Math.pow(game.random(), 1 / power);
         sites.push([Math.sin(a) * r, Math.cos(a) * r]);
       }
     }
@@ -60158,23 +60436,83 @@ var Planet = /*#__PURE__*/function (_Entity) {
       this._fixtureDestructionQueue.push(fixture);
     }
   }, {
-    key: "handleMeshDestruction",
-    value: function handleMeshDestruction() {
+    key: "getFaceArea",
+    value: function getFaceArea(face) {
+      var va = this.vertices[face.a];
+      var vb = this.vertices[face.b];
+      var vc = this.vertices[face.c];
+      var x1 = va[0];
+      var x2 = vb[0];
+      var x3 = vc[0];
+      var y1 = va[1];
+      var y2 = vb[1];
+      var y3 = vc[1];
+      return Math.abs(0.5 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)));
+    }
+  }, {
+    key: "getArea",
+    value: function getArea() {
       var _this3 = this;
 
-      return;
+      var area = 0;
+      this.geometry.faces.forEach(function (face) {
+        area += _this3.getFaceArea(face);
+      });
+      return area;
+    }
+  }, {
+    key: "getFaceCentroid",
+    value: function getFaceCentroid(face) {
+      var va = this.vertices[face.a];
+      var vb = this.vertices[face.b];
+      var vc = this.vertices[face.c];
+      var x1 = va[0];
+      var x2 = vb[0];
+      var x3 = vc[0];
+      var y1 = va[1];
+      var y2 = vb[1];
+      var y3 = vc[1];
+      return {
+        x: (x1 + x2 + x3) / 3,
+        y: (y1 + y2 + y3) / 3
+      };
+    }
+  }, {
+    key: "getCentroid",
+    value: function getCentroid() {
+      var _this4 = this;
+
+      var result = {
+        x: 0,
+        y: 0
+      };
+      this.geometry.faces.forEach(function (face) {
+        var centroid = _this4.getFaceCentroid(face);
+
+        result.x += centroid.x;
+        result.y += centroid.y;
+      });
+      result.x /= this.geometry.faces.length;
+      result.y /= this.geometry.faces.length;
+      return result;
+    }
+  }, {
+    key: "handleMeshDestruction",
+    value: function handleMeshDestruction() {
+      var _this5 = this;
+
       var self = this;
       var updateMesh = this._fixtureDestructionQueue.length > 0;
 
       while (this._fixtureDestructionQueue.length) {
         var fixture = this._fixtureDestructionQueue.pop();
 
-        fixtures.faces.forEach(function (face) {
-          var index = _this3.geometry.faces.indexOf(face);
+        fixture.faces.forEach(function (face) {
+          var index = _this5.geometry.faces.indexOf(face);
 
-          _this3.geometry.faces.splice(index, 1);
+          _this5.geometry.faces.splice(index, 1);
 
-          _this3.geometry.faceVertexUvs[0].splice(index, 1);
+          _this5.geometry.faceVertexUvs[0].splice(index, 1);
         });
         this.b2Body.DestroyFixture(fixture);
       }
@@ -60190,45 +60528,11 @@ var Planet = /*#__PURE__*/function (_Entity) {
       } // Calculate new center of mass and area
 
 
-      var vertexIDsByKey = {};
-      var areaRemaining = 0;
-      var initialArea = Math.PI * (this._radius * this._radius);
-
-      function area(ia, ib, ic) {
-        var va = self.vertices[ia];
-        var vb = self.vertices[ib];
-        var vc = self.vertices[ic];
-        var x1 = va[0];
-        var x2 = vb[0];
-        var x3 = vc[0];
-        var y1 = va[1];
-        var y2 = vb[1];
-        var y3 = vc[1];
-        return Math.abs(0.5 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)));
-      }
-
-      for (var i = 0; i < this.geometry.faces.length; i++) {
-        var face = this.geometry.faces[i];
-        vertexIDsByKey[face.a] = true;
-        vertexIDsByKey[face.b] = true;
-        vertexIDsByKey[face.c] = true;
-        areaRemaining += area(face.a, face.b, face.c);
-      }
-
-      var usedVertexIDs = Object.keys(vertexIDsByKey);
-      var centerOfMass = {
-        x: 0,
-        y: 0
-      };
-      usedVertexIDs.forEach(function (index) {
-        var vertex = self._vertices[index];
-        centerOfMass.x += vertex[0];
-        centerOfMass.y += vertex[1];
-      });
-      centerOfMass.x /= usedVertexIDs.length;
-      centerOfMass.y /= usedVertexIDs.length;
-      this.b2CenterOfGravity = new Box2D.b2Vec2(Payload.Units.g2p(centerOfMass.x), Payload.Units.g2p(centerOfMass.y));
-      if (areaDestroyed > 0) this._destructionGravityMultiplier = areaDestroyed / initialArea;
+      var areaInitial = Math.PI * (this._radius * this._radius);
+      var areaRemaining = this.getArea();
+      this._destructionGravityMultiplier = areaRemaining / areaInitial;
+      var centroid = this.getCentroid();
+      this.b2CenterOfGravity = new Box2D.b2Vec2(centroid.x * _Units["default"].GRAPHICS_TO_PHYSICS, centroid.y * _Units["default"].GRAPHICS_TO_PHYSICS);
     }
   }, {
     key: "handleGravity",
@@ -60242,8 +60546,10 @@ var Planet = /*#__PURE__*/function (_Entity) {
   }, {
     key: "update",
     value: function update() {
-      this.handleMeshDestruction();
+      _get(_getPrototypeOf(Planet.prototype), "update", this).call(this);
+
       this.handleGravity();
+      this.handleMeshDestruction();
     }
   }, {
     key: "isAffectedByGravity",
@@ -60257,7 +60563,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Planet;
 
-},{"../Units":18,"./Entity":21,"d3-delaunay":4}],24:[function(require,module,exports){
+},{"../Units":19,"./Entity":24,"d3-delaunay":4}],27:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60268,6 +60574,8 @@ exports["default"] = void 0;
 var _Entity2 = _interopRequireDefault(require("./Entity"));
 
 var _Units = _interopRequireDefault(require("../Units"));
+
+var _Player = _interopRequireDefault(require("../Player"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
@@ -60302,10 +60610,19 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
   var _super = _createSuper(Ship);
 
-  function Ship(world, options) {
+  function Ship(world, player, options) {
+    var _this;
+
     _classCallCheck(this, Ship);
 
-    return _super.call(this, world, options);
+    Payload.assert(player instanceof _Player["default"]);
+    _this = _super.call(this, world, options);
+    _this.health = world.options.ship.health;
+    _this.player = player;
+
+    _this.initLabels();
+
+    return _this;
   }
 
   _createClass(Ship, [{
@@ -60331,21 +60648,25 @@ var Ship = /*#__PURE__*/function (_Entity) {
   }, {
     key: "initGraphics",
     value: function initGraphics(options) {
-      var _this = this;
+      var _this2 = this;
 
       _get(_getPrototypeOf(Ship.prototype), "initGraphics", this).call(this, options);
 
       this.object3d = new THREE.Object3D();
       var radius = options.radius;
-      var bbox = new THREE.Box3(); // Temporary code
+      var bbox = new THREE.Box3();
+      var name = "Low_poly_UFO";
+      var geometries = payload.assets.models.ships.assets[name + ".obj"].getGeometries();
+      var materials = payload.assets.models.ships.assets[name + ".mtl"].getMaterials();
+      var keys = Object.keys(materials);
+      var material = materials[keys[0]]; // Temporary, remove alpha map (for demo saucer)
 
-      this.model = payload.assets.models.ships.assets["Low_poly_UFO.obj"].resource;
-      this.material = payload.assets.models.ships.assets["Low_poly_UFO.mtl"].resource.materials.UFO_texture; // Temporary, remove alpha map
+      material.alphaMap = null;
+      this.model = new THREE.Group();
+      geometries.forEach(function (geom) {
+        var mesh = new THREE.Mesh(geom, material);
 
-      this.material.alphaMap = null; // Apply the material
-
-      this.model.traverse(function (child) {
-        if (child.isMesh) child.material = _this.material;
+        _this2.model.add(mesh);
       }); // Correct rotation
 
       this.model.rotation.x = 90 * Math.PI / 180; // Scale the modal to match the ships radius
@@ -60358,15 +60679,64 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
       container.position.y = -(bbox.min.z + bbox.max.z) / 2; // Isometric display
 
-      this.object3d.add(container); // Debugging...
-
-      /*var geometry = new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2);
-      var material = new THREE.MeshBasicMaterial({color: 0xff0000});
-      var mesh = new THREE.Mesh(geometry, material);
-      this.box = mesh;
-      this.object3d.add(mesh);*/
+      this.object3d.add(container); // Set z-index
 
       this.zIndex = 100;
+    }
+  }, {
+    key: "initLabels",
+    value: function initLabels() {
+      this.labels = [];
+      this.$label = $("<div class='player'><div class='name'></div><progress class='health'></progress></div>");
+      this.$label.find(".name").text(this.player.name);
+      this.$label.find(".health").attr("max", this.world.options.ship.health).val(this.health);
+      this.labels.push(this.$label);
+      $("#hud").append(this.$label);
+    }
+  }, {
+    key: "update",
+    value: function update() {
+      _get(_getPrototypeOf(Ship.prototype), "update", this).call(this);
+
+      var position = this.getScreenCoordinates();
+      this.labels.forEach(function ($element) {
+        $element.css({
+          left: position.x + "px",
+          top: position.y + "px"
+        });
+      });
+    }
+  }, {
+    key: "launch",
+    value: function launch(options) {
+      _get(_getPrototypeOf(Ship.prototype), "launch", this).call(this, options); // TODO: Need some kind of sound system really. A sound should be an entity so that it can dispatch an event
+
+
+      var buffer = payload.assets.sounds.assets["521377__jarusca__rocket-launch.mp3"].resource;
+      var sound = new THREE.Audio(this.world.listener);
+      sound.setBuffer(buffer);
+      sound.play();
+    }
+  }, {
+    key: "damage",
+    value: function damage(amount) {
+      var spread = 64;
+      var x = (Math.random() - 0.5) * 2 * spread;
+      var y = (Math.random() - 0.5) * 2 * spread;
+      var $element = $("<span class='damage'><span class='inner'></span></span>");
+      var $inner = $($element).find(".inner");
+      amount = Math.round(amount);
+      this.health -= amount; // The label
+
+      $inner.text(-amount);
+      this.labels.push($element);
+      $("#hud").append($element);
+      $inner.css({
+        left: x + "px",
+        top: y + "px"
+      }).fadeOut(1000); // The health bar
+
+      this.$label.find(".health").val(this.health);
     }
   }]);
 
@@ -60375,7 +60745,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Ship;
 
-},{"../Units":18,"./Entity":21}],25:[function(require,module,exports){
+},{"../Player":17,"../Units":19,"./Entity":24}],28:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60468,7 +60838,7 @@ var AnimatedParticleGeometry = /*#__PURE__*/function (_PlaneGeometry) {
 
 exports["default"] = AnimatedParticleGeometry;
 
-},{"THREE":2}],26:[function(require,module,exports){
+},{"THREE":2}],29:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60640,7 +61010,7 @@ var Emitter = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Emitter;
 
-},{"../Entity":21,"./AnimatedParticleGeometry":25}],27:[function(require,module,exports){
+},{"../Entity":24,"./AnimatedParticleGeometry":28}],30:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60701,6 +61071,8 @@ var Projectile = /*#__PURE__*/function (_Entity) {
       fixtureDef.set_density(2.5);
       fixtureDef.set_friction(0.6);
       fixtureDef.set_shape(circleShape);
+      fixtureDef.set_isSensor(true); // NB: Prevent projectiles colliding with one another
+
       this.b2BodyDef = new Box2D.b2BodyDef();
       this.b2BodyDef.set_type(Box2D.b2_dynamicBody);
       this.b2Body = this.world.b2World.CreateBody(this.b2BodyDef);
@@ -60724,7 +61096,7 @@ var Projectile = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Projectile;
 
-},{"../../Units":18,"../Entity":21}],28:[function(require,module,exports){
+},{"../../Units":19,"../Entity":24}],31:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60774,9 +61146,14 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
   _createClass(Bomb, [{
     key: "fire",
     value: function fire(options) {
+      var _this = this;
+
       var projectile = new _Projectile["default"](this.world, options);
       projectile.once("collision", function (event) {
-        projectile.explode();
+        projectile.explode({
+          radius: _this.radius,
+          damage: _this.damage
+        });
       });
       projectile.launch(options);
       this.world.add(projectile);
@@ -60788,7 +61165,7 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
 
 exports["default"] = Bomb;
 
-},{"../../entities/weapons/Projectile":27,"./Weapon":30}],29:[function(require,module,exports){
+},{"../../entities/weapons/Projectile":30,"./Weapon":33}],32:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60828,7 +61205,7 @@ var _default = {
 };
 exports["default"] = _default;
 
-},{"./instantiatable/LargeBomb":31,"./instantiatable/MediumBomb":32,"./instantiatable/MegaBomb":33,"./instantiatable/SmallBomb":34}],30:[function(require,module,exports){
+},{"./instantiatable/LargeBomb":34,"./instantiatable/MediumBomb":35,"./instantiatable/MegaBomb":36,"./instantiatable/SmallBomb":37}],33:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60889,7 +61266,7 @@ var Weapon = /*#__PURE__*/function (_EventDispatcher) {
 
 exports["default"] = Weapon;
 
-},{"@perry-rylance/event-dispatcher":1}],31:[function(require,module,exports){
+},{"@perry-rylance/event-dispatcher":1}],34:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60937,7 +61314,7 @@ var LargeBomb = /*#__PURE__*/function (_Bomb) {
   _createClass(LargeBomb, [{
     key: "radius",
     get: function get() {
-      return 120;
+      return 200;
     }
   }, {
     key: "damage",
@@ -60951,7 +61328,7 @@ var LargeBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = LargeBomb;
 
-},{"../Bomb":28}],32:[function(require,module,exports){
+},{"../Bomb":31}],35:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60999,7 +61376,7 @@ var MediumBomb = /*#__PURE__*/function (_Bomb) {
   _createClass(MediumBomb, [{
     key: "radius",
     get: function get() {
-      return 80;
+      return 100;
     }
   }, {
     key: "damage",
@@ -61013,7 +61390,7 @@ var MediumBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MediumBomb;
 
-},{"../Bomb":28}],33:[function(require,module,exports){
+},{"../Bomb":31}],36:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61061,7 +61438,7 @@ var MegaBomb = /*#__PURE__*/function (_Bomb) {
   _createClass(MegaBomb, [{
     key: "radius",
     get: function get() {
-      return 60;
+      return 300;
     }
   }, {
     key: "damage",
@@ -61075,7 +61452,7 @@ var MegaBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MegaBomb;
 
-},{"../Bomb":28}],34:[function(require,module,exports){
+},{"../Bomb":31}],37:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61137,7 +61514,7 @@ var SmallBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = SmallBomb;
 
-},{"../Bomb":28}],35:[function(require,module,exports){
+},{"../Bomb":31}],38:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.MTLLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -61521,7 +61898,7 @@ THREE.MTLLoader.MaterialCreator.prototype = {
   }
 };
 
-},{}],36:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.OBJLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -62099,6 +62476,6 @@ THREE.OBJLoader = function () {
   return OBJLoader;
 }();
 
-},{}]},{},[13,35,36])
+},{}]},{},[13,38,39])
 
 });//# sourceMappingURL=entry.js.map

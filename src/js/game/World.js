@@ -4,8 +4,11 @@ import Units from "./Units";
 import Interaction from "./Interaction";
 import Entity from "./entities/Entity";
 
+import Background from "./background/Background";
+
 import Planet from "./entities/Planet";
 import Ship from "./entities/Ship";
+import Player from "./Player";
 
 import Emitter from "./entities/particles/Emitter";
 import Explosion from "./entities/Explosion";
@@ -14,7 +17,7 @@ export default class World extends EventDispatcherWithOptions
 {
 	constructor(game, options)
 	{
-		Payload.assert(game instanceof Game)
+		Payload.assert(game instanceof Game);
 		
 		if(!options)
 			options = {};
@@ -34,6 +37,7 @@ export default class World extends EventDispatcherWithOptions
 		
 		this.initPhysics();
 		this.initGraphics();
+		this.initAudio();
 		
 		this.initPlanets(options);
 		this.initShips(options);
@@ -41,7 +45,6 @@ export default class World extends EventDispatcherWithOptions
 		// this.enableDebugDraw();
 		
 		this.currentStep = 0;
-		this.step();
 	}
 	
 	initPhysics()
@@ -69,8 +72,8 @@ export default class World extends EventDispatcherWithOptions
 			
 			if(entityA && entityB)
 			{
-				entityA.onCollision(entityB, fixtureA, fixtureB);
-				entityB.onCollision(entityA, fixtureB, fixtureA);
+				entityA._onCollision(entityB, fixtureA, fixtureB);
+				entityB._onCollision(entityA, fixtureB, fixtureA);
 			}
 			
 		};
@@ -113,6 +116,9 @@ export default class World extends EventDispatcherWithOptions
 		// Add renderer DOM element
 		document.querySelector("#scene").appendChild(this.renderer.domElement);
 		
+		// Add the background
+		this.background = new Background(this.game, this.scene);
+		
 		// Add lighting
 		var light = new THREE.AmbientLight( 0x7f7f7f ); // soft white light
 		this.scene.add( light );
@@ -123,6 +129,12 @@ export default class World extends EventDispatcherWithOptions
 		
 		// And mouse interaction
 		this.interaction = new Interaction(this, this.renderer.domElement);
+	}
+	
+	initAudio()
+	{
+		this.listener	= new THREE.AudioListener();
+		this.camera.add(this.listener);
 	}
 	
 	initPlanets(options)
@@ -179,7 +191,7 @@ export default class World extends EventDispatcherWithOptions
 		if(attempt > max * 0.8)
 			console.warn("High number of attempts to find spawn point for ship");
 		
-		var ship		= new Ship(this, 
+		var ship		= new Ship(this, player,
 			$.extend({}, options.ship, {
 				position: position
 			})
@@ -302,7 +314,7 @@ export default class World extends EventDispatcherWithOptions
 		
 		var start	= new Date().getTime();
 		
-		this.b2World.Step(1 / 30, 10, 10);
+		this.b2World.Step(1 / 20, 10, 10);
 		
 		for(var i = this._bodyDestructionQueue.length - 1; i >= 0; i--)
 			this.b2World.DestroyBody(this._bodyDestructionQueue.pop());
@@ -315,6 +327,7 @@ export default class World extends EventDispatcherWithOptions
 			this.entities[i].update();
 		
 		this.interaction.update();
+		this.background.update();
 		
 		// Rendering
 		this.renderer.render(this.scene, this.camera);
@@ -407,10 +420,15 @@ World.defaults = {
 		density:			1,
 		friction:			0.9,
 		restitution:		0.15,
-		angularDamping:		0.3
+		angularDamping:		0.3,
+		
+		health:				100
 	},
 	projectile: {
 		radius:				10,
 		launchFullPower:	2000
+	},
+	explosion: {
+		forceMultiplier:	3
 	}
 };

@@ -1,11 +1,19 @@
 import Entity from "./Entity";
 import Units from "../Units";
+import Player from "../Player";
 
 export default class Ship extends Entity
 {
-	constructor(world, options)
+	constructor(world, player, options)
 	{
+		Payload.assert(player instanceof Player);
+		
 		super(world, options);
+		
+		this.health	= world.options.ship.health;
+		this.player = player;
+		
+		this.initLabels();
 	}
 	
 	initPhysics(options)
@@ -38,21 +46,24 @@ export default class Ship extends Entity
 		
 		this.object3d = new THREE.Object3D();
 		
-		let radius = options.radius;
-		let bbox = new THREE.Box3();
+		let radius		= options.radius;
+		let bbox		= new THREE.Box3();
 		
-		// Temporary code
-		this.model = payload.assets.models.ships.assets["Low_poly_UFO.obj"].resource;
-		this.material = payload.assets.models.ships.assets["Low_poly_UFO.mtl"].resource.materials.UFO_texture;
+		let name		= "Low_poly_UFO";
+		let geometries	= payload.assets.models.ships.assets[name + ".obj"].getGeometries();
+		let materials	= payload.assets.models.ships.assets[name + ".mtl"].getMaterials()
+		let keys		= Object.keys(materials);
+		let material	= materials[keys[0]];
 		
-		// Temporary, remove alpha map
-		this.material.alphaMap = null;
+		// Temporary, remove alpha map (for demo saucer)
+		material.alphaMap = null;
 		
-		// Apply the material
-		this.model.traverse( (child) => {
+		this.model		= new THREE.Group();
+		
+		geometries.forEach( geom => {
 			
-			if(child.isMesh)
-				child.material = this.material;
+			let mesh	= new THREE.Mesh(geom, material);
+			this.model.add(mesh);
 			
 		} );
 		
@@ -78,13 +89,77 @@ export default class Ship extends Entity
 		// Isometric display
 		this.object3d.add(container);
 		
-		// Debugging...
-		/*var geometry = new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2);
-		var material = new THREE.MeshBasicMaterial({color: 0xff0000});
-		var mesh = new THREE.Mesh(geometry, material);
-		this.box = mesh;
-		this.object3d.add(mesh);*/
-		
+		// Set z-index
 		this.zIndex = 100;
+	}
+	
+	initLabels()
+	{
+		this.labels = [];
+		
+		this.$label = $("<div class='player'><div class='name'></div><progress class='health'></progress></div>");
+		
+		this.$label.find(".name").text(this.player.name);
+		this.$label.find(".health")
+			.attr("max", this.world.options.ship.health)
+			.val(this.health);
+		
+		this.labels.push(this.$label);
+		
+		$("#hud").append(this.$label);
+	}
+	
+	update()
+	{
+		super.update();
+		
+		let position = this.getScreenCoordinates();
+		
+		this.labels.forEach( $element => {
+			$element.css({
+				left: position.x + "px",
+				top: position.y + "px"
+			});
+		} );
+	}
+	
+	launch(options)
+	{
+		super.launch(options);
+		
+		// TODO: Need some kind of sound system really. A sound should be an entity so that it can dispatch an event
+		
+		var buffer	= payload.assets.sounds.assets["521377__jarusca__rocket-launch.mp3"].resource;
+		var sound	= new THREE.Audio(this.world.listener);
+		
+		sound.setBuffer(buffer);
+		sound.play();
+	}
+	
+	damage(amount)
+	{
+		let spread = 64;
+		let x = (Math.random() - 0.5) * 2 * spread;
+		let y = (Math.random() - 0.5) * 2 * spread;
+		let $element = $("<span class='damage'><span class='inner'></span></span>");
+		let $inner = $($element).find(".inner");
+		
+		amount = Math.round(amount);
+		
+		this.health -= amount;
+		
+		// The label
+		$inner.text(-amount);
+		
+		this.labels.push($element);
+		$("#hud").append($element);
+		
+		$inner.css({
+			left: x + "px",
+			top: y + "px"
+		}).fadeOut(1000);
+		
+		// The health bar
+		this.$label.find(".health").val(this.health);
 	}
 }

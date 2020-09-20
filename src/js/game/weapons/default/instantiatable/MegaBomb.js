@@ -9,7 +9,7 @@ export default class MegaBomb extends Bomb
 	
 	get radius()
 	{
-		return 60;
+		return 300;
 	}
 	
 	get damage()

@@ -59,11 +59,16 @@ export default class Payload
 		
 		// Temp code, just start up a game here
 		this.player = new Player({
-			"name": "Pez"
+			name:	"Pez"
 		});
 		
 		this.game = new Game();
+		
 		this.game.addPlayer(this.player);
+		this.game.addPlayer(new Player({
+			name:	"Computer"
+		}));
+		
 		this.game.start();
 	}
 }
