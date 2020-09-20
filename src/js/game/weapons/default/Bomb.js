@@ -14,7 +14,8 @@ export default class Bomb extends Weapon
 		
 		projectile.once("collision", (event) => {
 			projectile.explode({
-				radius: this.radius
+				radius: this.radius,
+				damage: this.damage
 			});
 		});
 		

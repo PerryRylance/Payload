@@ -124,9 +124,12 @@ export default class Explosion extends Emitter
 					entity.b2Body.SetAwake(1);
 					entity.b2Body.ApplyLinearImpulse(vec);
 					
-					let damage	= Math.round(self.damage * factor);
-					
-					entity.damage(damage);
+					// NB: A damage falloff would be nice
+					if(self.damage)
+					{
+						let damage	= Math.round(self.damage * factor);
+						entity.damage(damage);
+					}
 				}
 				
 				// TODO: Propel ships

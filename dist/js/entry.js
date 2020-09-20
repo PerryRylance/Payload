@@ -59332,7 +59332,7 @@ World.defaults = {
     launchFullPower: 2000
   },
   explosion: {
-    forceMultiplier: 4000
+    forceMultiplier: 3
   }
 };
 
@@ -60005,9 +60005,12 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
             };
             var vec = new Box2D.b2Vec2(normalized.x * force, normalized.y * force);
             entity.b2Body.SetAwake(1);
-            entity.b2Body.ApplyLinearImpulse(vec);
-            var damage = Math.round(self.damage * factor);
-            entity.damage(damage);
+            entity.b2Body.ApplyLinearImpulse(vec); // NB: A damage falloff would be nice
+
+            if (self.damage) {
+              var damage = Math.round(self.damage * factor);
+              entity.damage(damage);
+            }
           } // TODO: Propel ships
 
           return true;
@@ -61094,7 +61097,8 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
       var projectile = new _Projectile["default"](this.world, options);
       projectile.once("collision", function (event) {
         projectile.explode({
-          radius: _this.radius
+          radius: _this.radius,
+          damage: _this.damage
         });
       });
       projectile.launch(options);
