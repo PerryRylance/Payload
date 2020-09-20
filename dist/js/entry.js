@@ -59136,7 +59136,7 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       var self = this;
       if (window.stats) window.stats.begin();
       var start = new Date().getTime();
-      this.b2World.Step(1 / 30, 10, 10);
+      this.b2World.Step(1 / 20, 10, 10);
 
       for (var i = this._bodyDestructionQueue.length - 1; i >= 0; i--) {
         this.b2World.DestroyBody(this._bodyDestructionQueue.pop());
