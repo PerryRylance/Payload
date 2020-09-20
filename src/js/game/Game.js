@@ -13,12 +13,6 @@ export default class Game extends EventDispatcherWithOptions
 		this.currentPlayer	= null;
 		
 		this.status			= Game.STATUS_LOBBY;
-		
-		// NB: Put this in the UI module
-		// this.weaponSelect	= new WeaponSelect($("select.weapon"))
-		// $("menu#actions button").on("click",  function(event) {
-			// self.onActionButtonClicked(event);
-		// });
 	}
 	
 	addPlayer(player)
@@ -44,6 +38,8 @@ export default class Game extends EventDispatcherWithOptions
 		// Set the world turning!
 		this.world.step();
 		
+		this.trigger("gamestart");
+		
 		var index		= Math.floor(this.random() * this.players.length);
 		this.startTurn(this.players[index]);
 	}
@@ -53,11 +49,21 @@ export default class Game extends EventDispatcherWithOptions
 		Payload.assert(player instanceof Player);
 		
 		this.currentPlayer = player;
+		
+		this.trigger({
+			type:	"turnstart",
+			player: player
+		});
 	}
 	
 	endTurn()
 	{
 		Payload.assert(this.currentPlayer != null);
+		
+		this.trigger({
+			type:	"turnend",
+			player: this.currentPlayer
+		});
 		
 		var currentPlayerIndex = this.players.indexOf(this.currentPlayer);
 		
@@ -70,7 +76,7 @@ export default class Game extends EventDispatcherWithOptions
 	
 	end()
 	{
-		
+		this.trigger("gameend");
 	}
 }
 

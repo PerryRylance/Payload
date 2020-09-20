@@ -9,7 +9,7 @@ export default class MediumBomb extends Bomb
 	
 	get radius()
 	{
-		return 80;
+		return 100;
 	}
 	
 	get damage()

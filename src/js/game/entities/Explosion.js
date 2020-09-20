@@ -2,6 +2,7 @@ import Emitter from "./particles/Emitter";
 import AnimatedParticleGeometry from "./particles/AnimatedParticleGeometry";
 import Units from "../Units";
 import Planet from "./Planet";
+import Ship from "./Ship";
 
 export default class Explosion extends Emitter
 {
@@ -50,49 +51,91 @@ export default class Explosion extends Emitter
 	{
 		super.initGraphics(options);
 		
-		// TODO: Remove debug code
-		var geom		= new THREE.CircleGeometry(this.radius, 16);
-		var material	= new THREE.MeshBasicMaterial({color: 0xff0000});
-		var mesh		= new THREE.Mesh(geom, material);
-		
-		this.object3d.add(mesh);
-		
 		this.zIndex = 200;
+	}
+	
+	initAudio()
+	{
+		let size	= (this.radius <= 100 ? "small" : "large");
+		let buffer	= payload.assets.sounds.explosions[size].random(this.world.game).resource;
+		
+		this.audio	= new THREE.Audio(this.world.listener)
+		
+		this.audio.setBuffer(buffer);
+		this.audio.play();
 	}
 	
 	update()
 	{
+		let self = this;
+		
 		super.update();
 		
 		if(!this._physicsQueryDone)
 		{
-			var callback = new Box2D.JSQueryCallback();
+			let callback = new Box2D.JSQueryCallback();
 			
 			callback.ReportFixture = function(fixturePtr)
 			{
-				var fixture	= Box2D.wrapPointer(fixturePtr, Box2D.b2Fixture);
-				var body	= fixture.GetBody();
-				var entity	= body.entity;
+				let fixture	= Box2D.wrapPointer(fixturePtr, Box2D.b2Fixture);
+				let body	= fixture.GetBody();
+				let entity	= body.entity;
 				
 				// TODO: Check that at least one point is within range, because we are querying a square
 				
 				if(entity instanceof Planet)
 					entity.applyFixtureDamage(fixture);
+				else if(entity instanceof Ship)
+				{
+					let local	= self.position;
+					let foreign	= entity.position;
+					
+					let delta	= {
+						x: foreign.x - local.x,
+						y: foreign.y - local.y
+					};
+					
+					let length	= Math.sqrt(delta.x * delta.x + delta.y * delta.y);
+					
+					if(length <= self.radius)
+					{
+						let factor		= length / self.radius;
+						let force		= self.radius 
+							* factor 
+							* Units.GRAPHICS_TO_PHYSICS 
+							* self.world.options.explosion.forceMultiplier; // NB: For now, use the explosions radius to determine this
+						let normalized	= {
+							x: delta.x / length,
+							y: delta.y / length
+						};
+						
+						let vec		= new Box2D.b2Vec2(
+							normalized.x * force,
+							normalized.y * force
+						);
+						
+						entity.b2Body.ApplyLinearImpulse(vec);
+						
+						let damage	= Math.round(self.damage * factor);
+						
+						entity.damage(damage);
+					}
+				}
 				
 				// TODO: Propel ships
 				
 				return true;
 			}
 			
-			var halfRadius	= this.radius / 2 * Units.GRAPHICS_TO_PHYSICS;
-			var aabb		= new Box2D.b2AABB();
-			var position	= this.position;
+			let radius		= this.radius * Units.GRAPHICS_TO_PHYSICS;
+			let aabb		= new Box2D.b2AABB();
+			let position	= this.position;
 			
 			position.x		*= Units.GRAPHICS_TO_PHYSICS;
 			position.y		*= Units.GRAPHICS_TO_PHYSICS;
 			
-			aabb.set_lowerBound(new Box2D.b2Vec2(position.x - halfRadius, position.y - halfRadius));
-			aabb.set_upperBound(new Box2D.b2Vec2(position.x + halfRadius, position.y + halfRadius));
+			aabb.set_lowerBound(new Box2D.b2Vec2(position.x - radius, position.y - radius));
+			aabb.set_upperBound(new Box2D.b2Vec2(position.x + radius, position.y + radius));
 			
 			this.world.b2World.QueryAABB(callback, aabb);
 			

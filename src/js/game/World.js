@@ -36,6 +36,7 @@ export default class World extends EventDispatcherWithOptions
 		
 		this.initPhysics();
 		this.initGraphics();
+		this.initAudio();
 		
 		this.initPlanets(options);
 		this.initShips(options);
@@ -127,6 +128,12 @@ export default class World extends EventDispatcherWithOptions
 		
 		// And mouse interaction
 		this.interaction = new Interaction(this, this.renderer.domElement);
+	}
+	
+	initAudio()
+	{
+		this.listener	= new THREE.AudioListener();
+		this.camera.add(this.listener);
 	}
 	
 	initPlanets(options)
@@ -417,5 +424,8 @@ World.defaults = {
 	projectile: {
 		radius:				10,
 		launchFullPower:	2000
+	},
+	explosion: {
+		forceMultiplier:	15000
 	}
 };

@@ -19,6 +19,7 @@ export default class Projectile extends Entity
 		fixtureDef.set_density( 2.5 );
 		fixtureDef.set_friction( 0.6 );
 		fixtureDef.set_shape( circleShape );
+		fixtureDef.set_isSensor( true ); // NB: Prevent projectiles colliding with one another
 		
 		this.b2BodyDef = new Box2D.b2BodyDef();
 		this.b2BodyDef.set_type( Box2D.b2_dynamicBody );

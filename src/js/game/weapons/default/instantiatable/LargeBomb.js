@@ -9,7 +9,7 @@ export default class LargeBomb extends Bomb
 	
 	get radius()
 	{
-		return 120;
+		return 200;
 	}
 	
 	get damage()

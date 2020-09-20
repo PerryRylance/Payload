@@ -87,4 +87,9 @@ export default class Ship extends Entity
 		
 		this.zIndex = 100;
 	}
+	
+	damage(amount)
+	{
+		console.log(amount);
+	}
 }
