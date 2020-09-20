@@ -2,6 +2,7 @@ import EventDispatcherWithOptions from "../EventDispatcherWithOptions";
 import Player from "./Player";
 import World from "./World";
 import UI from "./UI";
+import Announcer from "./Announcer";
 
 export default class Game extends EventDispatcherWithOptions
 {
@@ -34,6 +35,8 @@ export default class Game extends EventDispatcherWithOptions
 		
 		this.weapons	= Payload.weapons["default"];
 		this.ui			= new UI(this);
+		
+		this.announcer	= new Announcer(this);
 		
 		// Set the world turning!
 		this.world.step();
