@@ -59336,7 +59336,7 @@ World.defaults = {
     launchFullPower: 2000
   },
   explosion: {
-    forceMultiplier: 3
+    forceMultiplier: 0.0002
   }
 };
 
@@ -59685,6 +59685,57 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
       return new THREE.Vector2(pos.x * widthHalf + widthHalf, -(pos.y * heightHalf) + heightHalf);
     }
   }, {
+    key: "getEntitiesWithinRadius",
+    value: function getEntitiesWithinRadius(radius, filter) {
+      Payload.assert(!isNaN(radius));
+      var self = this;
+      var callback = new Box2D.JSQueryCallback();
+      var result = [];
+
+      callback.ReportFixture = function (fixturePtr) {
+        var fixture = Box2D.wrapPointer(fixturePtr, Box2D.b2Fixture);
+        var body = fixture.GetBody();
+        var entity = body.entity; // console.log(entity);
+        // TODO: Use bounding sphere where available
+        // TODO: Use raycasting for even higher accuracy
+
+        if (self == entity) {
+          // console.log("Ignoring self");
+          return true;
+        }
+
+        if (filter && !filter(entity)) {
+          // console.log("Filtered out");
+          return true;
+        }
+
+        if (result.indexOf(entity) > -1) {
+          // console.log("Already detected");
+          return true;
+        }
+
+        var delta = new THREE.Vector3(self.position.x - entity.position.x, self.position.y - entity.position.y, 0);
+
+        if (delta.length() > radius) {
+          // console.log("Center outside radius", delta.length(), radius);
+          return true;
+        }
+
+        result.push(entity);
+        return true;
+      };
+
+      var aabb = new Box2D.b2AABB();
+      var position = this.position;
+      var scaledRadius = radius * _Units["default"].GRAPHICS_TO_PHYSICS;
+      position.x *= _Units["default"].GRAPHICS_TO_PHYSICS;
+      position.y *= _Units["default"].GRAPHICS_TO_PHYSICS;
+      aabb.set_lowerBound(new Box2D.b2Vec2(position.x - scaledRadius, position.y - scaledRadius));
+      aabb.set_upperBound(new Box2D.b2Vec2(position.x + scaledRadius, position.y + scaledRadius));
+      this.world.b2World.QueryAABB(callback, aabb);
+      return result;
+    }
+  }, {
     key: "initPhysics",
     value: function initPhysics(options) {
       if (this.b2Body) {
@@ -59974,6 +60025,63 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
       this.audio.play();
     }
   }, {
+    key: "applyPlanetDamage",
+    value: function applyPlanetDamage() {
+      var callback = new Box2D.JSQueryCallback();
+
+      callback.ReportFixture = function (fixturePtr) {
+        var fixture = Box2D.wrapPointer(fixturePtr, Box2D.b2Fixture);
+        var body = fixture.GetBody();
+        var entity = body.entity; // TODO: Check that at least one point is within range, because we are querying a square
+
+        if (entity instanceof _Planet["default"]) entity.applyFixtureDamage(fixture);
+        return true;
+      };
+
+      var radius = this.radius * _Units["default"].GRAPHICS_TO_PHYSICS;
+      var aabb = new Box2D.b2AABB();
+      var position = this.position;
+      position.x *= _Units["default"].GRAPHICS_TO_PHYSICS;
+      position.y *= _Units["default"].GRAPHICS_TO_PHYSICS;
+      aabb.set_lowerBound(new Box2D.b2Vec2(position.x - radius, position.y - radius));
+      aabb.set_upperBound(new Box2D.b2Vec2(position.x + radius, position.y + radius));
+      this.world.b2World.QueryAABB(callback, aabb);
+    }
+  }, {
+    key: "applyShipDamage",
+    value: function applyShipDamage() {
+      var _this2 = this;
+
+      var radius = this.radius * 2;
+      var ships = this.getEntitiesWithinRadius(radius, function (entity) {
+        return entity instanceof _Ship["default"];
+      });
+      ships.forEach(function (ship) {
+        var local = _this2.position;
+        var foreign = ship.position;
+        var delta = {
+          x: foreign.x - local.x,
+          y: foreign.y - local.y
+        };
+        var length = Math.sqrt(delta.x * delta.x + delta.y * delta.y);
+        var factor = 1 - length / radius;
+        var force = radius // NB: For now, use the explosions radius to determine this
+        * factor * _Units["default"].GRAPHICS_TO_PHYSICS * _this2.world.options.explosion.forceMultiplier;
+        var normalized = {
+          x: delta.x / length,
+          y: delta.y / length
+        };
+        var vec = new Box2D.b2Vec2(normalized.x * force, normalized.y * force);
+        ship.b2Body.SetAwake(1);
+        ship.b2Body.ApplyLinearImpulse(vec); // NB: A damage falloff would be nice
+
+        if (self.damage) {
+          var damage = Math.round(self.damage * factor);
+          ship.damage(damage);
+        }
+      });
+    }
+  }, {
     key: "update",
     value: function update() {
       var self = this;
@@ -59981,53 +60089,8 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
       _get(_getPrototypeOf(Explosion.prototype), "update", this).call(this);
 
       if (!this._physicsQueryDone) {
-        var callback = new Box2D.JSQueryCallback();
-
-        callback.ReportFixture = function (fixturePtr) {
-          var fixture = Box2D.wrapPointer(fixturePtr, Box2D.b2Fixture);
-          var body = fixture.GetBody();
-          var entity = body.entity; // TODO: Check that at least one point is within range, because we are querying a square
-
-          if (entity instanceof _Planet["default"]) entity.applyFixtureDamage(fixture);else if (entity instanceof _Ship["default"]) {
-            var local = self.position;
-            var foreign = entity.position;
-            var delta = {
-              x: foreign.x - local.x,
-              y: foreign.y - local.y
-            };
-            var _radius = self.radius;
-            var length = Math.sqrt(delta.x * delta.x + delta.y * delta.y);
-            var factor = 1 - length / _radius; // NB: Because we use a square for detection, but a radius for force calculations, probably should check factor is positive here
-
-            if (factor < 0) return true;
-            console.log(length, _radius, factor);
-            var force = _radius * factor * _Units["default"].GRAPHICS_TO_PHYSICS * self.world.options.explosion.forceMultiplier; // NB: For now, use the explosions radius to determine this
-
-            var normalized = {
-              x: delta.x / length,
-              y: delta.y / length
-            };
-            var vec = new Box2D.b2Vec2(normalized.x * force, normalized.y * force);
-            entity.b2Body.SetAwake(1);
-            entity.b2Body.ApplyLinearImpulse(vec); // NB: A damage falloff would be nice
-
-            if (self.damage) {
-              var damage = Math.round(self.damage * factor);
-              entity.damage(damage);
-            }
-          } // TODO: Propel ships
-
-          return true;
-        };
-
-        var radius = this.radius * _Units["default"].GRAPHICS_TO_PHYSICS;
-        var aabb = new Box2D.b2AABB();
-        var position = this.position;
-        position.x *= _Units["default"].GRAPHICS_TO_PHYSICS;
-        position.y *= _Units["default"].GRAPHICS_TO_PHYSICS;
-        aabb.set_lowerBound(new Box2D.b2Vec2(position.x - radius, position.y - radius));
-        aabb.set_upperBound(new Box2D.b2Vec2(position.x + radius, position.y + radius));
-        this.world.b2World.QueryAABB(callback, aabb);
+        this.applyPlanetDamage();
+        this.applyShipDamage();
         this._physicsQueryDone = true;
       }
     }
@@ -60720,6 +60783,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
   }, {
     key: "damage",
     value: function damage(amount) {
+      // NB: Make text an entity so that it can be picked up on for network games
       var spread = 64;
       var x = (Math.random() - 0.5) * 2 * spread;
       var y = (Math.random() - 0.5) * 2 * spread;

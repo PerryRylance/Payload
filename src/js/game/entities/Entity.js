@@ -115,6 +115,75 @@ export default class Entity extends EventDispatcherWithOptions
 		);
 	}
 	
+	getEntitiesWithinRadius(radius, filter)
+	{
+		Payload.assert(!isNaN(radius));
+		
+		let self		= this;
+		let callback	= new Box2D.JSQueryCallback();
+		let result		= [];
+		
+		callback.ReportFixture = function(fixturePtr)
+		{
+			let fixture	= Box2D.wrapPointer(fixturePtr, Box2D.b2Fixture);
+			let body	= fixture.GetBody();
+			let entity	= body.entity;
+			
+			// console.log(entity);
+			
+			// TODO: Use bounding sphere where available
+			// TODO: Use raycasting for even higher accuracy
+			
+			if(self == entity)
+			{
+				// console.log("Ignoring self");
+				return true;
+			}
+			
+			if(filter && !filter(entity))
+			{
+				// console.log("Filtered out");
+				return true;
+			}
+			
+			if(result.indexOf(entity) > -1)
+			{
+				// console.log("Already detected");
+				return true;
+			}
+			
+			let delta	= new THREE.Vector3(
+				self.position.x - entity.position.x,
+				self.position.y - entity.position.y,
+				0
+			);
+			
+			if(delta.length() > radius)
+			{
+				// console.log("Center outside radius", delta.length(), radius);
+				return true;
+			}
+			
+			result.push(entity);
+			
+			return true;
+		}
+		
+		let aabb			= new Box2D.b2AABB();
+		let position		= this.position;
+		let scaledRadius	= radius * Units.GRAPHICS_TO_PHYSICS;
+		
+		position.x		*= Units.GRAPHICS_TO_PHYSICS;
+		position.y		*= Units.GRAPHICS_TO_PHYSICS;
+		
+		aabb.set_lowerBound(new Box2D.b2Vec2(position.x - scaledRadius, position.y - scaledRadius));
+		aabb.set_upperBound(new Box2D.b2Vec2(position.x + scaledRadius, position.y + scaledRadius));
+		
+		this.world.b2World.QueryAABB(callback, aabb);
+		
+		return result;
+	}
+	
 	initPhysics(options)
 	{
 		if(this.b2Body)
