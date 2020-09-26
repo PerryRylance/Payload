@@ -138,6 +138,7 @@ export default class Ship extends Entity
 	
 	damage(amount)
 	{
+		// NB: Make text an entity so that it can be picked up on for network games
 		let spread = 64;
 		let x = (Math.random() - 0.5) * 2 * spread;
 		let y = (Math.random() - 0.5) * 2 * spread;

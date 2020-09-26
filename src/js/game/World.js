@@ -429,6 +429,6 @@ World.defaults = {
 		launchFullPower:	2000
 	},
 	explosion: {
-		forceMultiplier:	3
+		forceMultiplier:	0.0002
 	}
 };
