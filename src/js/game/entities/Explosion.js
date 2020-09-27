@@ -37,6 +37,7 @@ export default class Explosion extends Emitter
 		
 		this.geometry = new AnimatedParticleGeometry(80 * scale, cells, frames);
 		
+		// TODO: This should be static
 		this.material = new THREE.MeshBasicMaterial({
 			depthWrite:		false,
 			transparent:	true,
@@ -45,13 +46,6 @@ export default class Explosion extends Emitter
 		});
 		
 		this._physicsQueryDone = false;
-	}
-	
-	initGraphics(options)
-	{
-		super.initGraphics(options);
-		
-		this.zIndex = 200;
 	}
 	
 	initAudio()

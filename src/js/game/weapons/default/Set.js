@@ -3,6 +3,11 @@ import MediumBomb from "./instantiatable/MediumBomb";
 import LargeBomb from "./instantiatable/LargeBomb";
 import MegaBomb from "./instantiatable/MegaBomb";
 
+import SmallDisruptor from "./instantiatable/SmallDisruptor";
+import MediumDisruptor from "./instantiatable/MediumDisruptor";
+import LargeDisruptor from "./instantiatable/LargeDisruptor";
+import MegaDisruptor from "./instantiatable/MegaDisruptor";
+
 export default {
 	
 	"name": "Default",
@@ -27,7 +32,27 @@ export default {
 			"name":		"Mega Bomb",
 			"cost":		60,
 			"class":	MegaBomb
-		}
+		},
+		{
+			"name":		"Small Disruptor",
+			"cost":		5,
+			"class":	SmallDisruptor
+		},
+		{
+			"name":		"Medium Disruptor",
+			"cost":		10,
+			"class":	MediumDisruptor
+		},
+		{
+			"name":		"Large Disruptor",
+			"cost":		30,
+			"class":	LargeDisruptor
+		},
+		{
+			"name":		"Mega Disruptor",
+			"cost":		60,
+			"class":	MegaDisruptor
+		},
 	]
 	
 };

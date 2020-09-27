@@ -263,7 +263,7 @@ export default class Entity extends EventDispatcherWithOptions
 			}
 			
 			if(!isNaN(x) && !isNaN(y))
-				this.object3d.position.set(x, y, this.zIndex);
+				this.object3d.position.set(x, y, this.zIndex);	// NB: zIndex appears to be backwards. Implement a property to flip this?
 			
 			if(!isNaN(angle))
 				this._setAngle(angle);

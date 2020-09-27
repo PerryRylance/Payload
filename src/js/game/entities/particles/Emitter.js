@@ -53,6 +53,8 @@ export default class Emitter extends Entity
 		this.object3d = new THREE.Object3D();
 		
 		super.initGraphics(options);
+		
+		this.zIndex = 200;
 	}
 	
 	detach()
@@ -69,6 +71,14 @@ export default class Emitter extends Entity
 		// TODO: Listen for removal, detach and remove self on removal
 	}
 	
+	createParticle()
+	{
+		return new THREE.Mesh(
+			this.geometry.clone(),
+			this.material.clone()
+		);
+	}
+	
 	spawn()
 	{
 		let particle;
@@ -82,17 +92,13 @@ export default class Emitter extends Entity
 		}
 		else
 		{
-			particle = new THREE.Mesh(
-				this.geometry.clone(),
-				this.material.clone()
-			);
+			particle = this.createParticle();
 			
 			this._particles.push(particle);
 			this.object3d.add(particle);
 		}
 		
 		particle.age = 0;
-		
 		
 		particle.position.copy(this.callbacks.position());
 		particle.position.add(this.spawnPoint);
