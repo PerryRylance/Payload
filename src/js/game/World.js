@@ -83,7 +83,7 @@ export default class World extends EventDispatcherWithOptions
 		this.listener.PreSolve = function() {};
 		this.listener.PostSolve = function() {};
 		
-		// this.b2World.SetContinuousPhysics(1);
+		this.b2World.SetContinuousPhysics(1);
 		this.b2World.SetContactListener(this.listener);
 	}
 	
