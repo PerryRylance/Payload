@@ -1,6 +1,7 @@
 import Entity from "./Entity";
 import Units from "../Units";
 import Player from "../Player";
+import Text from "./Text";
 
 export default class Ship extends Entity
 {
@@ -13,7 +14,7 @@ export default class Ship extends Entity
 		this.health	= world.options.ship.health;
 		this.player = player;
 		
-		this.initLabels();
+		this.initLabel();
 	}
 	
 	initPhysics(options)
@@ -93,18 +94,14 @@ export default class Ship extends Entity
 		this.zIndex = 100;
 	}
 	
-	initLabels()
+	initLabel()
 	{
-		this.labels = [];
-		
 		this.$label = $("<div class='player'><div class='name'></div><progress class='health'></progress></div>");
 		
 		this.$label.find(".name").text(this.player.name);
 		this.$label.find(".health")
 			.attr("max", this.world.options.ship.health)
 			.val(this.health);
-		
-		this.labels.push(this.$label);
 		
 		$("#hud").append(this.$label);
 	}
@@ -115,12 +112,10 @@ export default class Ship extends Entity
 		
 		let position = this.getScreenCoordinates();
 		
-		this.labels.forEach( $element => {
-			$element.css({
-				left: position.x + "px",
-				top: position.y + "px"
-			});
-		} );
+		this.$label.css({
+			left: position.x + "px",
+			top: position.y + "px"
+		});
 	}
 	
 	launch(options)
@@ -138,29 +133,29 @@ export default class Ship extends Entity
 	
 	damage(amount)
 	{
-		// NB: Make text an entity so that it can be picked up on for network games
-		let spread = 64;
-		let x = (Math.random() - 0.5) * 2 * spread;
-		let y = (Math.random() - 0.5) * 2 * spread;
-		let $element = $("<span class='damage'><span class='inner'></span></span>");
-		let $inner = $($element).find(".inner");
-		
 		amount = Math.round(amount);
 		
 		this.health -= amount;
 		
-		// The label
-		$inner.text(-amount);
+		let spread = 64;
+		let x = (Math.random() - 0.5) * 2 * spread;
+		let y = (Math.random() - 0.5) * 2 * spread;
 		
-		this.labels.push($element);
-		$("#hud").append($element);
+		let text = new Text(this.world, {
+			text:		"-" + amount,
+			color:		"red",
+			position: {
+				x: this.position.x + x,
+				y: this.position.y + y
+			}
+		});
 		
-		$inner.css({
-			left: x + "px",
-			top: y + "px"
-		}).fadeOut(1000);
+		this.world.add(text);
 		
-		// The health bar
+		let $element = $("<span class='damage'><span class='inner'></span></span>");
+		let $inner = $($element).find(".inner");
+		
+		// Update the health bar
 		this.$label.find(".health").val(this.health);
 	}
 }

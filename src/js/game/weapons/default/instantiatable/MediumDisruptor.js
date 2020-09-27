@@ -9,7 +9,7 @@ export default class MediumDisruptor extends Disruptor
 	
 	get radius()
 	{
-		return 10;
+		return 20;
 	}
 	
 	get damage()

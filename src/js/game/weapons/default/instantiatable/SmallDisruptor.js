@@ -9,7 +9,7 @@ export default class SmallDisruptor extends Disruptor
 	
 	get radius()
 	{
-		return 5;
+		return 20;
 	}
 	
 	get damage()
