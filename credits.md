@@ -1,30 +1,39 @@
-= Payload =
+# Payload
 
-== Programming ==
+## Programming
 Perry Rylance
 Harvey Collins
 
-== Weapon Programming ==
+## Weapon Programming
 Harvey Collins
 
-== Soundtrack ==
+## Soundtrack
 Harvey Collins
 Perry Rylance
 
-== Models ==
+## Modelling
 Perry Rylance
 
-== Sound Effects ==
+## Sound Effects
+Perry Rylance
 Jarusca (FreeSound.org)
 Cydon (FreeSound.org)
 
-== Graphics ==
+## Graphics
 Perry Rylance
 Artistmef (Brusheezy)
 
-== With thanks to ==
-MrDoob - THREE.js
-Erin Catto - Box2D
-Jason Plum - WarHeads SE
-Simeon Peebler - WarHeads SE (Soundtrack)
-Krelez - Chiptune Radio
+## With thanks to
+
+### THREE.js
+MrDoob
+
+### Box2D
+Erin Catto
+
+### WarHeads SE
+Jason Plum
+Simeon Peebler
+
+### Chiptune Radio
+Krelez
