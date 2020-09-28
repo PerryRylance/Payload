@@ -28,9 +28,13 @@ export default class World extends EventDispatcherWithOptions
 		
 		this.options	= options;
 		
-		this._bodyDestructionQueue = [];
+		this._bodyDestructionQueue	= [];
+		this._isAtRest				= false;
+		this._wasAtRestLastStep		= false;
+		this._awakeEntities			= [];
 		
 		this.game		= game;
+		this.parent		= game; // For event bubbling
 		this.entities	= [];
 		this.planets	= [];
 		this.ships		= [];
@@ -206,6 +210,11 @@ export default class World extends EventDispatcherWithOptions
 		return this._bodyDestructionQueue;
 	}
 	
+	get isAtRest()
+	{
+		return this._isAtRest;
+	}
+	
 	add(entity)
 	{
 		Payload.assert(entity instanceof Entity, "Not an Entity");
@@ -323,8 +332,29 @@ export default class World extends EventDispatcherWithOptions
 		var delta	= end - start;
 		
 		// Entities
+		let foundAwakeBodies = false;
+		
+		if(this._awakeEntities.length)
+			this._awakeEntities.splice(0, this._awakeEntities.length);
+		
 		for(var i = 0; i < this.entities.length; i++)
-			this.entities[i].update();
+		{
+			let entity = this.entities[i]
+			
+			entity.update();
+			
+			if(!foundAwakeBodies && entity.b2Body && entity.b2Body.GetType() == Box2D.b2_dynamicBody && entity.b2Body.IsAwake())
+			{
+				this._awakeEntities.push(entity);
+				foundAwakeBodies = true;
+			}
+		}
+		
+		this._wasAtRestLastStep = this._isAtRest;
+		this._isAtRest = !foundAwakeBodies;
+		
+		if(this._isAtRest && !this._wasAtRestLastStep)
+			this.trigger("resting");
 		
 		this.interaction.update();
 		this.background.update();
@@ -350,7 +380,7 @@ export default class World extends EventDispatcherWithOptions
 			this.b2World.DrawDebugData();
 		}
 		
-		if(delta > 5000)
+		if(delta > 10000)
 		{
 			console.warn("Physics engine appears to have stalled, physics have been halted.");
 			this.doPhysics = false;
@@ -429,6 +459,6 @@ World.defaults = {
 		launchFullPower:	2000
 	},
 	explosion: {
-		forceMultiplier:	0.0002
+		forceMultiplier:	0.00005
 	}
 };

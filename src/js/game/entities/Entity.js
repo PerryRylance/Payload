@@ -353,5 +353,7 @@ export default class Entity extends EventDispatcherWithOptions
 		this.world.add(explosion);
 		
 		this.remove();
+		
+		return explosion;
 	}
 }

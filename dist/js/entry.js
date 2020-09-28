@@ -58985,6 +58985,8 @@ var _UI = _interopRequireDefault(require("./UI"));
 
 var _Announcer = _interopRequireDefault(require("./Announcer"));
 
+var _Weapon = _interopRequireDefault(require("./weapons/default/Weapon"));
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
 function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
@@ -59022,7 +59024,7 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
     _this = _super.call(this, options);
     _this.players = [];
     _this.currentPlayer = null;
-    _this.status = Game.STATUS_LOBBY;
+    _this._status = Game.STATUS_LOBBY;
     return _this;
   }
 
@@ -59036,6 +59038,8 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
   }, {
     key: "start",
     value: function start() {
+      var _this2 = this;
+
       Payload.assert(this.players.length ? true : false);
       this.seed = new Date().getTime();
       this.random = PRNG.Alea(this.seed);
@@ -59046,6 +59050,9 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
 
       this.world.step();
       this.trigger("gamestart");
+      this.on("launch fire", function (event) {
+        return _this2.onPlayerAction(event);
+      });
       var index = Math.floor(this.random() * this.players.length);
       this.startTurn(this.players[index]);
     }
@@ -59054,28 +59061,88 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
     value: function startTurn(player) {
       Payload.assert(player instanceof _Player["default"]);
       this.currentPlayer = player;
+      this.ui.enabled = true;
+      this._status = Game.STATUS_WAITING_FOR_ACTION;
+      console.log("Turn started for " + player.name);
       this.trigger({
         type: "turnstart",
         player: player
       });
     }
   }, {
+    key: "onPlayerAction",
+    value: function onPlayerAction(event) {
+      var _this3 = this;
+
+      this.ui.enabled = false;
+      console.log("Detected player action");
+
+      if (event.type == "fire") {
+        console.log("Waiting for weapon to complete");
+        this._status = Game.STATUS_WAITING_FOR_WEAPON;
+        this.on("complete", function (event) {
+          _this3.onWeaponComplete(event);
+        });
+      } else {
+        console.log("Waiting for world to come to a rest");
+        this._status = Game.STATUS_WAITING_FOR_RESTING;
+        this.on("resting", function (event) {
+          _this3.onWorldResting(event);
+        });
+      }
+    }
+  }, {
+    key: "onWeaponComplete",
+    value: function onWeaponComplete(event) {
+      var _this4 = this;
+
+      if (!(event.target instanceof _Weapon["default"])) return;
+      console.log("Weapon completed, waiting for world to come to a rest");
+      this.off("complete", this.onWeaponComplete);
+
+      if (!this.world.isAtRest) {
+        this._status = Game.STATUS_WAITING_FOR_RESTING;
+        this.on("resting", function (event) {
+          _this4.onWorldResting(event);
+        });
+      } else this.endTurn();
+    }
+  }, {
+    key: "onWorldResting",
+    value: function onWorldResting(event) {
+      if (event && !(event.target instanceof _World["default"])) return;
+      console.log("World has come to a rest, ending turn");
+      this.off("resting", this.onWorldResting);
+      this.endTurn();
+    }
+  }, {
     key: "endTurn",
     value: function endTurn() {
+      var _this5 = this;
+
       Payload.assert(this.currentPlayer != null);
+      console.log("Turn ended for " + this.currentPlayer.name);
       this.trigger({
         type: "turnend",
         player: this.currentPlayer
       });
       var currentPlayerIndex = this.players.indexOf(this.currentPlayer);
       Payload.assert(currentPlayerIndex > -1);
-      var nextIndex = currentPlayerIndex++ % this.players.length;
-      this.startTurn(this.players[nextIndex]);
+      var nextIndex = ++currentPlayerIndex % this.players.length;
+      this._status = Game.STATUS_BETWEEN_TURNS;
+      setTimeout(function () {
+        _this5.startTurn(_this5.players[nextIndex]);
+      }, 2000);
     }
   }, {
     key: "end",
     value: function end() {
       this.trigger("gameend");
+    }
+  }, {
+    key: "status",
+    get: function get() {
+      return this._status;
     }
   }]);
 
@@ -59084,10 +59151,13 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = Game;
 Game.STATUS_LOBBY = "lobby";
-Game.STATUS_PLAYING = "playing";
+Game.STATUS_WAITING_FOR_ACTION = "waiting-for-action";
+Game.STATUS_WAITING_FOR_WEAPON = "waiting-for-weapon";
+Game.STATUS_WAITING_FOR_RESTING = "waiting-for-resting";
+Game.STATUS_BETWEEN_TURNS = "between-turns";
 Game.STATUS_ENDED = "ended";
 
-},{"../EventDispatcherWithOptions":9,"./Announcer":15,"./Player":18,"./UI":19,"./World":21}],17:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":9,"./Announcer":15,"./Player":18,"./UI":19,"./World":21,"./weapons/default/Weapon":37}],17:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59236,6 +59306,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
 
     _this = _super.call(this, options);
     _this.game = game;
+    _this._enabled = true;
 
     _this.initWeaponSelect();
 
@@ -59337,7 +59408,18 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
         degrees: degrees,
         power: mult * this.game.world.options.projectile.launchFullPower,
         position: position
-      }); // TODO: Listen for weapon complete event
+      });
+      ship.trigger("fire"); // TODO: Listen for weapon complete event
+    }
+  }, {
+    key: "enabled",
+    get: function get() {
+      return this._enabled;
+    },
+    set: function set(value) {
+      this._enabled = value ? true : false;
+      $("#hud .player-controls :input").prop("disabled", !this.enabled);
+      $("#hud .player-controls").toggleClass("disabled", !this.enabled);
     }
   }]);
 
@@ -59439,7 +59521,12 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
     _this = _super.call(this, options);
     _this.options = options;
     _this._bodyDestructionQueue = [];
+    _this._isAtRest = false;
+    _this._wasAtRestLastStep = false;
+    _this._awakeEntities = [];
     _this.game = game;
+    _this.parent = game; // For event bubbling
+
     _this.entities = [];
     _this.planets = [];
     _this.ships = [];
@@ -59662,10 +59749,23 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       var end = new Date().getTime();
       var delta = end - start; // Entities
 
+      var foundAwakeBodies = false;
+      if (this._awakeEntities.length) this._awakeEntities.splice(0, this._awakeEntities.length);
+
       for (var i = 0; i < this.entities.length; i++) {
-        this.entities[i].update();
+        var entity = this.entities[i];
+        entity.update();
+
+        if (!foundAwakeBodies && entity.b2Body && entity.b2Body.GetType() == Box2D.b2_dynamicBody && entity.b2Body.IsAwake()) {
+          this._awakeEntities.push(entity);
+
+          foundAwakeBodies = true;
+        }
       }
 
+      this._wasAtRestLastStep = this._isAtRest;
+      this._isAtRest = !foundAwakeBodies;
+      if (this._isAtRest && !this._wasAtRestLastStep) this.trigger("resting");
       this.interaction.update();
       this.background.update(); // Rendering
 
@@ -59681,7 +59781,7 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
         this.b2World.DrawDebugData();
       }
 
-      if (delta > 5000) {
+      if (delta > 10000) {
         console.warn("Physics engine appears to have stalled, physics have been halted.");
         this.doPhysics = false;
       }
@@ -59724,6 +59824,11 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
     get: function get() {
       return this._bodyDestructionQueue;
     }
+  }, {
+    key: "isAtRest",
+    get: function get() {
+      return this._isAtRest;
+    }
   }]);
 
   return World;
@@ -59757,7 +59862,7 @@ World.defaults = {
     launchFullPower: 2000
   },
   explosion: {
-    forceMultiplier: 0.0002
+    forceMultiplier: 0.00005
   }
 };
 
@@ -60284,6 +60389,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
       }));
       this.world.add(explosion);
       this.remove();
+      return explosion;
     }
   }, {
     key: "position",
@@ -61100,6 +61206,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
     _this = _super.call(this, world, options);
     _this.health = world.options.ship.health;
     _this.player = player;
+    _this.parent = world; // For event bubbling
 
     _this.initLabel();
 
@@ -61193,6 +61300,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
       var sound = new THREE.Audio(this.world.listener);
       sound.setBuffer(buffer);
       sound.play();
+      this.trigger("launch");
     }
   }, {
     key: "damage",
@@ -61876,9 +61984,12 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
 
       var projectile = new _Projectile["default"](this.world, options);
       projectile.once("collision", function (event) {
-        projectile.explode({
+        var explosion = projectile.explode({
           radius: _this.radius,
           damage: _this.damage
+        });
+        explosion.once("removed", function (event) {
+          _this.trigger("complete");
         });
       });
       projectile.launch(options);
@@ -61956,6 +62067,9 @@ var Disruptor = /*#__PURE__*/function (_Weapon) {
         _this.world.add(shock);
 
         projectile.remove();
+        shock.once("removed", function (event) {
+          _this.trigger("complete");
+        });
       });
       projectile.launch(options);
       this.world.add(projectile);
@@ -62077,6 +62191,8 @@ var Weapon = /*#__PURE__*/function (_EventDispatcher) {
 
     _this = _super.call(this);
     _this.world = world;
+    _this.parent = world; // For event bubbling
+
     return _this;
   }
 

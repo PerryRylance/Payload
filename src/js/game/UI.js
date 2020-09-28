@@ -9,6 +9,8 @@ export default class UI extends EventDispatcherWithOptions
 		
 		this.game = game;
 		
+		this._enabled = true;
+		
 		this.initWeaponSelect();
 		this.initCompass();
 		
@@ -17,6 +19,19 @@ export default class UI extends EventDispatcherWithOptions
 		$("#fire").on("click", (event) => this.onFire(event));
 		
 		game.on("turnstart", event => this.onTurnStart(event));
+	}
+	
+	get enabled()
+	{
+		return this._enabled;
+	}
+	
+	set enabled(value)
+	{
+		this._enabled = value ? true : false;
+		
+		$("#hud .player-controls :input").prop("disabled", !this.enabled);
+		$("#hud .player-controls").toggleClass("disabled", !this.enabled);
 	}
 	
 	initWeaponSelect()
@@ -119,6 +134,8 @@ export default class UI extends EventDispatcherWithOptions
 			power:			mult * this.game.world.options.projectile.launchFullPower,
 			position:		position
 		});
+		
+		ship.trigger("fire");
 		
 		// TODO: Listen for weapon complete event
 	}

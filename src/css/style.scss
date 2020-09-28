@@ -235,3 +235,18 @@ progress[value]::-webkit-progress-value {
     border-radius: 2px; 
     background-size: 35px 20px, 100% 100%, 100% 100%;
 }
+
+#hud .player-controls
+{
+	transition: opacity 0.5s;
+}
+
+#hud .player-controls:not(.disabled)
+{
+	opacity: 1;
+}
+
+#hud .player-controls.disabled
+{
+	opacity: 0;
+}

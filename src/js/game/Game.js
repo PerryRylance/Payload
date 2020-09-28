@@ -3,6 +3,7 @@ import Player from "./Player";
 import World from "./World";
 import UI from "./UI";
 import Announcer from "./Announcer";
+import Weapon from "./weapons/default/Weapon";
 
 export default class Game extends EventDispatcherWithOptions
 {
@@ -13,7 +14,12 @@ export default class Game extends EventDispatcherWithOptions
 		this.players		= [];
 		this.currentPlayer	= null;
 		
-		this.status			= Game.STATUS_LOBBY;
+		this._status		= Game.STATUS_LOBBY;
+	}
+	
+	get status()
+	{
+		return this._status;
 	}
 	
 	addPlayer(player)
@@ -42,6 +48,7 @@ export default class Game extends EventDispatcherWithOptions
 		this.world.step();
 		
 		this.trigger("gamestart");
+		this.on("launch fire", event => this.onPlayerAction(event));
 		
 		var index		= Math.floor(this.random() * this.players.length);
 		this.startTurn(this.players[index]);
@@ -52,6 +59,11 @@ export default class Game extends EventDispatcherWithOptions
 		Payload.assert(player instanceof Player);
 		
 		this.currentPlayer = player;
+		this.ui.enabled = true;
+		
+		this._status = Game.STATUS_WAITING_FOR_ACTION;
+		
+		console.log("Turn started for " + player.name);
 		
 		this.trigger({
 			type:	"turnstart",
@@ -59,9 +71,66 @@ export default class Game extends EventDispatcherWithOptions
 		});
 	}
 	
+	onPlayerAction(event)
+	{
+		this.ui.enabled = false;
+		
+		console.log("Detected player action");
+		
+		if(event.type == "fire")
+		{
+			console.log("Waiting for weapon to complete");
+			
+			this._status = Game.STATUS_WAITING_FOR_WEAPON;
+			
+			this.on("complete", event => { this.onWeaponComplete(event) });
+		}
+		else
+		{
+			console.log("Waiting for world to come to a rest");
+			
+			this._status = Game.STATUS_WAITING_FOR_RESTING;
+			
+			this.on("resting", event => { this.onWorldResting(event) });
+		}
+	}
+	
+	onWeaponComplete(event)
+	{
+		if(!(event.target instanceof Weapon))
+			return;
+		
+		console.log("Weapon completed, waiting for world to come to a rest");
+		
+		this.off("complete", this.onWeaponComplete);
+		
+		if(!this.world.isAtRest)
+		{
+			this._status = Game.STATUS_WAITING_FOR_RESTING;
+			
+			this.on("resting", event => { this.onWorldResting(event) });
+		}
+		else
+			this.endTurn();
+	}
+	
+	onWorldResting(event)
+	{
+		if(event && !(event.target instanceof World))
+			return;
+		
+		console.log("World has come to a rest, ending turn");
+		
+		this.off("resting", this.onWorldResting);
+		
+		this.endTurn();
+	}
+	
 	endTurn()
 	{
 		Payload.assert(this.currentPlayer != null);
+		
+		console.log("Turn ended for " + this.currentPlayer.name);
 		
 		this.trigger({
 			type:	"turnend",
@@ -72,9 +141,13 @@ export default class Game extends EventDispatcherWithOptions
 		
 		Payload.assert(currentPlayerIndex > -1);
 		
-		var nextIndex = (currentPlayerIndex++ % this.players.length);
+		var nextIndex = (++currentPlayerIndex % this.players.length);
 		
-		this.startTurn(this.players[nextIndex]);
+		this._status = Game.STATUS_BETWEEN_TURNS;
+		
+		setTimeout(() => {
+			this.startTurn(this.players[nextIndex]);
+		}, 2000);
 	}
 	
 	end()
@@ -83,6 +156,9 @@ export default class Game extends EventDispatcherWithOptions
 	}
 }
 
-Game.STATUS_LOBBY		= "lobby";
-Game.STATUS_PLAYING		= "playing";
-Game.STATUS_ENDED		= "ended";
+Game.STATUS_LOBBY					= "lobby";
+Game.STATUS_WAITING_FOR_ACTION		= "waiting-for-action";
+Game.STATUS_WAITING_FOR_WEAPON		= "waiting-for-weapon";
+Game.STATUS_WAITING_FOR_RESTING		= "waiting-for-resting";
+Game.STATUS_BETWEEN_TURNS			= "between-turns";
+Game.STATUS_ENDED					= "ended";
