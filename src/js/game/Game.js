@@ -211,7 +211,7 @@ export default class Game extends EventDispatcherWithOptions
 		Payload.assert(currentPlayerIndex > -1);
 		
 		for(
-			let nextIndex = currentPlayerIndex + 1; 
+			let nextIndex = (currentPlayerIndex + 1) % this.players.length; 
 			nextIndex != currentPlayerIndex; 
 			nextIndex = (nextIndex + 1) % this.players.length
 			)
