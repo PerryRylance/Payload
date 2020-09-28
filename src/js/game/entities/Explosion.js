@@ -131,9 +131,9 @@ export default class Explosion extends Emitter
 			ship.b2Body.ApplyLinearImpulse(vec);
 			
 			// NB: A damage falloff would be nice
-			if(self.damage)
+			if(this.damage)
 			{
-				let damage	= Math.round(self.damage * factor);
+				let damage	= Math.round(this.damage * factor);
 				ship.damage(damage);
 			}
 			

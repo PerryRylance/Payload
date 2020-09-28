@@ -4,6 +4,7 @@ import World from "./World";
 import UI from "./UI";
 import Announcer from "./Announcer";
 import Weapon from "./weapons/default/Weapon";
+import Taunt from "./Taunt";
 
 export default class Game extends EventDispatcherWithOptions
 {
@@ -15,6 +16,7 @@ export default class Game extends EventDispatcherWithOptions
 		this.currentPlayer	= null;
 		
 		this._status		= Game.STATUS_LOBBY;
+		this.taunt			= new Taunt();
 	}
 	
 	get status()

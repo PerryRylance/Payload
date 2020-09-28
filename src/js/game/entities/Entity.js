@@ -15,7 +15,8 @@ export default class Entity extends EventDispatcherWithOptions
 		
 		this._collisionEventQueue = [];
 		
-		this.world = world;
+		this.world	= world;
+		this.parent	= world;
 		this.zIndex = 0;
 		
 		this.initPhysics(options);
@@ -268,6 +269,8 @@ export default class Entity extends EventDispatcherWithOptions
 			if(!isNaN(angle))
 				this._setAngle(angle);
 		}
+		else if(this.object3d)
+			this.object3d.position.z = this.zIndex;
 	}
 	
 	_onCollision(entity, localFixture, otherFixture)
@@ -296,8 +299,12 @@ export default class Entity extends EventDispatcherWithOptions
 			this.object3d = null;
 		}
 		
+		this.trigger("removed");
+		
 		this.world.remove(this);
 		this.world = null;
+		
+		this.parent = null;
 	}
 	
 	launch(options)

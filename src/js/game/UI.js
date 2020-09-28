@@ -1,5 +1,6 @@
 import EventDispatcherWithOptions from "../EventDispatcherWithOptions";
 import Compass from "./entities/Compass";
+import Text from "./entities/Text";
 
 export default class UI extends EventDispatcherWithOptions
 {
@@ -14,9 +15,10 @@ export default class UI extends EventDispatcherWithOptions
 		this.initWeaponSelect();
 		this.initCompass();
 		
-		$("#re-center").on("click", (event) => this.onReCenter(event));
-		$("#launch").on("click", (event) => this.onLaunch(event));
-		$("#fire").on("click", (event) => this.onFire(event));
+		$("#re-center").on("click", event => this.onReCenter(event));
+		$("#launch").on("click", event => this.onLaunch(event));
+		$("#fire").on("click", event => this.onFire(event));
+		$("#skip-turn").on("click", event => this.onSkipTurn(event));
 		
 		game.on("turnstart", event => this.onTurnStart(event));
 	}
@@ -32,6 +34,8 @@ export default class UI extends EventDispatcherWithOptions
 		
 		$("#hud .player-controls :input").prop("disabled", !this.enabled);
 		$("#hud .player-controls").toggleClass("disabled", !this.enabled);
+		
+		this.compass.object3d.visible = this.enabled;
 	}
 	
 	initWeaponSelect()
@@ -108,6 +112,8 @@ export default class UI extends EventDispatcherWithOptions
 	{
 		// TODO: Consider delegating a lot of this to the Ship module instead
 		
+		this.onReCenter(event);
+		
 		let ship		= this.game.currentPlayer.ship;
 		let degrees		= $("input[name='degrees']").val();
 		let radians		= degrees * Math.PI / 180;
@@ -129,14 +135,45 @@ export default class UI extends EventDispatcherWithOptions
 		
 		let weapon		= new constructor(this.game.world);
 		
-		weapon.fire({
-			degrees:		degrees,
-			power:			mult * this.game.world.options.projectile.launchFullPower,
-			position:		position
+		this.enabled	= false;
+		
+		this.game.taunt.generate(taunt => {
+			
+			let text	= new Text(this.game.world, {
+				text: 		taunt,
+				position:	{
+					x: ship.position.x,
+					y: ship.position.y + this.game.world.options.ship.radius * 3
+				}
+			});
+			
+			this.game.world.add(text);
+			
+			setTimeout(() => {
+				
+				text.remove();
+				
+			}, 3000);
+			
+			setTimeout(() => {
+				
+				weapon.fire({
+					degrees:		degrees,
+					power:			mult * this.game.world.options.projectile.launchFullPower,
+					position:		position
+				});
+				
+				ship.trigger("fire");
+				
+			}, 4000);
+			
 		});
+	}
+	
+	onSkipTurn(event)
+	{
+		this.enabled = false;
 		
-		ship.trigger("fire");
-		
-		// TODO: Listen for weapon complete event
+		this.game.endTurn();
 	}
 }

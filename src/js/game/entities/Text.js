@@ -32,16 +32,6 @@ export default class Text extends Entity
 		
 		super.initGraphics(options);
 		
-		this.zIndex = 190; // Just above particle emitters
-	}
-	
-	update()
-	{
-		let camera		= this.world.camera;
-		let oneOverZoom	= 1 / camera.zoom;
-		let size		= 64;
-		let scale		= oneOverZoom * size;
-		
-		this.object3d.scale.set(scale, scale, 1);
+		this.zIndex = 210; // Just above particle emitters
 	}
 }

@@ -243,8 +243,6 @@ export default class World extends EventDispatcherWithOptions
 		
 		this.entities.splice(index, 1);
 		
-		entity.parent = null;
-		
 		if(entity instanceof Planet)
 		{
 			index = this.planets.indexOf(entity);
@@ -253,12 +251,10 @@ export default class World extends EventDispatcherWithOptions
 		}
 		else if(entity instanceof Ship)
 		{
-			index = this.planets.indexOf(entity);
-			Payload.assert(index != -1, "Not in planet list");
-			this.planets.splice(index, 1);
+			index = this.ships.indexOf(entity);
+			Payload.assert(index != -1, "Not in ship list");
+			this.ships.splice(index, 1);
 		}
-		
-		entity.trigger("removed");
 	}
 	
 	getEntitiesAtPosition(position, limit)
@@ -493,6 +489,6 @@ World.defaults = {
 		launchFullPower:	2000
 	},
 	explosion: {
-		forceMultiplier:	0.00005
+		forceMultiplier:	0.000005
 	}
 };
