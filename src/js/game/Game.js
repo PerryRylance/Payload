@@ -102,7 +102,7 @@ export default class Game extends EventDispatcherWithOptions
 		
 		console.log("Weapon completed, waiting for world to come to a rest");
 		
-		this.off("complete", this.onWeaponComplete);
+		this.off("complete");
 		
 		if(!this.world.isAtRest)
 		{
@@ -121,7 +121,7 @@ export default class Game extends EventDispatcherWithOptions
 		
 		console.log("World has come to a rest, ending turn");
 		
-		this.off("resting", this.onWorldResting);
+		this.off("resting");
 		
 		this.endTurn();
 	}

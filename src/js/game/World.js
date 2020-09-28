@@ -314,6 +314,27 @@ export default class World extends EventDispatcherWithOptions
 		return entities;
 	}
 	
+	fitCameraToAwakeEntities()
+	{
+		let controls	= this.interaction.controls;
+		let box			= new THREE.Box3();
+		let padding		= 750;
+		
+		if(this._awakeEntities.length == 0)
+			return;
+		
+		this._awakeEntities.forEach(entity => {
+			box.expandByObject(entity.object3d);
+		});
+		
+		controls.fitTo(box, true, {
+			paddingLeft:	padding,
+			paddingRight:	padding,
+			paddingTop:		padding,
+			paddingBottom:	padding
+		});
+	}
+	
 	step()
 	{
 		var self = this;
@@ -323,6 +344,7 @@ export default class World extends EventDispatcherWithOptions
 		
 		var start	= new Date().getTime();
 		
+		// Physics step
 		this.b2World.Step(1 / 20, 10, 10);
 		
 		for(var i = this._bodyDestructionQueue.length - 1; i >= 0; i--)
@@ -355,6 +377,18 @@ export default class World extends EventDispatcherWithOptions
 		
 		if(this._isAtRest && !this._wasAtRestLastStep)
 			this.trigger("resting");
+		
+		// Update interaction and background
+		switch(this.game.status)
+		{
+			case Game.STATUS_WAITING_FOR_WEAPON:
+			case Game.STATUS_WAITING_FOR_RESTING:
+				this.fitCameraToAwakeEntities();
+				break;
+				
+			default:
+				break;
+		}
 		
 		this.interaction.update();
 		this.background.update();
