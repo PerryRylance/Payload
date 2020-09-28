@@ -14,6 +14,7 @@ export default class Ship extends Entity
 		this.health	= world.options.ship.health;
 		this.player = player;
 		this.parent = world; // For event bubbling
+		this.state	= Ship.STATE_ALIVE;
 		
 		this.initLabel();
 	}
@@ -161,4 +162,18 @@ export default class Ship extends Entity
 		// Update the health bar
 		this.$label.find(".health").val(this.health);
 	}
+	
+	explode()
+	{
+		let options = this.world.options.ship.explosion;
+		
+		this.state	= Ship.STATE_DEAD;
+		
+		this.$label.remove();
+		
+		super.explode(options);
+	}
 }
+
+Ship.STATE_ALIVE		= "alive";
+Ship.STATE_DEAD			= "dead";

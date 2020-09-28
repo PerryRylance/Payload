@@ -1,4 +1,5 @@
 import Entity from "./Entity";
+import Ship from "./Ship";
 
 export default class Compass extends Entity
 {
@@ -74,7 +75,7 @@ export default class Compass extends Entity
 		
 		this.inner.mesh.rotation.z += this.innerAngularVelocity;
 		
-		if(player)
+		if(player && player.ship.state == Ship.STATE_ALIVE)
 			this.object3d.position.copy(player.ship.object3d.position);
 		
 		super.update();

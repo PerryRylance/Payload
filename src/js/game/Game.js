@@ -4,6 +4,9 @@ import World from "./World";
 import UI from "./UI";
 import Announcer from "./Announcer";
 import Weapon from "./weapons/default/Weapon";
+import Taunt from "./Taunt";
+import Text from "./entities/Text";
+import Ship from "./entities/Ship";
 
 export default class Game extends EventDispatcherWithOptions
 {
@@ -15,11 +18,26 @@ export default class Game extends EventDispatcherWithOptions
 		this.currentPlayer	= null;
 		
 		this._status		= Game.STATUS_LOBBY;
+		this.taunt			= new Taunt();
 	}
 	
 	get status()
 	{
 		return this._status;
+	}
+	
+	get numAliveShips()
+	{
+		let result = 0;
+		
+		this.world.ships.forEach(ship => {
+			
+			if(ship.state == Ship.STATE_ALIVE)
+				result++;
+			
+		})
+		
+		return result;
 	}
 	
 	addPlayer(player)
@@ -102,7 +120,7 @@ export default class Game extends EventDispatcherWithOptions
 		
 		console.log("Weapon completed, waiting for world to come to a rest");
 		
-		this.off("complete", this.onWeaponComplete);
+		this.off("complete");
 		
 		if(!this.world.isAtRest)
 		{
@@ -121,9 +139,100 @@ export default class Game extends EventDispatcherWithOptions
 		
 		console.log("World has come to a rest, ending turn");
 		
-		this.off("resting", this.onWorldResting);
+		this.off("resting");
 		
 		this.endTurn();
+	}
+	
+	handleDeadShips(callback)
+	{
+		let self	= this;
+		let ships	= [];
+		
+		this.world.ships.forEach(entity => {
+			if(entity.health <= 0)
+				ships.push(entity);
+		});
+		
+		if(ships.length == 0)
+		{
+			callback();
+			return;
+		}
+		
+		function explodeNextShip()
+		{
+			let ship		= ships.shift();
+			
+			ship.center();
+			
+			// TODO: Refactor, this is repeated from UI
+			self.taunt.generate(taunt => {
+				
+				let text	= new Text(self.world, {
+					text: 		taunt,
+					position:	{
+						x: ship.position.x,
+						y: ship.position.y + self.world.options.ship.radius * 3
+					}
+				});
+				
+				self.world.add(text);
+				
+				setTimeout(() => {
+					text.remove();
+				}, 3000);
+				
+				setTimeout(() => {
+					ship.explode();
+				}, 4000);
+				
+				setTimeout(() => {
+					
+					if(ships.length > 0)
+						explodeNextShip();
+					else
+						callback();
+					
+				}, 6000);
+				
+			});
+		}
+		
+		explodeNextShip();
+	}
+	
+	getNextPlayer()
+	{
+		Payload.assert(this.numAliveShips > 0 ? true : false);
+		
+		let currentPlayerIndex = this.players.indexOf(this.currentPlayer);
+		
+		Payload.assert(currentPlayerIndex > -1);
+		
+		for(
+			let nextIndex = currentPlayerIndex + 1; 
+			nextIndex != currentPlayerIndex; 
+			nextIndex = (nextIndex + 1) % this.players.length
+			)
+		{
+			if(this.players[nextIndex].ship.state == Ship.STATE_ALIVE)
+				return this.players[nextIndex];
+		}
+	}
+	
+	getAliveShips()
+	{
+		let result = [];
+		
+		this.world.ships.forEach(ship => {
+			
+			if(ship.state == Ship.STATE_ALIVE)
+				result.push(ship);
+			
+		});
+		
+		return result;
 	}
 	
 	endTurn()
@@ -132,26 +241,50 @@ export default class Game extends EventDispatcherWithOptions
 		
 		console.log("Turn ended for " + this.currentPlayer.name);
 		
-		this.trigger({
-			type:	"turnend",
-			player: this.currentPlayer
+		this.handleDeadShips(() => {
+			
+			this.trigger({
+				type:	"turnend",
+				player: this.currentPlayer
+			});
+			
+			let numAliveShips = this.numAliveShips;
+			
+			if(numAliveShips > 1)
+			{
+				this._status = Game.STATUS_BETWEEN_TURNS;
+				
+				let nextPlayer = this.getNextPlayer();
+				
+				setTimeout(() => {
+					
+					this.startTurn(nextPlayer);
+					
+					if(numAliveShips == 1)
+						this.end();
+					
+				}, 2000);
+			}
+			else
+				this.end();
+			
 		});
-		
-		var currentPlayerIndex = this.players.indexOf(this.currentPlayer);
-		
-		Payload.assert(currentPlayerIndex > -1);
-		
-		var nextIndex = (++currentPlayerIndex % this.players.length);
-		
-		this._status = Game.STATUS_BETWEEN_TURNS;
-		
-		setTimeout(() => {
-			this.startTurn(this.players[nextIndex]);
-		}, 2000);
 	}
 	
 	end()
 	{
+		this._status = Game.STATUS_ENDED;
+		
+		if(this.numAliveShips == 0)
+			this.announcer.announce("Draw");
+		else if(this.numAliveShips == 1)
+		{
+			let ship = this.getAliveShips()[0];
+			ship.center();
+			
+			this.announcer.announce("Victory");
+		}
+		
 		this.trigger("gameend");
 	}
 }
@@ -162,3 +295,6 @@ Game.STATUS_WAITING_FOR_WEAPON		= "waiting-for-weapon";
 Game.STATUS_WAITING_FOR_RESTING		= "waiting-for-resting";
 Game.STATUS_BETWEEN_TURNS			= "between-turns";
 Game.STATUS_ENDED					= "ended";
+
+Game.RESULT_VICTORY					= "victory";
+Game.RESULT_DRAW					= "draw";

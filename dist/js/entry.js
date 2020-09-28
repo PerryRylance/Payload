@@ -58661,7 +58661,7 @@ $(window).on("load", function (event) {
   payload.init();
 });
 
-},{"./assets/Assets":12,"./game/Game":16,"./game/Player":18,"./game/weapons/default/Set":36,"camera-controls":3,"stats.js":5,"three":8}],11:[function(require,module,exports){
+},{"./assets/Assets":12,"./game/Game":16,"./game/Player":18,"./game/weapons/default/Set":37,"camera-controls":3,"stats.js":5,"three":8}],11:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -58987,6 +58987,12 @@ var _Announcer = _interopRequireDefault(require("./Announcer"));
 
 var _Weapon = _interopRequireDefault(require("./weapons/default/Weapon"));
 
+var _Taunt = _interopRequireDefault(require("./Taunt"));
+
+var _Text = _interopRequireDefault(require("./entities/Text"));
+
+var _Ship = _interopRequireDefault(require("./entities/Ship"));
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
 function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
@@ -59025,6 +59031,7 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
     _this.players = [];
     _this.currentPlayer = null;
     _this._status = Game.STATUS_LOBBY;
+    _this.taunt = new _Taunt["default"]();
     return _this;
   }
 
@@ -59098,7 +59105,7 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
 
       if (!(event.target instanceof _Weapon["default"])) return;
       console.log("Weapon completed, waiting for world to come to a rest");
-      this.off("complete", this.onWeaponComplete);
+      this.off("complete");
 
       if (!this.world.isAtRest) {
         this._status = Game.STATUS_WAITING_FOR_RESTING;
@@ -59112,8 +59119,69 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
     value: function onWorldResting(event) {
       if (event && !(event.target instanceof _World["default"])) return;
       console.log("World has come to a rest, ending turn");
-      this.off("resting", this.onWorldResting);
+      this.off("resting");
       this.endTurn();
+    }
+  }, {
+    key: "handleDeadShips",
+    value: function handleDeadShips(callback) {
+      var self = this;
+      var ships = [];
+      this.world.ships.forEach(function (entity) {
+        if (entity.health <= 0) ships.push(entity);
+      });
+
+      if (ships.length == 0) {
+        callback();
+        return;
+      }
+
+      function explodeNextShip() {
+        var ship = ships.shift();
+        ship.center(); // TODO: Refactor, this is repeated from UI
+
+        self.taunt.generate(function (taunt) {
+          var text = new _Text["default"](self.world, {
+            text: taunt,
+            position: {
+              x: ship.position.x,
+              y: ship.position.y + self.world.options.ship.radius * 3
+            }
+          });
+          self.world.add(text);
+          setTimeout(function () {
+            text.remove();
+          }, 3000);
+          setTimeout(function () {
+            ship.explode();
+          }, 4000);
+          setTimeout(function () {
+            if (ships.length > 0) explodeNextShip();else callback();
+          }, 6000);
+        });
+      }
+
+      explodeNextShip();
+    }
+  }, {
+    key: "getNextPlayer",
+    value: function getNextPlayer() {
+      Payload.assert(this.numAliveShips > 0 ? true : false);
+      var currentPlayerIndex = this.players.indexOf(this.currentPlayer);
+      Payload.assert(currentPlayerIndex > -1);
+
+      for (var nextIndex = currentPlayerIndex + 1; nextIndex != currentPlayerIndex; nextIndex = (nextIndex + 1) % this.players.length) {
+        if (this.players[nextIndex].ship.state == _Ship["default"].STATE_ALIVE) return this.players[nextIndex];
+      }
+    }
+  }, {
+    key: "getAliveShips",
+    value: function getAliveShips() {
+      var result = [];
+      this.world.ships.forEach(function (ship) {
+        if (ship.state == _Ship["default"].STATE_ALIVE) result.push(ship);
+      });
+      return result;
     }
   }, {
     key: "endTurn",
@@ -59122,27 +59190,51 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
 
       Payload.assert(this.currentPlayer != null);
       console.log("Turn ended for " + this.currentPlayer.name);
-      this.trigger({
-        type: "turnend",
-        player: this.currentPlayer
+      this.handleDeadShips(function () {
+        _this5.trigger({
+          type: "turnend",
+          player: _this5.currentPlayer
+        });
+
+        var numAliveShips = _this5.numAliveShips;
+
+        if (numAliveShips > 1) {
+          _this5._status = Game.STATUS_BETWEEN_TURNS;
+
+          var nextPlayer = _this5.getNextPlayer();
+
+          setTimeout(function () {
+            _this5.startTurn(nextPlayer);
+
+            if (numAliveShips == 1) _this5.end();
+          }, 2000);
+        } else _this5.end();
       });
-      var currentPlayerIndex = this.players.indexOf(this.currentPlayer);
-      Payload.assert(currentPlayerIndex > -1);
-      var nextIndex = ++currentPlayerIndex % this.players.length;
-      this._status = Game.STATUS_BETWEEN_TURNS;
-      setTimeout(function () {
-        _this5.startTurn(_this5.players[nextIndex]);
-      }, 2000);
     }
   }, {
     key: "end",
     value: function end() {
+      this._status = Game.STATUS_ENDED;
+      if (this.numAliveShips == 0) this.announcer.announce("Draw");else if (this.numAliveShips == 1) {
+        var ship = this.getAliveShips()[0];
+        ship.center();
+        this.announcer.announce("Victory");
+      }
       this.trigger("gameend");
     }
   }, {
     key: "status",
     get: function get() {
       return this._status;
+    }
+  }, {
+    key: "numAliveShips",
+    get: function get() {
+      var result = 0;
+      this.world.ships.forEach(function (ship) {
+        if (ship.state == _Ship["default"].STATE_ALIVE) result++;
+      });
+      return result;
     }
   }]);
 
@@ -59156,8 +59248,10 @@ Game.STATUS_WAITING_FOR_WEAPON = "waiting-for-weapon";
 Game.STATUS_WAITING_FOR_RESTING = "waiting-for-resting";
 Game.STATUS_BETWEEN_TURNS = "between-turns";
 Game.STATUS_ENDED = "ended";
+Game.RESULT_VICTORY = "victory";
+Game.RESULT_DRAW = "draw";
 
-},{"../EventDispatcherWithOptions":9,"./Announcer":15,"./Player":18,"./UI":19,"./World":21,"./weapons/default/Weapon":37}],17:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":9,"./Announcer":15,"./Player":18,"./Taunt":19,"./UI":20,"./World":22,"./entities/Ship":29,"./entities/Text":31,"./weapons/default/Weapon":38}],17:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59266,9 +59360,51 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports["default"] = void 0;
 
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+var Taunt = /*#__PURE__*/function () {
+  function Taunt() {
+    _classCallCheck(this, Taunt);
+  }
+
+  _createClass(Taunt, [{
+    key: "generate",
+    value: function generate(callback) {
+      var result = "...";
+      $.ajax("https://api.genr8rs.com/Content/Fun/GameTauntGenerator?genr8rsUserId=1599635090.15785f587e9226845&_sInsultLevel=polite", {
+        success: function success(response, status, xhr) {
+          var json = JSON.parse(response);
+          result = json._sResult;
+        },
+        complete: function complete() {
+          callback(result);
+        }
+      });
+    }
+  }]);
+
+  return Taunt;
+}();
+
+exports["default"] = Taunt;
+
+},{}],20:[function(require,module,exports){
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+
 var _EventDispatcherWithOptions = _interopRequireDefault(require("../EventDispatcherWithOptions"));
 
 var _Compass = _interopRequireDefault(require("./entities/Compass"));
+
+var _Text = _interopRequireDefault(require("./entities/Text"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
@@ -59321,6 +59457,12 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
     $("#fire").on("click", function (event) {
       return _this.onFire(event);
     });
+    $("#skip-turn").on("click", function (event) {
+      return _this.onSkipTurn(event);
+    });
+    $("#surrender").on("click", function (event) {
+      return _this.onSurrender(event);
+    });
     game.on("turnstart", function (event) {
       return _this.onTurnStart(event);
     });
@@ -59328,6 +59470,29 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
   }
 
   _createClass(UI, [{
+    key: "remember",
+    value: function remember() {
+      var player = this.game.currentPlayer;
+      var settings = {};
+      $("#hud .player-controls input, #hud .player-controls select").each(function (index, el) {
+        settings[$(el).attr("name")] = $(el).val();
+      });
+      player.lastUISettings = settings;
+    }
+  }, {
+    key: "recall",
+    value: function recall() {
+      var player = this.game.currentPlayer;
+      var settings = player.lastUISettings;
+      if (!settings) return;
+
+      for (var name in settings) {
+        $("#hud .player-controls [name='" + name + "']").val(settings[name]);
+      }
+
+      this.updateCompass();
+    }
+  }, {
     key: "initWeaponSelect",
     value: function initWeaponSelect() {
       var $select = $("menu#weapons select");
@@ -59347,9 +59512,14 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
       this.compass = new _Compass["default"](this.game.world);
       this.game.world.add(this.compass);
       $("input[name='degrees']").on("input", function (event) {
-        var radians = $(event.target).val() * Math.PI / 180;
-        _this2.compass.angle = radians;
+        _this2.updateCompass();
       });
+    }
+  }, {
+    key: "updateCompass",
+    value: function updateCompass() {
+      var radians = $("input[name='degrees']").val() * Math.PI / 180;
+      this.compass.angle = radians;
     }
   }, {
     key: "getSelectedWeapon",
@@ -59362,15 +59532,13 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
     key: "onReCenter",
     value: function onReCenter(event) {
       var ship = this.game.currentPlayer.ship;
-      var camera = this.game.world.interaction.camera;
-      var controls = this.game.world.interaction.controls;
-      controls.moveTo(ship.position.x, ship.position.y, camera.z, true);
-      controls.zoomTo(1, true);
+      ship.center();
     }
   }, {
     key: "onTurnStart",
     value: function onTurnStart(event) {
       this.onReCenter(event);
+      this.recall();
     }
   }, {
     key: "onLaunch",
@@ -59379,6 +59547,8 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
       var degrees = $("input[name='degrees']").val();
       var mult = $("input[name='power']").val() / 100;
       var power = mult * this.game.world.options.ship.launchFullPower;
+      this.remember();
+      this.enabled = false;
       ship.launch({
         degrees: degrees,
         power: power
@@ -59387,7 +59557,10 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
   }, {
     key: "onFire",
     value: function onFire(event) {
+      var _this3 = this;
+
       // TODO: Consider delegating a lot of this to the Ship module instead
+      this.onReCenter(event);
       var ship = this.game.currentPlayer.ship;
       var degrees = $("input[name='degrees']").val();
       var radians = degrees * Math.PI / 180;
@@ -59404,12 +59577,45 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
         y: ship.object3d.position.y + offset.y
       };
       var weapon = new constructor(this.game.world);
-      weapon.fire({
-        degrees: degrees,
-        power: mult * this.game.world.options.projectile.launchFullPower,
-        position: position
+      this.remember();
+      this.enabled = false;
+      this.game.taunt.generate(function (taunt) {
+        var text = new _Text["default"](_this3.game.world, {
+          text: taunt,
+          position: {
+            x: ship.position.x,
+            y: ship.position.y + _this3.game.world.options.ship.radius * 3
+          }
+        });
+
+        _this3.game.world.add(text);
+
+        setTimeout(function () {
+          text.remove();
+        }, 3000);
+        setTimeout(function () {
+          weapon.fire({
+            degrees: degrees,
+            power: mult * _this3.game.world.options.projectile.launchFullPower,
+            position: position
+          });
+          ship.trigger("fire");
+        }, 4000);
       });
-      ship.trigger("fire"); // TODO: Listen for weapon complete event
+    }
+  }, {
+    key: "onSkipTurn",
+    value: function onSkipTurn(event) {
+      this.enabled = false;
+      this.game.endTurn();
+    }
+  }, {
+    key: "onSurrender",
+    value: function onSurrender(event) {
+      var ship = this.game.currentPlayer.ship;
+      this.enabled = false;
+      ship.damage(ship.health);
+      this.game.endTurn();
     }
   }, {
     key: "enabled",
@@ -59420,6 +59626,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
       this._enabled = value ? true : false;
       $("#hud .player-controls :input").prop("disabled", !this.enabled);
       $("#hud .player-controls").toggleClass("disabled", !this.enabled);
+      this.compass.object3d.visible = this.enabled;
     }
   }]);
 
@@ -59428,7 +59635,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = UI;
 
-},{"../EventDispatcherWithOptions":9,"./entities/Compass":24}],20:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":9,"./entities/Compass":25,"./entities/Text":31}],21:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59451,7 +59658,7 @@ Units.g2p = Units.graphicsToPhysics;
 var _default = Units;
 exports["default"] = _default;
 
-},{}],21:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59685,19 +59892,16 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       var index = this.entities.indexOf(entity);
       Payload.assert(index != -1, "Not in entity list");
       this.entities.splice(index, 1);
-      entity.parent = null;
 
       if (entity instanceof _Planet["default"]) {
         index = this.planets.indexOf(entity);
         Payload.assert(index != -1, "Not in planet list");
         this.planets.splice(index, 1);
       } else if (entity instanceof _Ship["default"]) {
-        index = this.planets.indexOf(entity);
-        Payload.assert(index != -1, "Not in planet list");
-        this.planets.splice(index, 1);
+        index = this.ships.indexOf(entity);
+        Payload.assert(index != -1, "Not in ship list");
+        this.ships.splice(index, 1);
       }
-
-      entity.trigger("removed");
     }
   }, {
     key: "getEntitiesAtPosition",
@@ -59735,11 +59939,31 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       return entities;
     }
   }, {
+    key: "fitCameraToAwakeEntities",
+    value: function fitCameraToAwakeEntities() {
+      var controls = this.interaction.controls;
+      var box = new THREE.Box3();
+      var padding = 750;
+      if (this._awakeEntities.length == 0) return;
+
+      this._awakeEntities.forEach(function (entity) {
+        box.expandByObject(entity.object3d);
+      });
+
+      controls.fitTo(box, true, {
+        paddingLeft: padding,
+        paddingRight: padding,
+        paddingTop: padding,
+        paddingBottom: padding
+      });
+    }
+  }, {
     key: "step",
     value: function step() {
       var self = this;
       if (window.stats) window.stats.begin();
-      var start = new Date().getTime();
+      var start = new Date().getTime(); // Physics step
+
       this.b2World.Step(1 / 20, 10, 10);
 
       for (var i = this._bodyDestructionQueue.length - 1; i >= 0; i--) {
@@ -59765,7 +59989,18 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
 
       this._wasAtRestLastStep = this._isAtRest;
       this._isAtRest = !foundAwakeBodies;
-      if (this._isAtRest && !this._wasAtRestLastStep) this.trigger("resting");
+      if (this._isAtRest && !this._wasAtRestLastStep) this.trigger("resting"); // Update interaction and background
+
+      switch (this.game.status) {
+        case _Game["default"].STATUS_WAITING_FOR_WEAPON:
+        case _Game["default"].STATUS_WAITING_FOR_RESTING:
+          this.fitCameraToAwakeEntities();
+          break;
+
+        default:
+          break;
+      }
+
       this.interaction.update();
       this.background.update(); // Rendering
 
@@ -59838,12 +60073,12 @@ exports["default"] = World;
 World.defaults = {
   planet: {
     count: {
-      minimum: 3,
-      maximum: 9
+      minimum: 5,
+      maximum: 14
     },
     radius: {
-      minimum: 50,
-      maximum: 1024
+      minimum: 64,
+      maximum: 1400
     },
     friction: 0.9,
     restitution: 0.0
@@ -59855,18 +60090,22 @@ World.defaults = {
     friction: 0.9,
     restitution: 0.15,
     angularDamping: 0.3,
-    health: 100
+    health: 100,
+    explosion: {
+      radius: 100,
+      damage: 25
+    }
   },
   projectile: {
     radius: 10,
     launchFullPower: 2000
   },
   explosion: {
-    forceMultiplier: 0.00005
+    forceMultiplier: 0.0000025
   }
 };
 
-},{"../EventDispatcherWithOptions":9,"./Game":16,"./Interaction":17,"./Player":18,"./Units":20,"./background/Background":22,"./entities/Entity":25,"./entities/Explosion":26,"./entities/Planet":27,"./entities/Ship":28,"./entities/particles/Emitter":32}],22:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":9,"./Game":16,"./Interaction":17,"./Player":18,"./Units":21,"./background/Background":23,"./entities/Entity":26,"./entities/Explosion":27,"./entities/Planet":28,"./entities/Ship":29,"./entities/particles/Emitter":33}],23:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59906,7 +60145,7 @@ var Background = /*#__PURE__*/function () {
 
 exports["default"] = Background;
 
-},{"./Starfield":23}],23:[function(require,module,exports){
+},{"./Starfield":24}],24:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59979,7 +60218,7 @@ var Starfield = /*#__PURE__*/function () {
 
 exports["default"] = Starfield;
 
-},{}],24:[function(require,module,exports){
+},{}],25:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59988,6 +60227,8 @@ Object.defineProperty(exports, "__esModule", {
 exports["default"] = void 0;
 
 var _Entity2 = _interopRequireDefault(require("./Entity"));
+
+var _Ship = _interopRequireDefault(require("./Ship"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
@@ -60091,7 +60332,7 @@ var Compass = /*#__PURE__*/function (_Entity) {
       }
 
       this.inner.mesh.rotation.z += this.innerAngularVelocity;
-      if (player) this.object3d.position.copy(player.ship.object3d.position);
+      if (player && player.ship.state == _Ship["default"].STATE_ALIVE) this.object3d.position.copy(player.ship.object3d.position);
 
       _get(_getPrototypeOf(Compass.prototype), "update", this).call(this);
     }
@@ -60132,7 +60373,7 @@ var Compass = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Compass;
 
-},{"./Entity":25}],25:[function(require,module,exports){
+},{"./Entity":26,"./Ship":29}],26:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60186,6 +60427,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
     _this = _super.call(this, options);
     _this._collisionEventQueue = [];
     _this.world = world;
+    _this.parent = world;
     _this.zIndex = 0;
 
     _this.initPhysics(options);
@@ -60329,7 +60571,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
         if (!isNaN(x) && !isNaN(y)) this.object3d.position.set(x, y, this.zIndex); // NB: zIndex appears to be backwards. Implement a property to flip this?
 
         if (!isNaN(angle)) this._setAngle(angle);
-      }
+      } else if (this.object3d) this.object3d.position.z = this.zIndex;
     }
   }, {
     key: "_onCollision",
@@ -60352,8 +60594,19 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
         this.object3d = null;
       }
 
+      this.trigger("removed");
       this.world.remove(this);
       this.world = null;
+      this.parent = null;
+    }
+  }, {
+    key: "center",
+    value: function center() {
+      var camera = this.world.interaction.camera;
+      var controls = this.world.interaction.controls;
+      var position = this.position;
+      controls.moveTo(position.x, position.y, camera.z, true);
+      controls.zoomTo(1, true);
     }
   }, {
     key: "launch",
@@ -60447,7 +60700,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = Entity;
 
-},{"../../EventDispatcherWithOptions":9,"../Units":20,"../World":21}],26:[function(require,module,exports){
+},{"../../EventDispatcherWithOptions":9,"../Units":21,"../World":22}],27:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60597,8 +60850,8 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
         ship.b2Body.SetAwake(1);
         ship.b2Body.ApplyLinearImpulse(vec); // NB: A damage falloff would be nice
 
-        if (self.damage) {
-          var damage = Math.round(self.damage * factor);
+        if (_this2.damage) {
+          var damage = Math.round(_this2.damage * factor);
           ship.damage(damage);
         }
       });
@@ -60627,7 +60880,7 @@ jQuery(function ($) {
   Payload.Explosion = Explosion;
 });
 
-},{"../Units":20,"./Planet":27,"./Ship":28,"./particles/AnimatedParticleGeometry":31,"./particles/Emitter":32}],27:[function(require,module,exports){
+},{"../Units":21,"./Planet":28,"./Ship":29,"./particles/AnimatedParticleGeometry":32,"./particles/Emitter":33}],28:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61148,7 +61401,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Planet;
 
-},{"../Units":20,"./Entity":25,"d3-delaunay":4}],28:[function(require,module,exports){
+},{"../Units":21,"./Entity":26,"d3-delaunay":4}],29:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61207,6 +61460,8 @@ var Ship = /*#__PURE__*/function (_Entity) {
     _this.health = world.options.ship.health;
     _this.player = player;
     _this.parent = world; // For event bubbling
+
+    _this.state = Ship.STATE_ALIVE;
 
     _this.initLabel();
 
@@ -61324,14 +61579,25 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
       this.$label.find(".health").val(this.health);
     }
+  }, {
+    key: "explode",
+    value: function explode() {
+      var options = this.world.options.ship.explosion;
+      this.state = Ship.STATE_DEAD;
+      this.$label.remove();
+
+      _get(_getPrototypeOf(Ship.prototype), "explode", this).call(this, options);
+    }
   }]);
 
   return Ship;
 }(_Entity2["default"]);
 
 exports["default"] = Ship;
+Ship.STATE_ALIVE = "alive";
+Ship.STATE_DEAD = "dead";
 
-},{"../Player":18,"../Units":20,"./Entity":25,"./Text":30}],29:[function(require,module,exports){
+},{"../Player":18,"../Units":21,"./Entity":26,"./Text":31}],30:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61485,7 +61751,7 @@ var Shock = /*#__PURE__*/function (_Emitter) {
 
 exports["default"] = Shock;
 
-},{"../Units":20,"./Ship":28,"./particles/Emitter":32}],30:[function(require,module,exports){
+},{"../Units":21,"./Ship":29,"./particles/Emitter":33}],31:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61554,16 +61820,7 @@ var Text = /*#__PURE__*/function (_Entity) {
 
       _get(_getPrototypeOf(Text.prototype), "initGraphics", this).call(this, options);
 
-      this.zIndex = 190; // Just above particle emitters
-    }
-  }, {
-    key: "update",
-    value: function update() {
-      var camera = this.world.camera;
-      var oneOverZoom = 1 / camera.zoom;
-      var size = 64;
-      var scale = oneOverZoom * size;
-      this.object3d.scale.set(scale, scale, 1);
+      this.zIndex = 210; // Just above particle emitters
     }
   }]);
 
@@ -61572,7 +61829,7 @@ var Text = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Text;
 
-},{"./Entity":25,"three-spritetext":6}],31:[function(require,module,exports){
+},{"./Entity":26,"three-spritetext":6}],32:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61665,7 +61922,7 @@ var AnimatedParticleGeometry = /*#__PURE__*/function (_PlaneGeometry) {
 
 exports["default"] = AnimatedParticleGeometry;
 
-},{"THREE":2}],32:[function(require,module,exports){
+},{"THREE":2}],33:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61844,7 +62101,7 @@ var Emitter = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Emitter;
 
-},{"../Entity":25,"./AnimatedParticleGeometry":31}],33:[function(require,module,exports){
+},{"../Entity":26,"./AnimatedParticleGeometry":32}],34:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61930,7 +62187,7 @@ var Projectile = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Projectile;
 
-},{"../../Units":20,"../Entity":25}],34:[function(require,module,exports){
+},{"../../Units":21,"../Entity":26}],35:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62002,7 +62259,7 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
 
 exports["default"] = Bomb;
 
-},{"../../entities/weapons/Projectile":33,"./Weapon":37}],35:[function(require,module,exports){
+},{"../../entities/weapons/Projectile":34,"./Weapon":38}],36:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62081,7 +62338,7 @@ var Disruptor = /*#__PURE__*/function (_Weapon) {
 
 exports["default"] = Disruptor;
 
-},{"../../entities/Shock":29,"../../entities/weapons/Projectile":33,"./Weapon":37}],36:[function(require,module,exports){
+},{"../../entities/Shock":30,"../../entities/weapons/Projectile":34,"./Weapon":38}],37:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62145,7 +62402,7 @@ var _default = {
 };
 exports["default"] = _default;
 
-},{"./instantiatable/LargeBomb":38,"./instantiatable/LargeDisruptor":39,"./instantiatable/MediumBomb":40,"./instantiatable/MediumDisruptor":41,"./instantiatable/MegaBomb":42,"./instantiatable/MegaDisruptor":43,"./instantiatable/SmallBomb":44,"./instantiatable/SmallDisruptor":45}],37:[function(require,module,exports){
+},{"./instantiatable/LargeBomb":39,"./instantiatable/LargeDisruptor":40,"./instantiatable/MediumBomb":41,"./instantiatable/MediumDisruptor":42,"./instantiatable/MegaBomb":43,"./instantiatable/MegaDisruptor":44,"./instantiatable/SmallBomb":45,"./instantiatable/SmallDisruptor":46}],38:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62208,7 +62465,7 @@ var Weapon = /*#__PURE__*/function (_EventDispatcher) {
 
 exports["default"] = Weapon;
 
-},{"@perry-rylance/event-dispatcher":1}],38:[function(require,module,exports){
+},{"@perry-rylance/event-dispatcher":1}],39:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62270,7 +62527,7 @@ var LargeBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = LargeBomb;
 
-},{"../Bomb":34}],39:[function(require,module,exports){
+},{"../Bomb":35}],40:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62332,7 +62589,7 @@ var LargeDisruptor = /*#__PURE__*/function (_Disruptor) {
 
 exports["default"] = LargeDisruptor;
 
-},{"../Disruptor":35}],40:[function(require,module,exports){
+},{"../Disruptor":36}],41:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62394,7 +62651,7 @@ var MediumBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MediumBomb;
 
-},{"../Bomb":34}],41:[function(require,module,exports){
+},{"../Bomb":35}],42:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62456,7 +62713,7 @@ var MediumDisruptor = /*#__PURE__*/function (_Disruptor) {
 
 exports["default"] = MediumDisruptor;
 
-},{"../Disruptor":35}],42:[function(require,module,exports){
+},{"../Disruptor":36}],43:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62518,7 +62775,7 @@ var MegaBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MegaBomb;
 
-},{"../Bomb":34}],43:[function(require,module,exports){
+},{"../Bomb":35}],44:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62580,7 +62837,7 @@ var MegaDisruptor = /*#__PURE__*/function (_Disruptor) {
 
 exports["default"] = MegaDisruptor;
 
-},{"../Disruptor":35}],44:[function(require,module,exports){
+},{"../Disruptor":36}],45:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62642,7 +62899,7 @@ var SmallBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = SmallBomb;
 
-},{"../Bomb":34}],45:[function(require,module,exports){
+},{"../Bomb":35}],46:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62704,7 +62961,7 @@ var SmallDisruptor = /*#__PURE__*/function (_Disruptor) {
 
 exports["default"] = SmallDisruptor;
 
-},{"../Disruptor":35}],46:[function(require,module,exports){
+},{"../Disruptor":36}],47:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.MTLLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -63088,7 +63345,7 @@ THREE.MTLLoader.MaterialCreator.prototype = {
   }
 };
 
-},{}],47:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.OBJLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -63666,6 +63923,6 @@ THREE.OBJLoader = function () {
   return OBJLoader;
 }();
 
-},{}]},{},[14,46,47])
+},{}]},{},[14,47,48])
 
 });//# sourceMappingURL=entry.js.map

@@ -243,8 +243,6 @@ export default class World extends EventDispatcherWithOptions
 		
 		this.entities.splice(index, 1);
 		
-		entity.parent = null;
-		
 		if(entity instanceof Planet)
 		{
 			index = this.planets.indexOf(entity);
@@ -253,12 +251,10 @@ export default class World extends EventDispatcherWithOptions
 		}
 		else if(entity instanceof Ship)
 		{
-			index = this.planets.indexOf(entity);
-			Payload.assert(index != -1, "Not in planet list");
-			this.planets.splice(index, 1);
+			index = this.ships.indexOf(entity);
+			Payload.assert(index != -1, "Not in ship list");
+			this.ships.splice(index, 1);
 		}
-		
-		entity.trigger("removed");
 	}
 	
 	getEntitiesAtPosition(position, limit)
@@ -314,6 +310,27 @@ export default class World extends EventDispatcherWithOptions
 		return entities;
 	}
 	
+	fitCameraToAwakeEntities()
+	{
+		let controls	= this.interaction.controls;
+		let box			= new THREE.Box3();
+		let padding		= 750;
+		
+		if(this._awakeEntities.length == 0)
+			return;
+		
+		this._awakeEntities.forEach(entity => {
+			box.expandByObject(entity.object3d);
+		});
+		
+		controls.fitTo(box, true, {
+			paddingLeft:	padding,
+			paddingRight:	padding,
+			paddingTop:		padding,
+			paddingBottom:	padding
+		});
+	}
+	
 	step()
 	{
 		var self = this;
@@ -323,6 +340,7 @@ export default class World extends EventDispatcherWithOptions
 		
 		var start	= new Date().getTime();
 		
+		// Physics step
 		this.b2World.Step(1 / 20, 10, 10);
 		
 		for(var i = this._bodyDestructionQueue.length - 1; i >= 0; i--)
@@ -355,6 +373,18 @@ export default class World extends EventDispatcherWithOptions
 		
 		if(this._isAtRest && !this._wasAtRestLastStep)
 			this.trigger("resting");
+		
+		// Update interaction and background
+		switch(this.game.status)
+		{
+			case Game.STATUS_WAITING_FOR_WEAPON:
+			case Game.STATUS_WAITING_FOR_RESTING:
+				this.fitCameraToAwakeEntities();
+				break;
+				
+			default:
+				break;
+		}
 		
 		this.interaction.update();
 		this.background.update();
@@ -433,12 +463,12 @@ export default class World extends EventDispatcherWithOptions
 World.defaults = {
 	planet: {
 		count: {
-			minimum:		3,
-			maximum:		9
+			minimum:		5,
+			maximum:		14
 		},
 		radius: {
-			minimum:		50,
-			maximum:		1024
+			minimum:		64,
+			maximum:		1400
 		},
 		friction:			0.9,
 		restitution:		0.0
@@ -452,13 +482,18 @@ World.defaults = {
 		restitution:		0.15,
 		angularDamping:		0.3,
 		
-		health:				100
+		health:				100,
+		
+		explosion: {
+			radius:			100,
+			damage:			25
+		}
 	},
 	projectile: {
 		radius:				10,
 		launchFullPower:	2000
 	},
 	explosion: {
-		forceMultiplier:	0.00005
+		forceMultiplier:	0.0000025
 	}
 };
