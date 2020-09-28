@@ -59170,7 +59170,7 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
       var currentPlayerIndex = this.players.indexOf(this.currentPlayer);
       Payload.assert(currentPlayerIndex > -1);
 
-      for (var nextIndex = currentPlayerIndex + 1; nextIndex != currentPlayerIndex; nextIndex = (nextIndex + 1) % this.players.length) {
+      for (var nextIndex = (currentPlayerIndex + 1) % this.players.length; nextIndex != currentPlayerIndex; nextIndex = (nextIndex + 1) % this.players.length) {
         if (this.players[nextIndex].ship.state == _Ship["default"].STATE_ALIVE) return this.players[nextIndex];
       }
     }
