@@ -44,8 +44,19 @@
 				<div id="viewport">
 					<div id="scene"></div>
 					<div id="hud">
+						<menu class="player-controls">
+							<span title="Credits">
+								<i class="fas fa-coins"></i>
+								<span class="credits">0</span>
+							</span>
+							<span title="Defense Remaining">
+								<i class="fas fa-shield-alt"></i>
+								<span class="defense">0</span>
+							</span>
+						</menu>
+					
 						<menu id="weapons" class="player-controls">
-							<select class="weapon"></select>
+							<select class="weapon" name="weapon"></select>
 						</menu>
 						
 						<menu id="actions" class="hexagonal player-controls">

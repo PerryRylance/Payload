@@ -59376,6 +59376,29 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
   }
 
   _createClass(UI, [{
+    key: "remember",
+    value: function remember() {
+      var player = this.game.currentPlayer;
+      var settings = {};
+      $("#hud .player-controls input, #hud .player-controls select").each(function (index, el) {
+        settings[$(el).attr("name")] = $(el).val();
+      });
+      player.lastUISettings = settings;
+    }
+  }, {
+    key: "recall",
+    value: function recall() {
+      var player = this.game.currentPlayer;
+      var settings = player.lastUISettings;
+      if (!settings) return;
+
+      for (var name in settings) {
+        $("#hud .player-controls [name='" + name + "']").val(settings[name]);
+      }
+
+      this.updateCompass();
+    }
+  }, {
     key: "initWeaponSelect",
     value: function initWeaponSelect() {
       var $select = $("menu#weapons select");
@@ -59395,9 +59418,14 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
       this.compass = new _Compass["default"](this.game.world);
       this.game.world.add(this.compass);
       $("input[name='degrees']").on("input", function (event) {
-        var radians = $(event.target).val() * Math.PI / 180;
-        _this2.compass.angle = radians;
+        _this2.updateCompass();
       });
+    }
+  }, {
+    key: "updateCompass",
+    value: function updateCompass() {
+      var radians = $("input[name='degrees']").val() * Math.PI / 180;
+      this.compass.angle = radians;
     }
   }, {
     key: "getSelectedWeapon",
@@ -59419,6 +59447,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
     key: "onTurnStart",
     value: function onTurnStart(event) {
       this.onReCenter(event);
+      this.recall();
     }
   }, {
     key: "onLaunch",
@@ -59427,6 +59456,8 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
       var degrees = $("input[name='degrees']").val();
       var mult = $("input[name='power']").val() / 100;
       var power = mult * this.game.world.options.ship.launchFullPower;
+      this.remember();
+      this.enabled = false;
       ship.launch({
         degrees: degrees,
         power: power
@@ -59455,6 +59486,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
         y: ship.object3d.position.y + offset.y
       };
       var weapon = new constructor(this.game.world);
+      this.remember();
       this.enabled = false;
       this.game.taunt.generate(function (taunt) {
         var text = new _Text["default"](_this3.game.world, {
@@ -59942,12 +59974,12 @@ exports["default"] = World;
 World.defaults = {
   planet: {
     count: {
-      minimum: 3,
-      maximum: 9
+      minimum: 5,
+      maximum: 14
     },
     radius: {
-      minimum: 50,
-      maximum: 1024
+      minimum: 64,
+      maximum: 1400
     },
     friction: 0.9,
     restitution: 0.0

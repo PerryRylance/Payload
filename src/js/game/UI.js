@@ -38,6 +38,32 @@ export default class UI extends EventDispatcherWithOptions
 		this.compass.object3d.visible = this.enabled;
 	}
 	
+	remember()
+	{
+		let player		= this.game.currentPlayer;
+		let settings	= {};
+		
+		$("#hud .player-controls input, #hud .player-controls select").each((index, el) => {
+			settings[$(el).attr("name")] = $(el).val();
+		});
+		
+		player.lastUISettings = settings;
+	}
+	
+	recall()
+	{
+		let player		= this.game.currentPlayer;
+		let settings	= player.lastUISettings;
+		
+		if(!settings)
+			return;
+		
+		for(var name in settings)
+			$("#hud .player-controls [name='" + name + "']").val(settings[name]);
+		
+		this.updateCompass();
+	}
+	
 	initWeaponSelect()
 	{
 		var $select = $("menu#weapons select");
@@ -63,11 +89,14 @@ export default class UI extends EventDispatcherWithOptions
 		this.game.world.add(this.compass);
 		
 		$("input[name='degrees']").on("input", (event) => {
-			
-			let radians = $(event.target).val() * Math.PI / 180;
-			this.compass.angle = radians;
-			
+			this.updateCompass();
 		});
+	}
+	
+	updateCompass()
+	{
+		let radians = $("input[name='degrees']").val() * Math.PI / 180;
+		this.compass.angle = radians;
 	}
 	
 	getSelectedWeapon()
@@ -91,6 +120,7 @@ export default class UI extends EventDispatcherWithOptions
 	onTurnStart(event)
 	{
 		this.onReCenter(event);
+		this.recall();
 	}
 	
 	onLaunch(event)
@@ -99,6 +129,9 @@ export default class UI extends EventDispatcherWithOptions
 		let degrees		= $("input[name='degrees']").val();
 		let mult		= $("input[name='power']").val() / 100;
 		let power		= mult * this.game.world.options.ship.launchFullPower;
+		
+		this.remember();
+		this.enabled	= false;
 		
 		ship.launch({
 			degrees:	degrees,
@@ -135,6 +168,7 @@ export default class UI extends EventDispatcherWithOptions
 		
 		let weapon		= new constructor(this.game.world);
 		
+		this.remember();
 		this.enabled	= false;
 		
 		this.game.taunt.generate(taunt => {

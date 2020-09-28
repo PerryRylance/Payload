@@ -463,12 +463,12 @@ export default class World extends EventDispatcherWithOptions
 World.defaults = {
 	planet: {
 		count: {
-			minimum:		3,
-			maximum:		9
+			minimum:		5,
+			maximum:		14
 		},
 		radius: {
-			minimum:		50,
-			maximum:		1024
+			minimum:		64,
+			maximum:		1400
 		},
 		friction:			0.9,
 		restitution:		0.0
