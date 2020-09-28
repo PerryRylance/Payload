@@ -19,6 +19,7 @@ export default class UI extends EventDispatcherWithOptions
 		$("#launch").on("click", event => this.onLaunch(event));
 		$("#fire").on("click", event => this.onFire(event));
 		$("#skip-turn").on("click", event => this.onSkipTurn(event));
+		$("#surrender").on("click", event => this.onSurrender(event));
 		
 		game.on("turnstart", event => this.onTurnStart(event));
 	}
@@ -101,8 +102,8 @@ export default class UI extends EventDispatcherWithOptions
 	
 	getSelectedWeapon()
 	{
-		var $option = $("menu#weapons select > option:selected");
-		var weapon = $option.data("payloadWeaponClass");
+		var $option		= $("menu#weapons select > option:selected");
+		var weapon		= $option.data("payloadWeaponClass");
 		
 		return weapon;
 	}
@@ -110,11 +111,7 @@ export default class UI extends EventDispatcherWithOptions
 	onReCenter(event)
 	{
 		let ship		= this.game.currentPlayer.ship;
-		let camera		= this.game.world.interaction.camera;
-		let controls	= this.game.world.interaction.controls;
-		
-		controls.moveTo(ship.position.x, ship.position.y, camera.z, true);
-		controls.zoomTo(1, true);
+		ship.center();
 	}
 	
 	onTurnStart(event)
@@ -207,6 +204,17 @@ export default class UI extends EventDispatcherWithOptions
 	onSkipTurn(event)
 	{
 		this.enabled = false;
+		
+		this.game.endTurn();
+	}
+	
+	onSurrender(event)
+	{
+		let ship = this.game.currentPlayer.ship;
+		
+		this.enabled = false;
+		
+		ship.damage(ship.health);
 		
 		this.game.endTurn();
 	}

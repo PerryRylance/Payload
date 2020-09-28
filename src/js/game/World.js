@@ -482,13 +482,18 @@ World.defaults = {
 		restitution:		0.15,
 		angularDamping:		0.3,
 		
-		health:				100
+		health:				100,
+		
+		explosion: {
+			radius:			100,
+			damage:			25
+		}
 	},
 	projectile: {
 		radius:				10,
 		launchFullPower:	2000
 	},
 	explosion: {
-		forceMultiplier:	0.000005
+		forceMultiplier:	0.0000025
 	}
 };

@@ -307,6 +307,16 @@ export default class Entity extends EventDispatcherWithOptions
 		this.parent = null;
 	}
 	
+	center()
+	{
+		let camera		= this.world.interaction.camera;
+		let controls	= this.world.interaction.controls;
+		let position	= this.position;
+		
+		controls.moveTo(position.x, position.y, camera.z, true);
+		controls.zoomTo(1, true);
+	}
+	
 	launch(options)
 	{
 		let impulse;

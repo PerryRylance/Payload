@@ -58989,6 +58989,10 @@ var _Weapon = _interopRequireDefault(require("./weapons/default/Weapon"));
 
 var _Taunt = _interopRequireDefault(require("./Taunt"));
 
+var _Text = _interopRequireDefault(require("./entities/Text"));
+
+var _Ship = _interopRequireDefault(require("./entities/Ship"));
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
 function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
@@ -59119,33 +59123,118 @@ var Game = /*#__PURE__*/function (_EventDispatcherWithO) {
       this.endTurn();
     }
   }, {
+    key: "handleDeadShips",
+    value: function handleDeadShips(callback) {
+      var self = this;
+      var ships = [];
+      this.world.ships.forEach(function (entity) {
+        if (entity.health <= 0) ships.push(entity);
+      });
+
+      if (ships.length == 0) {
+        callback();
+        return;
+      }
+
+      function explodeNextShip() {
+        var ship = ships.shift();
+        ship.center(); // TODO: Refactor, this is repeated from UI
+
+        self.taunt.generate(function (taunt) {
+          var text = new _Text["default"](self.world, {
+            text: taunt,
+            position: {
+              x: ship.position.x,
+              y: ship.position.y + self.world.options.ship.radius * 3
+            }
+          });
+          self.world.add(text);
+          setTimeout(function () {
+            text.remove();
+          }, 3000);
+          setTimeout(function () {
+            ship.explode();
+          }, 4000);
+          setTimeout(function () {
+            if (ships.length > 0) explodeNextShip();else callback();
+          }, 6000);
+        });
+      }
+
+      explodeNextShip();
+    }
+  }, {
+    key: "getNextPlayer",
+    value: function getNextPlayer() {
+      Payload.assert(this.numAliveShips > 0 ? true : false);
+      var currentPlayerIndex = this.players.indexOf(this.currentPlayer);
+      Payload.assert(currentPlayerIndex > -1);
+
+      for (var nextIndex = currentPlayerIndex + 1; nextIndex != currentPlayerIndex; nextIndex = (nextIndex + 1) % this.players.length) {
+        if (this.players[nextIndex].ship.state == _Ship["default"].STATE_ALIVE) return this.players[nextIndex];
+      }
+    }
+  }, {
+    key: "getAliveShips",
+    value: function getAliveShips() {
+      var result = [];
+      this.world.ships.forEach(function (ship) {
+        if (ship.state == _Ship["default"].STATE_ALIVE) result.push(ship);
+      });
+      return result;
+    }
+  }, {
     key: "endTurn",
     value: function endTurn() {
       var _this5 = this;
 
       Payload.assert(this.currentPlayer != null);
       console.log("Turn ended for " + this.currentPlayer.name);
-      this.trigger({
-        type: "turnend",
-        player: this.currentPlayer
+      this.handleDeadShips(function () {
+        _this5.trigger({
+          type: "turnend",
+          player: _this5.currentPlayer
+        });
+
+        var numAliveShips = _this5.numAliveShips;
+
+        if (numAliveShips > 1) {
+          _this5._status = Game.STATUS_BETWEEN_TURNS;
+
+          var nextPlayer = _this5.getNextPlayer();
+
+          setTimeout(function () {
+            _this5.startTurn(nextPlayer);
+
+            if (numAliveShips == 1) _this5.end();
+          }, 2000);
+        } else _this5.end();
       });
-      var currentPlayerIndex = this.players.indexOf(this.currentPlayer);
-      Payload.assert(currentPlayerIndex > -1);
-      var nextIndex = ++currentPlayerIndex % this.players.length;
-      this._status = Game.STATUS_BETWEEN_TURNS;
-      setTimeout(function () {
-        _this5.startTurn(_this5.players[nextIndex]);
-      }, 2000);
     }
   }, {
     key: "end",
     value: function end() {
+      this._status = Game.STATUS_ENDED;
+      if (this.numAliveShips == 0) this.announcer.announce("Draw");else if (this.numAliveShips == 1) {
+        var ship = this.getAliveShips()[0];
+        ship.center();
+        this.announcer.announce("Victory");
+      }
       this.trigger("gameend");
     }
   }, {
     key: "status",
     get: function get() {
       return this._status;
+    }
+  }, {
+    key: "numAliveShips",
+    get: function get() {
+      var result = 0;
+      this.world.ships.forEach(function (ship) {
+        if (ship.state == _Ship["default"].STATE_ALIVE) result++;
+      });
+      return result;
     }
   }]);
 
@@ -59159,8 +59248,10 @@ Game.STATUS_WAITING_FOR_WEAPON = "waiting-for-weapon";
 Game.STATUS_WAITING_FOR_RESTING = "waiting-for-resting";
 Game.STATUS_BETWEEN_TURNS = "between-turns";
 Game.STATUS_ENDED = "ended";
+Game.RESULT_VICTORY = "victory";
+Game.RESULT_DRAW = "draw";
 
-},{"../EventDispatcherWithOptions":9,"./Announcer":15,"./Player":18,"./Taunt":19,"./UI":20,"./World":22,"./weapons/default/Weapon":38}],17:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":9,"./Announcer":15,"./Player":18,"./Taunt":19,"./UI":20,"./World":22,"./entities/Ship":29,"./entities/Text":31,"./weapons/default/Weapon":38}],17:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59369,6 +59460,9 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
     $("#skip-turn").on("click", function (event) {
       return _this.onSkipTurn(event);
     });
+    $("#surrender").on("click", function (event) {
+      return _this.onSurrender(event);
+    });
     game.on("turnstart", function (event) {
       return _this.onTurnStart(event);
     });
@@ -59438,10 +59532,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
     key: "onReCenter",
     value: function onReCenter(event) {
       var ship = this.game.currentPlayer.ship;
-      var camera = this.game.world.interaction.camera;
-      var controls = this.game.world.interaction.controls;
-      controls.moveTo(ship.position.x, ship.position.y, camera.z, true);
-      controls.zoomTo(1, true);
+      ship.center();
     }
   }, {
     key: "onTurnStart",
@@ -59516,6 +59607,14 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
     key: "onSkipTurn",
     value: function onSkipTurn(event) {
       this.enabled = false;
+      this.game.endTurn();
+    }
+  }, {
+    key: "onSurrender",
+    value: function onSurrender(event) {
+      var ship = this.game.currentPlayer.ship;
+      this.enabled = false;
+      ship.damage(ship.health);
       this.game.endTurn();
     }
   }, {
@@ -59991,14 +60090,18 @@ World.defaults = {
     friction: 0.9,
     restitution: 0.15,
     angularDamping: 0.3,
-    health: 100
+    health: 100,
+    explosion: {
+      radius: 100,
+      damage: 25
+    }
   },
   projectile: {
     radius: 10,
     launchFullPower: 2000
   },
   explosion: {
-    forceMultiplier: 0.000005
+    forceMultiplier: 0.0000025
   }
 };
 
@@ -60125,6 +60228,8 @@ exports["default"] = void 0;
 
 var _Entity2 = _interopRequireDefault(require("./Entity"));
 
+var _Ship = _interopRequireDefault(require("./Ship"));
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
 function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
@@ -60227,7 +60332,7 @@ var Compass = /*#__PURE__*/function (_Entity) {
       }
 
       this.inner.mesh.rotation.z += this.innerAngularVelocity;
-      if (player) this.object3d.position.copy(player.ship.object3d.position);
+      if (player && player.ship.state == _Ship["default"].STATE_ALIVE) this.object3d.position.copy(player.ship.object3d.position);
 
       _get(_getPrototypeOf(Compass.prototype), "update", this).call(this);
     }
@@ -60268,7 +60373,7 @@ var Compass = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Compass;
 
-},{"./Entity":26}],26:[function(require,module,exports){
+},{"./Entity":26,"./Ship":29}],26:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60493,6 +60598,15 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
       this.world.remove(this);
       this.world = null;
       this.parent = null;
+    }
+  }, {
+    key: "center",
+    value: function center() {
+      var camera = this.world.interaction.camera;
+      var controls = this.world.interaction.controls;
+      var position = this.position;
+      controls.moveTo(position.x, position.y, camera.z, true);
+      controls.zoomTo(1, true);
     }
   }, {
     key: "launch",
@@ -61347,6 +61461,8 @@ var Ship = /*#__PURE__*/function (_Entity) {
     _this.player = player;
     _this.parent = world; // For event bubbling
 
+    _this.state = Ship.STATE_ALIVE;
+
     _this.initLabel();
 
     return _this;
@@ -61463,12 +61579,23 @@ var Ship = /*#__PURE__*/function (_Entity) {
 
       this.$label.find(".health").val(this.health);
     }
+  }, {
+    key: "explode",
+    value: function explode() {
+      var options = this.world.options.ship.explosion;
+      this.state = Ship.STATE_DEAD;
+      this.$label.remove();
+
+      _get(_getPrototypeOf(Ship.prototype), "explode", this).call(this, options);
+    }
   }]);
 
   return Ship;
 }(_Entity2["default"]);
 
 exports["default"] = Ship;
+Ship.STATE_ALIVE = "alive";
+Ship.STATE_DEAD = "dead";
 
 },{"../Player":18,"../Units":21,"./Entity":26,"./Text":31}],30:[function(require,module,exports){
 "use strict";
