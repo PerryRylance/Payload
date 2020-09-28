@@ -6,7 +6,8 @@ export default class Weapon extends EventDispatcher
 	{
 		super();
 		
-		this.world = world;
+		this.world	= world;
+		this.parent	= world; // For event bubbling
 	}
 	
 	fire(options)

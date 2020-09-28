@@ -13,6 +13,7 @@ export default class Ship extends Entity
 		
 		this.health	= world.options.ship.health;
 		this.player = player;
+		this.parent = world; // For event bubbling
 		
 		this.initLabel();
 	}
@@ -129,6 +130,8 @@ export default class Ship extends Entity
 		
 		sound.setBuffer(buffer);
 		sound.play();
+		
+		this.trigger("launch");
 	}
 	
 	damage(amount)

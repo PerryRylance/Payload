@@ -25,6 +25,10 @@ export default class Disruptor extends Weapon
 			
 			projectile.remove();
 			
+			shock.once("removed", event => {
+				this.trigger("complete");
+			});
+			
 		});
 		
 		projectile.launch(options);
