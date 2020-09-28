@@ -1,26 +1,26 @@
 # Payload
 
 ## Programming
-Perry Rylance
-Harvey Collins
+Perry Rylance  
 
 ## Weapon Programming
+Perry Rylance  
 Harvey Collins
 
 ## Soundtrack
-Harvey Collins
+Harvey Collins  
 Perry Rylance
 
 ## Modelling
 Perry Rylance
 
 ## Sound Effects
-Perry Rylance
-Jarusca (FreeSound.org)
+Perry Rylance  
+Jarusca (FreeSound.org)  
 Cydon (FreeSound.org)
 
 ## Graphics
-Perry Rylance
+Perry Rylance  
 Artistmef (Brusheezy)
 
 ## With thanks to
@@ -32,7 +32,7 @@ MrDoob
 Erin Catto
 
 ### WarHeads SE
-Jason Plum
+Jason Plum  
 Simeon Peebler
 
 ### Chiptune Radio
