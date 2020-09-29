@@ -1,6 +1,7 @@
 import Entity from "../Entity";
 import Units from "../../Units";
 import Sound from "../Sound";
+import Emitter from "../particles/Emitter";
 
 export default class Projectile extends Entity
 {
@@ -15,6 +16,37 @@ export default class Projectile extends Entity
 			});
 			this.world.add(sound);
 		}
+		
+		/*this.emitter = new Emitter(this.world, {
+			
+			geometry:	new THREE.PlaneGeometry(20, 20),
+			material:	new THREE.MeshBasicMaterial({
+				map:			payload.assets.sprites.assets["smokeparticle.png"].resource,
+				depthWrite:		false,
+				// transparent:	true
+			}),
+			
+			maxParticleCount:	60,
+			life:				Infinity,
+			spawnRate:			60 / 300,
+			spawnInitial:		0,
+			
+			fadeOverTime:		true,
+			
+			callbacks: {
+				rotation:		function() { return Math.random() * 2 * Math.PI; },
+				velocity:		function() { return new THREE.Vector3(0, 0, 0); }
+			}
+			
+		});
+		
+		this.world.add(this.emitter);
+		this.emitter.attachTo(this);
+		
+		this.once("removed", event => {
+			// this.emitter.life = 300;
+			this.emitter.spawnRate = 0;
+		});*/
 	}
 	
 	static get b2Filter()

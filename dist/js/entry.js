@@ -59764,7 +59764,8 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
       this.renderer = new THREE.WebGLRenderer({
         antialias: true
       });
-      this.renderer.setSize(width, height); // Add renderer DOM element
+      this.renderer.setSize(width, height); // this.renderer.setClearColor(0x00ff00);
+      // Add renderer DOM element
 
       document.querySelector("#scene").appendChild(this.renderer.domElement); // Add the background
 
@@ -60583,7 +60584,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
         degrees: Math.random() * 360,
         power: 100
       };
-      Payload.assert(options.degrees || options.impulse ? true : false);
+      Payload.assert("degrees" in options || "impulse" in options ? true : false);
 
       if (options.impulse) {
         Payload.assert(options.impulse instanceof THREE.Vector2);
@@ -62129,13 +62130,14 @@ var Emitter = /*#__PURE__*/function (_Entity) {
     }
   }, {
     key: "detach",
-    value: function detach() {// TODO: Remove removal listener
+    value: function detach() {
+      this._attachment = null;
     }
   }, {
     key: "attachTo",
     value: function attachTo(entity) {
       Payload.assert(entity instanceof _Entity2["default"]);
-      this._attachment = entity; // TODO: Listen for removal, detach and remove self on removal
+      this._attachment = entity;
     }
   }, {
     key: "createParticle",
@@ -62179,7 +62181,7 @@ var Emitter = /*#__PURE__*/function (_Entity) {
     key: "update",
     value: function update() {
       var i, spawnCount;
-      if (this._attachment) this.spawnPoint.copy(this._attachment.object3d.position);
+      if (this._attachment && this._attachment.object3d) this.spawnPoint.copy(this._attachment.object3d.position);
 
       _get(_getPrototypeOf(Emitter.prototype), "update", this).call(this);
 
@@ -62222,6 +62224,8 @@ var _Entity2 = _interopRequireDefault(require("../Entity"));
 var _Units = _interopRequireDefault(require("../../Units"));
 
 var _Sound = _interopRequireDefault(require("../Sound"));
+
+var _Emitter = _interopRequireDefault(require("../particles/Emitter"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
@@ -62270,6 +62274,37 @@ var Projectile = /*#__PURE__*/function (_Entity) {
 
       _this.world.add(sound);
     }
+    /*this.emitter = new Emitter(this.world, {
+    	
+    	geometry:	new THREE.PlaneGeometry(20, 20),
+    	material:	new THREE.MeshBasicMaterial({
+    		map:			payload.assets.sprites.assets["smokeparticle.png"].resource,
+    		depthWrite:		false,
+    		// transparent:	true
+    	}),
+    	
+    	maxParticleCount:	60,
+    	life:				Infinity,
+    	spawnRate:			60 / 300,
+    	spawnInitial:		0,
+    	
+    	fadeOverTime:		true,
+    	
+    	callbacks: {
+    		rotation:		function() { return Math.random() * 2 * Math.PI; },
+    		velocity:		function() { return new THREE.Vector3(0, 0, 0); }
+    	}
+    	
+    });
+    
+    this.world.add(this.emitter);
+    this.emitter.attachTo(this);
+    
+    this.once("removed", event => {
+    	// this.emitter.life = 300;
+    	this.emitter.spawnRate = 0;
+    });*/
+
 
     return _this;
   }
@@ -62320,7 +62355,7 @@ var Projectile = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Projectile;
 
-},{"../../Units":21,"../Entity":26,"../Sound":31}],36:[function(require,module,exports){
+},{"../../Units":21,"../Entity":26,"../Sound":31,"../particles/Emitter":34}],36:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {

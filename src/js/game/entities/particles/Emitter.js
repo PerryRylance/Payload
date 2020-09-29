@@ -59,7 +59,7 @@ export default class Emitter extends Entity
 	
 	detach()
 	{
-		// TODO: Remove removal listener
+		this._attachment = null;
 	}
 	
 	attachTo(entity)
@@ -67,8 +67,6 @@ export default class Emitter extends Entity
 		Payload.assert(entity instanceof Entity);
 		
 		this._attachment = entity;
-		
-		// TODO: Listen for removal, detach and remove self on removal
 	}
 	
 	createParticle()
@@ -125,7 +123,7 @@ export default class Emitter extends Entity
 	{
 		let i, spawnCount;
 		
-		if(this._attachment)
+		if(this._attachment && this._attachment.object3d)
 			this.spawnPoint.copy(this._attachment.object3d.position);
 		
 		super.update();

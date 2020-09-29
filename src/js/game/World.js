@@ -116,6 +116,7 @@ export default class World extends EventDispatcherWithOptions
 			antialias: true
 		});
 		this.renderer.setSize(width, height);
+		// this.renderer.setClearColor(0x00ff00);
 		
 		// Add renderer DOM element
 		document.querySelector("#scene").appendChild(this.renderer.domElement);
