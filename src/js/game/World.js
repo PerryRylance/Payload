@@ -365,7 +365,7 @@ export default class World extends EventDispatcherWithOptions
 			
 			entity.update();
 			
-			if(!foundAwakeBodies && entity.b2Body && entity.b2Body.GetType() == Box2D.b2_dynamicBody && entity.b2Body.IsAwake())
+			if(entity.b2Body && entity.b2Body.GetType() == Box2D.b2_dynamicBody && entity.b2Body.IsAwake())
 			{
 				this._awakeEntities.push(entity);
 				foundAwakeBodies = true;
