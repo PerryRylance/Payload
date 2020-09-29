@@ -6,6 +6,14 @@ export default class Projectile extends Entity
 	constructor(world, options)
 	{
 		super(world, options);
+		
+		if(!options || !options.silent)
+		{
+			let sound = new Sound(this.world, {
+				asset: payload.assets.sounds.assets["458669__jorgerosa__missile-launch.mp3"]
+			});
+			this.world.add(sound);
+		}
 	}
 	
 	initPhysics(options)

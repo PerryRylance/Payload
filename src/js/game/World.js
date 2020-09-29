@@ -201,6 +201,10 @@ export default class World extends EventDispatcherWithOptions
 			})
 		);
 		
+		// Should be stationary by default
+		// NB: This doesn't appear to work, unfortunately
+		ship.b2Body.SetAwake(0);
+		
 		this.add(ship);
 		player.ship = ship;
 	}

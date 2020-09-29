@@ -3,6 +3,7 @@ import AnimatedParticleGeometry from "./particles/AnimatedParticleGeometry";
 import Units from "../Units";
 import Planet from "./Planet";
 import Ship from "./Ship";
+import Sound from "./Sound";
 
 export default class Explosion extends Emitter
 {
@@ -51,12 +52,10 @@ export default class Explosion extends Emitter
 	initAudio()
 	{
 		let size	= (this.radius <= 100 ? "small" : "large");
-		let buffer	= payload.assets.sounds.explosions[size].random(this.world.game).resource;
+		let asset	= payload.assets.sounds.explosions[size].random(this.world.game);
 		
-		this.audio	= new THREE.Audio(this.world.listener)
-		
-		this.audio.setBuffer(buffer);
-		this.audio.play();
+		let sound	= new Sound(this.world, {asset: asset});
+		this.world.add(sound);
 	}
 	
 	applyPlanetDamage()
