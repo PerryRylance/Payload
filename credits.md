@@ -18,6 +18,7 @@ Perry Rylance
 Perry Rylance  
 Jarusca (FreeSound.org)  
 Cydon (FreeSound.org)
+Mike Koenig (SoundBible.com)
 
 ## Graphics
 Perry Rylance  

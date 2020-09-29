@@ -1,6 +1,7 @@
 import Emitter from "./particles/Emitter";
 import Units from "../Units";
 import Ship from "./Ship";
+import Sound from "./Sound";
 
 export default class Shock extends Emitter
 {
@@ -26,6 +27,15 @@ export default class Shock extends Emitter
 		
 		this.size		= size;
 		this.geometry	= new THREE.PlaneGeometry(size, size);
+		
+		this.once("added", event => {
+			
+			let sound = new Sound(this.world, {
+				asset: payload.assets.sounds.shocks.random(this.world.game)
+			});
+			this.world.add(sound);
+			
+		});
 	}
 	
 	static get materials()

@@ -134,71 +134,24 @@ export default class UI extends EventDispatcherWithOptions
 			degrees:	degrees,
 			power:		power
 		});
-		
-		// TODO: Lock controls, wait for ship to become stationary
 	}
 	
 	onFire(event)
 	{
-		// TODO: Consider delegating a lot of this to the Ship module instead
-		
 		this.onReCenter(event);
 		
 		let ship		= this.game.currentPlayer.ship;
-		let degrees		= $("input[name='degrees']").val();
-		let radians		= degrees * Math.PI / 180;
 		
-		let mult		= $("input[name='power']").val() / 100;
-		let power		= mult * this.game.world.options.ship.launchFullPower;
-		let constructor	= this.getSelectedWeapon();
-		let radius		= 2 * this.game.world.options.ship.radius;
-		
-		let offset		= {
-			x:			Math.cos(radians) * radius,
-			y:			Math.sin(radians) * radius
-		};
-		
-		let position	= {
-			x:			ship.object3d.position.x + offset.x,
-			y:			ship.object3d.position.y + offset.y
-		};
-		
-		let weapon		= new constructor(this.game.world);
+		ship.fire({
+			degrees:	$("input[name='degrees']").val(),
+			power:		$("input[name='power']").val(),
+			weapon:		this.getSelectedWeapon()
+		});
 		
 		this.remember();
 		this.enabled	= false;
 		
-		this.game.taunt.generate(taunt => {
-			
-			let text	= new Text(this.game.world, {
-				text: 		taunt,
-				position:	{
-					x: ship.position.x,
-					y: ship.position.y + this.game.world.options.ship.radius * 3
-				}
-			});
-			
-			this.game.world.add(text);
-			
-			setTimeout(() => {
-				
-				text.remove();
-				
-			}, 3000);
-			
-			setTimeout(() => {
-				
-				weapon.fire({
-					degrees:		degrees,
-					power:			mult * this.game.world.options.projectile.launchFullPower,
-					position:		position
-				});
-				
-				ship.trigger("fire");
-				
-			}, 4000);
-			
-		});
+		
 	}
 	
 	onSkipTurn(event)

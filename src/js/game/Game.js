@@ -81,7 +81,7 @@ export default class Game extends EventDispatcherWithOptions
 		
 		this._status = Game.STATUS_WAITING_FOR_ACTION;
 		
-		console.log("Turn started for " + player.name);
+		// console.log("Turn started for " + player.name);
 		
 		this.trigger({
 			type:	"turnstart",
@@ -93,11 +93,11 @@ export default class Game extends EventDispatcherWithOptions
 	{
 		this.ui.enabled = false;
 		
-		console.log("Detected player action");
+		// console.log("Detected player action");
 		
 		if(event.type == "fire")
 		{
-			console.log("Waiting for weapon to complete");
+			// console.log("Waiting for weapon to complete");
 			
 			this._status = Game.STATUS_WAITING_FOR_WEAPON;
 			
@@ -105,7 +105,7 @@ export default class Game extends EventDispatcherWithOptions
 		}
 		else
 		{
-			console.log("Waiting for world to come to a rest");
+			// console.log("Waiting for world to come to a rest");
 			
 			this._status = Game.STATUS_WAITING_FOR_RESTING;
 			
@@ -118,7 +118,7 @@ export default class Game extends EventDispatcherWithOptions
 		if(!(event.target instanceof Weapon))
 			return;
 		
-		console.log("Weapon completed, waiting for world to come to a rest");
+		// console.log("Weapon completed, waiting for world to come to a rest");
 		
 		this.off("complete");
 		
@@ -137,7 +137,7 @@ export default class Game extends EventDispatcherWithOptions
 		if(event && !(event.target instanceof World))
 			return;
 		
-		console.log("World has come to a rest, ending turn");
+		// console.log("World has come to a rest, ending turn");
 		
 		this.off("resting");
 		
@@ -239,7 +239,7 @@ export default class Game extends EventDispatcherWithOptions
 	{
 		Payload.assert(this.currentPlayer != null);
 		
-		console.log("Turn ended for " + this.currentPlayer.name);
+		// console.log("Turn ended for " + this.currentPlayer.name);
 		
 		this.handleDeadShips(() => {
 			

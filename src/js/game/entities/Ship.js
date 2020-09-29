@@ -2,6 +2,8 @@ import Entity from "./Entity";
 import Units from "../Units";
 import Player from "../Player";
 import Text from "./Text";
+import Sound from "./Sound";
+import Weapon from "../weapons/default/Weapon.js";
 
 export default class Ship extends Entity
 {
@@ -120,17 +122,66 @@ export default class Ship extends Entity
 		});
 	}
 	
+	fire(options)
+	{
+		Payload.assert(!isNaN(options.degrees));
+		Payload.assert(!isNaN(options.power));
+		
+		let radius		= 2 * this.world.options.ship.radius;
+		let radians		= options.degrees * Math.PI / 180;
+		let mult		= options.power / 100;
+		let weapon		= new options.weapon(this.world);
+		
+		Payload.assert(weapon instanceof Weapon);
+		
+		let offset		= {
+			x:			Math.cos(radians) * radius,
+			y:			Math.sin(radians) * radius
+		};
+		
+		this.world.game.taunt.generate(taunt => {
+			
+			let text	= new Text(this.world, {
+				text: 		taunt,
+				position:	{
+					x: this.position.x,
+					y: this.position.y + this.world.options.ship.radius * 3
+				}
+			});
+			
+			this.world.add(text);
+			
+			setTimeout(() => {
+				
+				text.remove();
+				
+			}, 3000);
+			
+			setTimeout(() => {
+				
+				weapon.fire({
+					degrees:		options.degrees,
+					power:			mult * this.world.options.projectile.launchFullPower,
+					position:		{
+						x:			this.position.x + offset.x,
+						y:			this.position.y + offset.y
+					}
+				});
+				
+				this.trigger("fire");
+				
+			}, 4000);
+			
+		});
+	}
+	
 	launch(options)
 	{
 		super.launch(options);
 		
-		// TODO: Need some kind of sound system really. A sound should be an entity so that it can dispatch an event
-		
-		var buffer	= payload.assets.sounds.assets["521377__jarusca__rocket-launch.mp3"].resource;
-		var sound	= new THREE.Audio(this.world.listener);
-		
-		sound.setBuffer(buffer);
-		sound.play();
+		let asset	= payload.assets.sounds.assets["521377__jarusca__rocket-launch.mp3"];
+		let sound	= new Sound(this.world, {asset: asset});
+		this.world.add(sound);
 		
 		this.trigger("launch");
 	}
