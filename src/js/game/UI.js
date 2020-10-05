@@ -143,8 +143,8 @@ export default class UI extends EventDispatcherWithOptions
 		let ship		= this.game.currentPlayer.ship;
 		
 		ship.fire({
-			degrees:	$("input[name='degrees']").val(),
-			power:		$("input[name='power']").val(),
+			degrees:	parseFloat($("input[name='degrees']").val()),
+			power:		parseFloat($("input[name='power']").val()),
 			weapon:		this.getSelectedWeapon()
 		});
 		

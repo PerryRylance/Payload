@@ -329,7 +329,7 @@ export default class Entity extends EventDispatcherWithOptions
 				power:		100
 			};
 		
-		Payload.assert((options.degrees || options.impulse ? true : false));
+		Payload.assert(("degrees" in options || "impulse" in options ? true : false));
 		
 		if(options.impulse)
 		{

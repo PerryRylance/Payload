@@ -1,5 +1,7 @@
 import Entity from "../Entity";
 import Units from "../../Units";
+import Sound from "../Sound";
+import Emitter from "../particles/Emitter";
 
 export default class Projectile extends Entity
 {
@@ -14,6 +16,48 @@ export default class Projectile extends Entity
 			});
 			this.world.add(sound);
 		}
+		
+		/*this.emitter = new Emitter(this.world, {
+			
+			geometry:	new THREE.PlaneGeometry(20, 20),
+			material:	new THREE.MeshBasicMaterial({
+				map:			payload.assets.sprites.assets["smokeparticle.png"].resource,
+				depthWrite:		false,
+				// transparent:	true
+			}),
+			
+			maxParticleCount:	60,
+			life:				Infinity,
+			spawnRate:			60 / 300,
+			spawnInitial:		0,
+			
+			fadeOverTime:		true,
+			
+			callbacks: {
+				rotation:		function() { return Math.random() * 2 * Math.PI; },
+				velocity:		function() { return new THREE.Vector3(0, 0, 0); }
+			}
+			
+		});
+		
+		this.world.add(this.emitter);
+		this.emitter.attachTo(this);
+		
+		this.once("removed", event => {
+			// this.emitter.life = 300;
+			this.emitter.spawnRate = 0;
+		});*/
+	}
+	
+	static get b2Filter()
+	{
+		if(Projectile._b2Filter)
+			return Projectile._b2Filter;
+		
+		Projectile._b2Filter = new Box2D.b2Filter();
+		Projectile._b2Filter.set_groupIndex(-1);
+		
+		return Projectile._b2Filter;
 	}
 	
 	initPhysics(options)
@@ -27,7 +71,10 @@ export default class Projectile extends Entity
 		fixtureDef.set_density( 2.5 );
 		fixtureDef.set_friction( 0.6 );
 		fixtureDef.set_shape( circleShape );
-		fixtureDef.set_isSensor( true ); // NB: Prevent projectiles colliding with one another
+		fixtureDef.set_isSensor( true );
+		
+		// NB: Prevent projectiles colliding with one another
+		fixtureDef.set_filter(Projectile.b2Filter);
 		
 		this.b2BodyDef = new Box2D.b2BodyDef();
 		this.b2BodyDef.set_type( Box2D.b2_dynamicBody );

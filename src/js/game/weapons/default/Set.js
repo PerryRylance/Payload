@@ -8,6 +8,8 @@ import MediumDisruptor from "./instantiatable/MediumDisruptor";
 import LargeDisruptor from "./instantiatable/LargeDisruptor";
 import MegaDisruptor from "./instantiatable/MegaDisruptor";
 
+import TripleShot from "./instantiatable/TripleShot";
+
 export default {
 	
 	"name": "Default",
@@ -53,6 +55,11 @@ export default {
 			"cost":		60,
 			"class":	MegaDisruptor
 		},
+		{
+			"name":		"Triple Shot",
+			"cost":		40,
+			"class":	TripleShot
+		}
 	]
 	
 };

@@ -116,6 +116,7 @@ export default class World extends EventDispatcherWithOptions
 			antialias: true
 		});
 		this.renderer.setSize(width, height);
+		// this.renderer.setClearColor(0x00ff00);
 		
 		// Add renderer DOM element
 		document.querySelector("#scene").appendChild(this.renderer.domElement);
@@ -365,7 +366,7 @@ export default class World extends EventDispatcherWithOptions
 			
 			entity.update();
 			
-			if(!foundAwakeBodies && entity.b2Body && entity.b2Body.GetType() == Box2D.b2_dynamicBody && entity.b2Body.IsAwake())
+			if(entity.b2Body && entity.b2Body.GetType() == Box2D.b2_dynamicBody && entity.b2Body.IsAwake())
 			{
 				this._awakeEntities.push(entity);
 				foundAwakeBodies = true;
