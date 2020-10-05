@@ -59380,7 +59380,8 @@ var Taunt = /*#__PURE__*/function () {
           result = json._sResult;
         },
         complete: function complete() {
-          callback(result);
+          // callback(result);
+          callback("TODO: Add AI generated dialogue here");
         }
       });
     }

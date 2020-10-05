@@ -19,7 +19,8 @@ export default class Taunt
 			
 			complete: function()
 			{
-				callback(result);
+				// callback(result);
+				callback("TODO: Add AI generated dialogue here");
 			}
 			
 		});
