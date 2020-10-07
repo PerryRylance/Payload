@@ -348,6 +348,10 @@ export default class Entity extends EventDispatcherWithOptions
 			);
 		}
 		
+		// Position if supplied
+		if(options.position)
+			this.position = options.position;
+		
 		// Convert the impulse
 		impulse = new Box2D.b2Vec2(
 			impulse.x * Units.GRAPHICS_TO_PHYSICS,

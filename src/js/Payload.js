@@ -7,6 +7,8 @@ import Player from "./game/Player";
 import Game from "./game/Game";
 import DefaultWeaponSet from "./game/weapons/default/Set";
 
+import AI from "./game/ai/AI";
+
 export default class Payload
 {
 	constructor()
@@ -65,8 +67,10 @@ export default class Payload
 		this.game = new Game();
 		
 		this.game.addPlayer(this.player);
+		
 		this.game.addPlayer(new Player({
-			name:	"Computer"
+			name:	"Computer",
+			ai:		new AI(this.game)
 		}));
 		
 		this.game.start();
