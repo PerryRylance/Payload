@@ -58569,6 +58569,8 @@ var _Game = _interopRequireDefault(require("./game/Game"));
 
 var _Set = _interopRequireDefault(require("./game/weapons/default/Set"));
 
+var _AI = _interopRequireDefault(require("./game/ai/AI"));
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
 function _getRequireWildcardCache() { if (typeof WeakMap !== "function") return null; var cache = new WeakMap(); _getRequireWildcardCache = function _getRequireWildcardCache() { return cache; }; return cache; }
@@ -58624,7 +58626,8 @@ var Payload = /*#__PURE__*/function () {
       this.game = new _Game["default"]();
       this.game.addPlayer(this.player);
       this.game.addPlayer(new _Player["default"]({
-        name: "Computer"
+        name: "Computer",
+        ai: new _AI["default"](this.game)
       }));
       this.game.start();
     }
@@ -58661,7 +58664,7 @@ $(window).on("load", function (event) {
   payload.init();
 });
 
-},{"./assets/Assets":12,"./game/Game":16,"./game/Player":18,"./game/weapons/default/Set":38,"camera-controls":3,"stats.js":5,"three":8}],11:[function(require,module,exports){
+},{"./assets/Assets":12,"./game/Game":16,"./game/Player":18,"./game/ai/AI":23,"./game/weapons/default/Set":40,"camera-controls":3,"stats.js":5,"three":8}],11:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59250,7 +59253,7 @@ Game.STATUS_ENDED = "ended";
 Game.RESULT_VICTORY = "victory";
 Game.RESULT_DRAW = "draw";
 
-},{"../EventDispatcherWithOptions":9,"./Announcer":15,"./Player":18,"./Taunt":19,"./UI":20,"./World":22,"./entities/Ship":29,"./entities/Text":32,"./weapons/default/Weapon":39}],17:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":9,"./Announcer":15,"./Player":18,"./Taunt":19,"./UI":20,"./World":22,"./entities/Ship":30,"./entities/Text":33,"./weapons/default/Weapon":41}],17:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -59340,9 +59343,11 @@ var Player = /*#__PURE__*/function (_EventDispatcherWithO) {
 
     _classCallCheck(this, Player);
 
+    if (!options) options = {};
     _this = _super.call(this, options);
     _this.name = "Unnamed Player";
-    if (options && options.name) _this.name = options.name;
+    if (options.name) _this.name = options.name;
+    if (options.ai) options.ai.player = _assertThisInitialized(_this);
     return _this;
   }
 
@@ -59406,6 +59411,8 @@ var _Compass = _interopRequireDefault(require("./entities/Compass"));
 
 var _Text = _interopRequireDefault(require("./entities/Text"));
 
+var _Tracer = _interopRequireDefault(require("./entities/weapons/Tracer"));
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
 
 function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
@@ -59462,6 +59469,9 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
     });
     $("#surrender").on("click", function (event) {
       return _this.onSurrender(event);
+    });
+    $("#degrees-and-power").on("input change", ":input", function (event) {
+      return _this.onTrajectoryChanged(event);
     });
     game.on("turnstart", function (event) {
       return _this.onTurnStart(event);
@@ -59582,6 +59592,29 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
       this.game.endTurn();
     }
   }, {
+    key: "onTrajectoryChanged",
+    value: function onTrajectoryChanged(event) {
+      /*let world		= this.game.world;
+      let ship		= this.game.currentPlayer.ship;
+      let tracer		= new Tracer(world);
+      
+      let mult		= parseFloat($("input[name='power']").val()) / 100;
+      let power 		= mult * world.options.projectile.launchFullPower;
+      
+      let options		= {
+      	degrees:	parseFloat($("input[name='degrees']").val()),
+      	power:		power
+      };
+      
+      ship.removeAllTracers();
+      ship.tracers = [tracer];
+      
+      options.position = ship.getProjectileOrigin(options);
+      
+      world.add(tracer);
+      tracer.launch(options);*/
+    }
+  }, {
     key: "enabled",
     get: function get() {
       return this._enabled;
@@ -59599,7 +59632,7 @@ var UI = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = UI;
 
-},{"../EventDispatcherWithOptions":9,"./entities/Compass":25,"./entities/Text":32}],21:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":9,"./entities/Compass":26,"./entities/Text":33,"./entities/weapons/Tracer":37}],21:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60073,7 +60106,177 @@ World.defaults = {
   }
 };
 
-},{"../EventDispatcherWithOptions":9,"./Game":16,"./Interaction":17,"./Player":18,"./Units":21,"./background/Background":23,"./entities/Entity":26,"./entities/Explosion":27,"./entities/Planet":28,"./entities/Ship":29,"./entities/particles/Emitter":34}],23:[function(require,module,exports){
+},{"../EventDispatcherWithOptions":9,"./Game":16,"./Interaction":17,"./Player":18,"./Units":21,"./background/Background":24,"./entities/Entity":27,"./entities/Explosion":28,"./entities/Planet":29,"./entities/Ship":30,"./entities/particles/Emitter":35}],23:[function(require,module,exports){
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+
+var _EventDispatcherWithOptions = _interopRequireDefault(require("../../EventDispatcherWithOptions"));
+
+var _Tracer = _interopRequireDefault(require("../entities/weapons/Tracer"));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
+
+function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function"); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, writable: true, configurable: true } }); if (superClass) _setPrototypeOf(subClass, superClass); }
+
+function _setPrototypeOf(o, p) { _setPrototypeOf = Object.setPrototypeOf || function _setPrototypeOf(o, p) { o.__proto__ = p; return o; }; return _setPrototypeOf(o, p); }
+
+function _createSuper(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+
+function _possibleConstructorReturn(self, call) { if (call && (_typeof(call) === "object" || typeof call === "function")) { return call; } return _assertThisInitialized(self); }
+
+function _assertThisInitialized(self) { if (self === void 0) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return self; }
+
+function _isNativeReflectConstruct() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Date.prototype.toString.call(Reflect.construct(Date, [], function () {})); return true; } catch (e) { return false; } }
+
+function _getPrototypeOf(o) { _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf : function _getPrototypeOf(o) { return o.__proto__ || Object.getPrototypeOf(o); }; return _getPrototypeOf(o); }
+
+var AI = /*#__PURE__*/function (_EventDispatcherWithO) {
+  _inherits(AI, _EventDispatcherWithO);
+
+  var _super = _createSuper(AI);
+
+  function AI(game, options) {
+    var _this;
+
+    _classCallCheck(this, AI);
+
+    _this = _super.call(this, options);
+    _this.game = game;
+
+    _this.game.on("turnstart", function (event) {
+      if (event.player === _this.player) _this.onTurnStart(event);
+    });
+
+    return _this;
+  }
+
+  _createClass(AI, [{
+    key: "onTurnStart",
+    value: function onTurnStart(event) {
+      this.state = {
+        numTracers: 360,
+        minAngle: 0,
+        maxAngle: 360
+      };
+      this.predict();
+    }
+  }, {
+    key: "predict",
+    value: function predict() {
+      var _this2 = this;
+
+      var world = this.game.world;
+      var count = this.state.numTracers;
+      var startAngle = this.state.minAngle;
+      var incrementAngle = (this.state.maxAngle - this.state.minAngle) / count;
+      this.activeTracers = [];
+      this.tracersAndDistances = [];
+
+      for (var i = 0; i < count; i++) {
+        var options = {
+          degrees: startAngle + i * incrementAngle,
+          power: world.options.projectile.launchFullPower
+        };
+        options.position = this.player.ship.getProjectileOrigin(options);
+        var tracer = new _Tracer["default"](this.game.world);
+        tracer.degrees = options.degrees;
+        tracer.power = 100;
+        tracer.once("completed", function (event) {
+          _this2.onTracerCompleted(event);
+        });
+        this.activeTracers.push(tracer);
+        world.add(tracer);
+        tracer.launch(options);
+      }
+    }
+  }, {
+    key: "onTracerCompleted",
+    value: function onTracerCompleted(event) {
+      var tracer = event.target;
+      var points = tracer.points;
+      var threshold = this.game.world.options.ship.radius * 4;
+      var index = this.activeTracers.indexOf(tracer);
+      this.activeTracers.splice(index, 1);
+      tracer.remove();
+
+      if (points.length > 0) {
+        var end = points[points.length - 1];
+        var results = this.getShipsAndDistances(end);
+        var best = results[0];
+        this.tracersAndDistances.push({
+          distance: best.distance,
+          tracer: tracer
+        });
+
+        if (best.distance <= threshold && this.activeTracers.length > 0) {
+          this.onAllTracersCompleted();
+          return;
+        }
+      }
+
+      console.log(this.activeTracers.length + " active tracers remaining");
+      if (this.activeTracers.length == 0) this.onAllTracersCompleted();
+    }
+  }, {
+    key: "onAllTracersCompleted",
+    value: function onAllTracersCompleted() {
+      var best;
+
+      for (var i = this.activeTracers.length - 1; i >= 0; i--) {
+        this.activeTracers[i].remove();
+      }
+
+      this.activeTracers = [];
+      this.tracersAndDistances.sort(function (a, b) {
+        return a.distance < b.distance ? -1 : 1;
+      });
+      best = this.tracersAndDistances[0];
+      $("input[name='power']").val(best.tracer.power);
+      $("input[name='degrees']").val(best.tracer.degrees);
+      $('select.weapon option:nth-child(3)').attr('selected', 'selected');
+      $("#fire").click();
+    }
+  }, {
+    key: "getShipsAndDistances",
+    value: function getShipsAndDistances(position) {
+      var _this3 = this;
+
+      var results = [];
+      this.game.world.ships.forEach(function (ship) {
+        if (ship === _this3.player.ship) return;
+        var dx = ship.position.x - position.x;
+        var dy = ship.position.y - position.y;
+        var d = Math.sqrt(dx * dx + dy * dy);
+        results.push({
+          distance: d,
+          ship: ship
+        });
+      });
+      results.sort(function (a, b) {
+        return a.distance < b.distance ? -1 : 1;
+      });
+      return results;
+    }
+  }]);
+
+  return AI;
+}(_EventDispatcherWithOptions["default"]);
+
+exports["default"] = AI;
+
+},{"../../EventDispatcherWithOptions":9,"../entities/weapons/Tracer":37}],24:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60113,7 +60316,7 @@ var Background = /*#__PURE__*/function () {
 
 exports["default"] = Background;
 
-},{"./Starfield":24}],24:[function(require,module,exports){
+},{"./Starfield":25}],25:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60186,7 +60389,7 @@ var Starfield = /*#__PURE__*/function () {
 
 exports["default"] = Starfield;
 
-},{}],25:[function(require,module,exports){
+},{}],26:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60341,7 +60544,7 @@ var Compass = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Compass;
 
-},{"./Entity":26,"./Ship":29}],26:[function(require,module,exports){
+},{"./Entity":27,"./Ship":30}],27:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60594,8 +60797,10 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
         Payload.assert(!isNaN(options.degrees));
         Payload.assert(!isNaN(options.power));
         impulse = new THREE.Vector2(options.power * Math.cos(options.degrees * Math.PI / 180), options.power * Math.sin(options.degrees * Math.PI / 180));
-      } // Convert the impulse
+      } // Position if supplied
 
+
+      if (options.position) this.position = options.position; // Convert the impulse
 
       impulse = new Box2D.b2Vec2(impulse.x * _Units["default"].GRAPHICS_TO_PHYSICS, impulse.y * _Units["default"].GRAPHICS_TO_PHYSICS);
       this.b2Body.SetAwake(1);
@@ -60668,7 +60873,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
 
 exports["default"] = Entity;
 
-},{"../../EventDispatcherWithOptions":9,"../Units":21,"../World":22}],27:[function(require,module,exports){
+},{"../../EventDispatcherWithOptions":9,"../Units":21,"../World":22}],28:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -60851,7 +61056,7 @@ jQuery(function ($) {
   Payload.Explosion = Explosion;
 });
 
-},{"../Units":21,"./Planet":28,"./Ship":29,"./Sound":31,"./particles/AnimatedParticleGeometry":33,"./particles/Emitter":34}],28:[function(require,module,exports){
+},{"../Units":21,"./Planet":29,"./Ship":30,"./Sound":32,"./particles/AnimatedParticleGeometry":34,"./particles/Emitter":35}],29:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61372,7 +61577,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Planet;
 
-},{"../Units":21,"./Entity":26,"d3-delaunay":4}],29:[function(require,module,exports){
+},{"../Units":21,"./Entity":27,"d3-delaunay":4}],30:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61521,6 +61726,30 @@ var Ship = /*#__PURE__*/function (_Entity) {
       });
     }
   }, {
+    key: "getProjectileOrigin",
+    value: function getProjectileOrigin(options) {
+      var radius = 2 * this.world.options.ship.radius;
+      var radians = options.degrees * Math.PI / 180;
+      var offset = {
+        x: Math.cos(radians) * radius,
+        y: Math.sin(radians) * radius
+      };
+      var position = this.position;
+      return {
+        x: position.x + offset.x,
+        y: position.y + offset.y
+      };
+    }
+  }, {
+    key: "removeAllTracers",
+    value: function removeAllTracers() {
+      if (!this.tracers) return;
+      this.tracers.forEach(function (entity) {
+        entity.remove();
+      });
+      delete this.tracers;
+    }
+  }, {
     key: "fire",
     value: function fire(options) {
       var _this3 = this;
@@ -61528,14 +61757,11 @@ var Ship = /*#__PURE__*/function (_Entity) {
       Payload.assert(!isNaN(options.degrees));
       Payload.assert(!isNaN(options.power));
       var radius = 2 * this.world.options.ship.radius;
-      var radians = options.degrees * Math.PI / 180;
       var mult = options.power / 100;
       var weapon = new options.weapon(this.world);
+      var origin = this.getProjectileOrigin(options);
       Payload.assert(weapon instanceof _Weapon["default"]);
-      var offset = {
-        x: Math.cos(radians) * radius,
-        y: Math.sin(radians) * radius
-      };
+      this.removeAllTracers();
       this.world.game.taunt.generate(function (taunt) {
         var text = new _Text["default"](_this3.world, {
           text: taunt,
@@ -61554,10 +61780,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
           weapon.fire({
             degrees: options.degrees,
             power: mult * _this3.world.options.projectile.launchFullPower,
-            position: {
-              x: _this3.position.x + offset.x,
-              y: _this3.position.y + offset.y
-            }
+            position: origin
           });
 
           _this3.trigger("fire");
@@ -61592,9 +61815,7 @@ var Ship = /*#__PURE__*/function (_Entity) {
           y: this.position.y + y
         }
       });
-      this.world.add(text);
-      var $element = $("<span class='damage'><span class='inner'></span></span>");
-      var $inner = $($element).find(".inner"); // Update the health bar
+      this.world.add(text); // Update the health bar
 
       this.$label.find(".health").val(this.health);
     }
@@ -61616,7 +61837,7 @@ exports["default"] = Ship;
 Ship.STATE_ALIVE = "alive";
 Ship.STATE_DEAD = "dead";
 
-},{"../Player":18,"../Units":21,"../weapons/default/Weapon.js":39,"./Entity":26,"./Sound":31,"./Text":32}],30:[function(require,module,exports){
+},{"../Player":18,"../Units":21,"../weapons/default/Weapon.js":41,"./Entity":27,"./Sound":32,"./Text":33}],31:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61781,7 +62002,7 @@ var Shock = /*#__PURE__*/function (_Emitter) {
 
 exports["default"] = Shock;
 
-},{"../Units":21,"./Ship":29,"./Sound":31,"./particles/Emitter":34}],31:[function(require,module,exports){
+},{"../Units":21,"./Ship":30,"./Sound":32,"./particles/Emitter":35}],32:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61861,7 +62082,7 @@ var Sound = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Sound;
 
-},{"./Entity":26}],32:[function(require,module,exports){
+},{"./Entity":27}],33:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -61939,7 +62160,7 @@ var Text = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Text;
 
-},{"./Entity":26,"three-spritetext":6}],33:[function(require,module,exports){
+},{"./Entity":27,"three-spritetext":6}],34:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62032,7 +62253,7 @@ var AnimatedParticleGeometry = /*#__PURE__*/function (_PlaneGeometry) {
 
 exports["default"] = AnimatedParticleGeometry;
 
-},{"THREE":2}],34:[function(require,module,exports){
+},{"THREE":2}],35:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62212,7 +62433,7 @@ var Emitter = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Emitter;
 
-},{"../Entity":26,"./AnimatedParticleGeometry":33}],35:[function(require,module,exports){
+},{"../Entity":27,"./AnimatedParticleGeometry":34}],36:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62275,37 +62496,39 @@ var Projectile = /*#__PURE__*/function (_Entity) {
 
       _this.world.add(sound);
     }
-    /*this.emitter = new Emitter(this.world, {
-    	
-    	geometry:	new THREE.PlaneGeometry(20, 20),
-    	material:	new THREE.MeshBasicMaterial({
-    		map:			payload.assets.sprites.assets["smokeparticle.png"].resource,
-    		depthWrite:		false,
-    		// transparent:	true
-    	}),
-    	
-    	maxParticleCount:	60,
-    	life:				Infinity,
-    	spawnRate:			60 / 300,
-    	spawnInitial:		0,
-    	
-    	fadeOverTime:		true,
-    	
-    	callbacks: {
-    		rotation:		function() { return Math.random() * 2 * Math.PI; },
-    		velocity:		function() { return new THREE.Vector3(0, 0, 0); }
-    	}
-    	
-    });
-    
-    this.world.add(this.emitter);
-    this.emitter.attachTo(this);
-    
-    this.once("removed", event => {
-    	// this.emitter.life = 300;
-    	this.emitter.spawnRate = 0;
-    });*/
 
+    if (!options || !options.smokeless) {
+      /*this.emitter = new Emitter(this.world, {
+      	
+      	geometry:	new THREE.PlaneGeometry(20, 20),
+      	material:	new THREE.MeshBasicMaterial({
+      		map:			payload.assets.sprites.assets["smokeparticle.png"].resource,
+      		depthWrite:		false,
+      		// transparent:	true
+      	}),
+      	
+      	maxParticleCount:	60,
+      	life:				Infinity,
+      	spawnRate:			60 / 300,
+      	spawnInitial:		0,
+      	
+      	fadeOverTime:		true,
+      	
+      	callbacks: {
+      		rotation:		function() { return Math.random() * 2 * Math.PI; },
+      		velocity:		function() { return new THREE.Vector3(0, 0, 0); }
+      	}
+      	
+      });
+      
+      this.world.add(this.emitter);
+      this.emitter.attachTo(this);
+      
+      this.once("removed", event => {
+      	// this.emitter.life = 300;
+      	this.emitter.spawnRate = 0;
+      });*/
+    }
 
     return _this;
   }
@@ -62356,7 +62579,138 @@ var Projectile = /*#__PURE__*/function (_Entity) {
 
 exports["default"] = Projectile;
 
-},{"../../Units":21,"../Entity":26,"../Sound":31,"../particles/Emitter":34}],36:[function(require,module,exports){
+},{"../../Units":21,"../Entity":27,"../Sound":32,"../particles/Emitter":35}],37:[function(require,module,exports){
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+
+var _Projectile2 = _interopRequireDefault(require("./Projectile"));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
+
+function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+function _get(target, property, receiver) { if (typeof Reflect !== "undefined" && Reflect.get) { _get = Reflect.get; } else { _get = function _get(target, property, receiver) { var base = _superPropBase(target, property); if (!base) return; var desc = Object.getOwnPropertyDescriptor(base, property); if (desc.get) { return desc.get.call(receiver); } return desc.value; }; } return _get(target, property, receiver || target); }
+
+function _superPropBase(object, property) { while (!Object.prototype.hasOwnProperty.call(object, property)) { object = _getPrototypeOf(object); if (object === null) break; } return object; }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function"); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, writable: true, configurable: true } }); if (superClass) _setPrototypeOf(subClass, superClass); }
+
+function _setPrototypeOf(o, p) { _setPrototypeOf = Object.setPrototypeOf || function _setPrototypeOf(o, p) { o.__proto__ = p; return o; }; return _setPrototypeOf(o, p); }
+
+function _createSuper(Derived) { var hasNativeReflectConstruct = _isNativeReflectConstruct(); return function _createSuperInternal() { var Super = _getPrototypeOf(Derived), result; if (hasNativeReflectConstruct) { var NewTarget = _getPrototypeOf(this).constructor; result = Reflect.construct(Super, arguments, NewTarget); } else { result = Super.apply(this, arguments); } return _possibleConstructorReturn(this, result); }; }
+
+function _possibleConstructorReturn(self, call) { if (call && (_typeof(call) === "object" || typeof call === "function")) { return call; } return _assertThisInitialized(self); }
+
+function _assertThisInitialized(self) { if (self === void 0) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return self; }
+
+function _isNativeReflectConstruct() { if (typeof Reflect === "undefined" || !Reflect.construct) return false; if (Reflect.construct.sham) return false; if (typeof Proxy === "function") return true; try { Date.prototype.toString.call(Reflect.construct(Date, [], function () {})); return true; } catch (e) { return false; } }
+
+function _getPrototypeOf(o) { _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf : function _getPrototypeOf(o) { return o.__proto__ || Object.getPrototypeOf(o); }; return _getPrototypeOf(o); }
+
+var Tracer = /*#__PURE__*/function (_Projectile) {
+  _inherits(Tracer, _Projectile);
+
+  var _super = _createSuper(Tracer);
+
+  function Tracer(world, options) {
+    var _this;
+
+    _classCallCheck(this, Tracer);
+
+    if (!options) options = {};
+    options.smokeless = true;
+    options.silent = true;
+    _this = _super.call(this, world, options);
+    _this.points = [];
+    _this.state = Tracer.STATE_INITIAL;
+    _this.age = 0;
+
+    _this.once("collision", function (event) {
+      _this.updateLine();
+
+      _this.state = Tracer.STATE_COMPLETED;
+
+      _this.world.b2World.DestroyBody(_this.b2Body);
+
+      _this.b2Body = null;
+
+      _this.trigger("completed");
+    });
+
+    return _this;
+  }
+
+  _createClass(Tracer, [{
+    key: "initGraphics",
+    value: function initGraphics(options) {
+      this.object3d = new THREE.Object3D();
+      this.material = new THREE.LineDashedMaterial({
+        color: 0xff0000,
+        linewidth: 1,
+        scale: 1,
+        dashSize: 100,
+        gapSize: 100
+      });
+    }
+  }, {
+    key: "launch",
+    value: function launch(options) {
+      _get(_getPrototypeOf(Tracer.prototype), "launch", this).call(this, options);
+
+      this.state = Tracer.STATE_RECORDING;
+    }
+  }, {
+    key: "update",
+    value: function update() {
+      _get(_getPrototypeOf(Tracer.prototype), "update", this).call(this);
+
+      if (!this.object3d) return;
+      this.object3d.position.set(0, 0, 0);
+      if (this.state != Tracer.STATE_RECORDING) return;
+      this.points.push(new THREE.Vector3(this.position.x, this.position.y, 0));
+      if (++this.age % 60 == 0) this.updateLine();
+    }
+  }, {
+    key: "updateLine",
+    value: function updateLine() {
+      if (this.line && this.geometry) {
+        this.object3d.remove(this.line);
+        this.geometry.dispose();
+      }
+
+      this.geometry = new THREE.BufferGeometry().setFromPoints(this.points);
+      this.geometry.lineDistancesNeedUpdate = true;
+      this.line = new THREE.Line(this.geometry, this.material);
+      this.object3d.add(this.line);
+    }
+  }, {
+    key: "remove",
+    value: function remove() {
+      _get(_getPrototypeOf(Tracer.prototype), "remove", this).call(this);
+
+      if (this.geometry) this.geometry.dispose();
+    }
+  }]);
+
+  return Tracer;
+}(_Projectile2["default"]);
+
+exports["default"] = Tracer;
+Tracer.STATE_INITIAL = "initial";
+Tracer.STATE_RECORDING = "recording";
+Tracer.STATE_COMPLETED = "completed";
+
+},{"./Projectile":36}],38:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62428,7 +62782,7 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
 
 exports["default"] = Bomb;
 
-},{"../../entities/weapons/Projectile":35,"./Weapon":39}],37:[function(require,module,exports){
+},{"../../entities/weapons/Projectile":36,"./Weapon":41}],39:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62507,7 +62861,7 @@ var Disruptor = /*#__PURE__*/function (_Weapon) {
 
 exports["default"] = Disruptor;
 
-},{"../../entities/Shock":30,"../../entities/weapons/Projectile":35,"./Weapon":39}],38:[function(require,module,exports){
+},{"../../entities/Shock":31,"../../entities/weapons/Projectile":36,"./Weapon":41}],40:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62577,7 +62931,7 @@ var _default = {
 };
 exports["default"] = _default;
 
-},{"./instantiatable/LargeBomb":40,"./instantiatable/LargeDisruptor":41,"./instantiatable/MediumBomb":42,"./instantiatable/MediumDisruptor":43,"./instantiatable/MegaBomb":44,"./instantiatable/MegaDisruptor":45,"./instantiatable/SmallBomb":46,"./instantiatable/SmallDisruptor":47,"./instantiatable/TripleShot":48}],39:[function(require,module,exports){
+},{"./instantiatable/LargeBomb":42,"./instantiatable/LargeDisruptor":43,"./instantiatable/MediumBomb":44,"./instantiatable/MediumDisruptor":45,"./instantiatable/MegaBomb":46,"./instantiatable/MegaDisruptor":47,"./instantiatable/SmallBomb":48,"./instantiatable/SmallDisruptor":49,"./instantiatable/TripleShot":50}],41:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62640,7 +62994,7 @@ var Weapon = /*#__PURE__*/function (_EventDispatcher) {
 
 exports["default"] = Weapon;
 
-},{"@perry-rylance/event-dispatcher":1}],40:[function(require,module,exports){
+},{"@perry-rylance/event-dispatcher":1}],42:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62702,7 +63056,7 @@ var LargeBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = LargeBomb;
 
-},{"../Bomb":36}],41:[function(require,module,exports){
+},{"../Bomb":38}],43:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62764,7 +63118,7 @@ var LargeDisruptor = /*#__PURE__*/function (_Disruptor) {
 
 exports["default"] = LargeDisruptor;
 
-},{"../Disruptor":37}],42:[function(require,module,exports){
+},{"../Disruptor":39}],44:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62826,7 +63180,7 @@ var MediumBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MediumBomb;
 
-},{"../Bomb":36}],43:[function(require,module,exports){
+},{"../Bomb":38}],45:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62888,7 +63242,7 @@ var MediumDisruptor = /*#__PURE__*/function (_Disruptor) {
 
 exports["default"] = MediumDisruptor;
 
-},{"../Disruptor":37}],44:[function(require,module,exports){
+},{"../Disruptor":39}],46:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -62950,7 +63304,7 @@ var MegaBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = MegaBomb;
 
-},{"../Bomb":36}],45:[function(require,module,exports){
+},{"../Bomb":38}],47:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -63012,7 +63366,7 @@ var MegaDisruptor = /*#__PURE__*/function (_Disruptor) {
 
 exports["default"] = MegaDisruptor;
 
-},{"../Disruptor":37}],46:[function(require,module,exports){
+},{"../Disruptor":39}],48:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -63074,7 +63428,7 @@ var SmallBomb = /*#__PURE__*/function (_Bomb) {
 
 exports["default"] = SmallBomb;
 
-},{"../Bomb":36}],47:[function(require,module,exports){
+},{"../Bomb":38}],49:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -63136,7 +63490,7 @@ var SmallDisruptor = /*#__PURE__*/function (_Disruptor) {
 
 exports["default"] = SmallDisruptor;
 
-},{"../Disruptor":37}],48:[function(require,module,exports){
+},{"../Disruptor":39}],50:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -63232,7 +63586,7 @@ var Bomb = /*#__PURE__*/function (_Weapon) {
 
 exports["default"] = Bomb;
 
-},{"../../../entities/weapons/Projectile":35,"../Weapon":39}],49:[function(require,module,exports){
+},{"../../../entities/weapons/Projectile":36,"../Weapon":41}],51:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.MTLLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -63616,7 +63970,7 @@ THREE.MTLLoader.MaterialCreator.prototype = {
   }
 };
 
-},{}],50:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 "use strict";
 
 console.warn("THREE.OBJLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation.");
@@ -64194,6 +64548,6 @@ THREE.OBJLoader = function () {
   return OBJLoader;
 }();
 
-},{}]},{},[14,49,50])
+},{}]},{},[14,51,52])
 
 });//# sourceMappingURL=entry.js.map

@@ -122,22 +122,50 @@ export default class Ship extends Entity
 		});
 	}
 	
+	getProjectileOrigin(options)
+	{
+		let radius		= 2 * this.world.options.ship.radius;
+		let radians		= options.degrees * Math.PI / 180;
+		
+		let offset		= {
+			x:			Math.cos(radians) * radius,
+			y:			Math.sin(radians) * radius
+		};
+		
+		let position	= this.position;
+		
+		return {
+			x:			position.x + offset.x,
+			y:			position.y + offset.y
+		};
+	}
+	
+	removeAllTracers()
+	{
+		if(!this.tracers)
+			return;
+		
+		this.tracers.forEach(entity => {
+			entity.remove();
+		});
+		
+		delete this.tracers;
+	}
+	
 	fire(options)
 	{
 		Payload.assert(!isNaN(options.degrees));
 		Payload.assert(!isNaN(options.power));
 		
 		let radius		= 2 * this.world.options.ship.radius;
-		let radians		= options.degrees * Math.PI / 180;
+		
 		let mult		= options.power / 100;
 		let weapon		= new options.weapon(this.world);
+		let origin		= this.getProjectileOrigin(options);
 		
 		Payload.assert(weapon instanceof Weapon);
 		
-		let offset		= {
-			x:			Math.cos(radians) * radius,
-			y:			Math.sin(radians) * radius
-		};
+		this.removeAllTracers();
 		
 		this.world.game.taunt.generate(taunt => {
 			
@@ -162,10 +190,7 @@ export default class Ship extends Entity
 				weapon.fire({
 					degrees:		options.degrees,
 					power:			mult * this.world.options.projectile.launchFullPower,
-					position:		{
-						x:			this.position.x + offset.x,
-						y:			this.position.y + offset.y
-					}
+					position:		origin
 				});
 				
 				this.trigger("fire");
@@ -206,9 +231,6 @@ export default class Ship extends Entity
 		});
 		
 		this.world.add(text);
-		
-		let $element = $("<span class='damage'><span class='inner'></span></span>");
-		let $inner = $($element).find(".inner");
 		
 		// Update the health bar
 		this.$label.find(".health").val(this.health);

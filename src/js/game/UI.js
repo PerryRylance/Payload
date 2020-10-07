@@ -1,6 +1,7 @@
 import EventDispatcherWithOptions from "../EventDispatcherWithOptions";
 import Compass from "./entities/Compass";
 import Text from "./entities/Text";
+import Tracer from "./entities/weapons/Tracer";
 
 export default class UI extends EventDispatcherWithOptions
 {
@@ -20,6 +21,8 @@ export default class UI extends EventDispatcherWithOptions
 		$("#fire").on("click", event => this.onFire(event));
 		$("#skip-turn").on("click", event => this.onSkipTurn(event));
 		$("#surrender").on("click", event => this.onSurrender(event));
+		
+		$("#degrees-and-power").on("input change", ":input", event => this.onTrajectoryChanged(event));
 		
 		game.on("turnstart", event => this.onTurnStart(event));
 	}
@@ -170,5 +173,28 @@ export default class UI extends EventDispatcherWithOptions
 		ship.damage(ship.health);
 		
 		this.game.endTurn();
+	}
+	
+	onTrajectoryChanged(event)
+	{
+		/*let world		= this.game.world;
+		let ship		= this.game.currentPlayer.ship;
+		let tracer		= new Tracer(world);
+		
+		let mult		= parseFloat($("input[name='power']").val()) / 100;
+		let power 		= mult * world.options.projectile.launchFullPower;
+		
+		let options		= {
+			degrees:	parseFloat($("input[name='degrees']").val()),
+			power:		power
+		};
+		
+		ship.removeAllTracers();
+		ship.tracers = [tracer];
+		
+		options.position = ship.getProjectileOrigin(options);
+		
+		world.add(tracer);
+		tracer.launch(options);*/
 	}
 }
