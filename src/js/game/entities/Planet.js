@@ -432,21 +432,21 @@ export default class Planet extends Entity
 	{
 		Payload.assert(entity.isAffectedByGravity);
 	
-		var radius	= this._radius;
-		var gravity	= radius * this._destructionGravityMultiplier;
+		let radius	= this._radius;
+		let gravity	= radius * this._destructionGravityMultiplier;
 		
-		var center	= new Box2D.b2Vec2(
+		let center	= new Box2D.b2Vec2(
 			this.b2Body.GetWorldCenter().get_x(),
 			this.b2Body.GetWorldCenter().get_y()
 		);
 		
-		var target	= new Box2D.b2Vec2(
+		let target	= new Box2D.b2Vec2(
 			entity.b2Body.GetWorldCenter().get_x(),
 			entity.b2Body.GetWorldCenter().get_y()
 		);
 		
-		var delta	= new Box2D.b2Vec2(0, 0);
-		var temp	= new Box2D.b2Vec2(
+		let delta	= new Box2D.b2Vec2(0, 0);
+		let temp	= new Box2D.b2Vec2(
 			this.b2CenterOfGravity.get_x(),
 			this.b2CenterOfGravity.get_y()
 		);
@@ -455,7 +455,7 @@ export default class Planet extends Entity
 		delta.op_sub(center);
 		delta.op_sub(temp);
 		
-		var distance = delta.Length();
+		let distance = delta.Length();
 		
 		// Skip distance check distance < 3 * radius
 		
@@ -464,14 +464,17 @@ export default class Planet extends Entity
 			-delta.get_y()
 		);
 		
-		var sum		= Math.abs(delta.get_x()) + Math.abs(delta.get_y());
-		var mult	= (1 / sum) * gravity / distance;
+		let sum		= Math.abs(delta.get_x()) + Math.abs(delta.get_y());
+		let mult	= (1 / sum) * gravity / distance;
 		
 		delta.op_mul(mult);
 		
-		
-		
 		entity.b2Body.ApplyForceToCenter(delta);
+		
+		Box2D.destroy(center);
+		Box2D.destroy(target);
+		Box2D.destroy(delta);
+		Box2D.destroy(temp);
 	}
 	
 	applyFixtureDamage(fixture)
