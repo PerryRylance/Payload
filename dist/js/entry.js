@@ -82,7 +82,7 @@ class EventDispatcher
 			listener: listener,
 			thisObject: (thisObject ? thisObject : this),
 			useCapture: (useCapture ? true : false)
-			};
+		};
 			
 		target.push(obj);
 		
@@ -152,11 +152,19 @@ class EventDispatcher
 					event[name] = src[name];
 			}
 		}
+		
+		function getParent(subject)
+		{
+			if("eventDispatcherParent" in subject)
+				return subject.eventDispatcherParent;
+			
+			return subject.parent;
+		}
 
 		event.target = this;
 			
 		var path = [];
-		for(var obj = this.parent; obj != null; obj = obj.parent)
+		for(var obj = getParent(this); obj != null; obj = getParent(obj))
 			path.unshift(obj);
 		
 		event.phase = Event.CAPTURING_PHASE;
@@ -175,7 +183,7 @@ class EventDispatcher
 		
 		// Native DOM event
 		var topMostElement = this.element;
-		for(var obj = this.parent; obj != null; obj = obj.parent)
+		for(var obj = getParent(this); obj != null; obj = getParent(obj))
 		{
 			if(obj.element)
 				topMostElement = obj.element;
@@ -209,6 +217,12 @@ class EventDispatcher
 		return this.addEventListener.apply(this, arguments);
 	}
 	
+	/**
+	 * Adds an event listener on this object, which will only be called once, and then removed
+	 * @param {string} type The event type, or multiple types separated by spaces
+	 * @param {function} callback The callback to call when the event fires
+	 * @return {EventDispatcher} This event dispatcher
+	 */
 	once(type, listener)
 	{
 		let callback = (event) => {
@@ -258,14 +272,20 @@ class EventDispatcher
 		if(!(arr = this._listenersByType[event.type]))
 			return;
 		
-		for(var i = 0; i < arr.length; i++)
+		// Create a copy of the array, in case any listeners are unbound during iteration
+		var chain = arr.slice();
+		
+		for(var i = 0; i < chain.length; i++)
 		{
-			obj = arr[i];
+			obj = chain[i];
+			
+			if(arr.indexOf(obj) == -1)
+				continue;	// Listener has been unbound
 			
 			if(event.phase == Event.CAPTURING_PHASE && !obj.useCapture)
 				continue;
 				
-			obj.listener.call(arr[i].thisObject, event);
+			obj.listener.call(chain[i].thisObject, event);
 		}
 	}
 }
@@ -61441,6 +61461,10 @@ var Planet = /*#__PURE__*/function (_Entity) {
       var mult = 1 / sum * gravity / distance;
       delta.op_mul(mult);
       entity.b2Body.ApplyForceToCenter(delta);
+      Box2D.destroy(center);
+      Box2D.destroy(target);
+      Box2D.destroy(delta);
+      Box2D.destroy(temp);
     }
   }, {
     key: "applyFixtureDamage",
