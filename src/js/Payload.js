@@ -68,16 +68,17 @@ export default class Payload
 		
 		this.game.addPlayer(this.player);
 		
-		this.game.addPlayer(new Player({
-			name:	"Computer",
-			ai:		new AI(this.game)
-		}));
+		for(var i = 1; i <= 5; i++)
+			this.game.addPlayer(new Player({
+				name:	"Computer " + i,
+				ai:		new AI(this.game)
+			}));
 		
 		this.game.start();
 	}
 }
 
-Payload.BOX2D_MEMORY_MB = 256;
+Payload.BOX2D_MEMORY_MB = 512;
 
 Payload.createInstance = function()
 {

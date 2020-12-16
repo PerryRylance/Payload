@@ -97,7 +97,7 @@ export default class Planet extends Entity
 		var maxRadius	= this.world.options.planet.radius.maximum;
 		
 		var radius		= this._radius = minRadius + (game.random() * Math.round(maxRadius - minRadius));
-		var density		= this._density = 0.5 + (game.random() * 2);
+		var density		= this._density = 0.5 + (game.random() * 1);
 		
 		var area		= this._area		= Math.PI * Math.pow(radius, 2);
 		var sides		= this._sides		= Math.round( Math.sqrt(radius) * Math.PI );
@@ -465,7 +465,7 @@ export default class Planet extends Entity
 		);
 		
 		let sum		= Math.abs(delta.get_x()) + Math.abs(delta.get_y());
-		let mult	= (1 / sum) * gravity / distance;
+		let mult	= (1 / sum) * gravity * this._density / distance;
 		
 		delta.op_mul(mult);
 		

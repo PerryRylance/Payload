@@ -319,7 +319,7 @@ export default class World extends EventDispatcherWithOptions
 	{
 		let controls	= this.interaction.controls;
 		let box			= new THREE.Box3();
-		let padding		= 750;
+		let padding		= 2500;
 		
 		if(this._awakeEntities.length == 0)
 			return;
@@ -496,9 +496,9 @@ World.defaults = {
 	},
 	projectile: {
 		radius:				10,
-		launchFullPower:	2000
+		launchFullPower:	1200
 	},
 	explosion: {
-		forceMultiplier:	0.0000025
+		forceMultiplier:	0.0000015
 	}
 };

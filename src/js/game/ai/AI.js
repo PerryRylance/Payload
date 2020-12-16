@@ -20,7 +20,7 @@ export default class AI extends EventDispatcherWithOptions
 	onTurnStart(event)
 	{
 		this.state = {
-			numTracers:		360,
+			numTracers:		120,
 			minAngle:		0,
 			maxAngle:		360
 		};
@@ -30,6 +30,7 @@ export default class AI extends EventDispatcherWithOptions
 	
 	predict()
 	{
+		let	options;
 		let world					= this.game.world;
 				
 		let count					= this.state.numTracers;
@@ -39,30 +40,42 @@ export default class AI extends EventDispatcherWithOptions
 		this.activeTracers			= [];
 		this.tracersAndDistances	= [];
 		
-		for(var i = 0; i < count; i++)
-		{
-			let options		= {
-				degrees:	startAngle + (i * incrementAngle),
-				power:		world.options.projectile.launchFullPower
-			};
-			
-			options.position = this.player.ship.getProjectileOrigin(options);
-			
-			let tracer		= new Tracer(this.game.world);
-			
-			tracer.degrees	= options.degrees;
-			tracer.power	= 100;
-			
-			tracer.once("completed", event => {
-				this.onTracerCompleted(event);
-			});
-			
-			this.activeTracers.push(tracer);
-			
-			world.add(tracer);
-			tracer.launch(options);
-			
-		}
+		for(var power = 50; power <= 100; power += 10)
+			for(var i = 0; i < count; i++)
+			{
+				// Tracer options
+				options		= {};
+				
+				if(power < 65)
+					options.color = 0x00ff00;
+				else if(power < 85)
+					options.color = 0xffff00;
+				else
+					options.color = 0xff0000;
+				
+				let tracer		= new Tracer(this.game.world, options);
+				
+				// Launch options
+				options		= {
+					degrees:	startAngle + (i * incrementAngle),
+					power:		(power / 100) * world.options.projectile.launchFullPower
+				};
+				
+				options.position = this.player.ship.getProjectileOrigin(options);
+				
+				tracer.degrees	= options.degrees;
+				tracer.power	= power;
+				
+				tracer.once("completed", event => {
+					this.onTracerCompleted(event);
+				});
+				
+				this.activeTracers.push(tracer);
+				
+				world.add(tracer);
+				tracer.launch(options);
+				
+			}
 	}
 	
 	onTracerCompleted(event)
@@ -93,7 +106,7 @@ export default class AI extends EventDispatcherWithOptions
 			}
 		}
 		
-		console.log(this.activeTracers.length + " active tracers remaining");
+		// console.log(this.activeTracers.length + " active tracers remaining");
 		
 		if(this.activeTracers.length == 0)
 			this.onAllTracersCompleted();

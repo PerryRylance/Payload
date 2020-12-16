@@ -58645,10 +58645,14 @@ var Payload = /*#__PURE__*/function () {
       });
       this.game = new _Game["default"]();
       this.game.addPlayer(this.player);
-      this.game.addPlayer(new _Player["default"]({
-        name: "Computer",
-        ai: new _AI["default"](this.game)
-      }));
+
+      for (var i = 1; i <= 5; i++) {
+        this.game.addPlayer(new _Player["default"]({
+          name: "Computer " + i,
+          ai: new _AI["default"](this.game)
+        }));
+      }
+
       this.game.start();
     }
   }], [{
@@ -58669,7 +58673,7 @@ var Payload = /*#__PURE__*/function () {
 }();
 
 exports["default"] = Payload;
-Payload.BOX2D_MEMORY_MB = 256;
+Payload.BOX2D_MEMORY_MB = 512;
 
 Payload.createInstance = function () {
   return new Payload();
@@ -59964,7 +59968,7 @@ var World = /*#__PURE__*/function (_EventDispatcherWithO) {
     value: function fitCameraToAwakeEntities() {
       var controls = this.interaction.controls;
       var box = new THREE.Box3();
-      var padding = 750;
+      var padding = 2500;
       if (this._awakeEntities.length == 0) return;
 
       this._awakeEntities.forEach(function (entity) {
@@ -60119,10 +60123,10 @@ World.defaults = {
   },
   projectile: {
     radius: 10,
-    launchFullPower: 2000
+    launchFullPower: 1200
   },
   explosion: {
-    forceMultiplier: 0.0000025
+    forceMultiplier: 0.0000015
   }
 };
 
@@ -60186,7 +60190,7 @@ var AI = /*#__PURE__*/function (_EventDispatcherWithO) {
     key: "onTurnStart",
     value: function onTurnStart(event) {
       this.state = {
-        numTracers: 360,
+        numTracers: 120,
         minAngle: 0,
         maxAngle: 360
       };
@@ -60197,6 +60201,7 @@ var AI = /*#__PURE__*/function (_EventDispatcherWithO) {
     value: function predict() {
       var _this2 = this;
 
+      var options;
       var world = this.game.world;
       var count = this.state.numTracers;
       var startAngle = this.state.minAngle;
@@ -60204,21 +60209,27 @@ var AI = /*#__PURE__*/function (_EventDispatcherWithO) {
       this.activeTracers = [];
       this.tracersAndDistances = [];
 
-      for (var i = 0; i < count; i++) {
-        var options = {
-          degrees: startAngle + i * incrementAngle,
-          power: world.options.projectile.launchFullPower
-        };
-        options.position = this.player.ship.getProjectileOrigin(options);
-        var tracer = new _Tracer["default"](this.game.world);
-        tracer.degrees = options.degrees;
-        tracer.power = 100;
-        tracer.once("completed", function (event) {
-          _this2.onTracerCompleted(event);
-        });
-        this.activeTracers.push(tracer);
-        world.add(tracer);
-        tracer.launch(options);
+      for (var power = 50; power <= 100; power += 10) {
+        for (var i = 0; i < count; i++) {
+          // Tracer options
+          options = {};
+          if (power < 65) options.color = 0x00ff00;else if (power < 85) options.color = 0xffff00;else options.color = 0xff0000;
+          var tracer = new _Tracer["default"](this.game.world, options); // Launch options
+
+          options = {
+            degrees: startAngle + i * incrementAngle,
+            power: power / 100 * world.options.projectile.launchFullPower
+          };
+          options.position = this.player.ship.getProjectileOrigin(options);
+          tracer.degrees = options.degrees;
+          tracer.power = power;
+          tracer.once("completed", function (event) {
+            _this2.onTracerCompleted(event);
+          });
+          this.activeTracers.push(tracer);
+          world.add(tracer);
+          tracer.launch(options);
+        }
       }
     }
   }, {
@@ -60244,9 +60255,9 @@ var AI = /*#__PURE__*/function (_EventDispatcherWithO) {
           this.onAllTracersCompleted();
           return;
         }
-      }
+      } // console.log(this.activeTracers.length + " active tracers remaining");
 
-      console.log(this.activeTracers.length + " active tracers remaining");
+
       if (this.activeTracers.length == 0) this.onAllTracersCompleted();
     }
   }, {
@@ -60808,7 +60819,7 @@ var Entity = /*#__PURE__*/function (_EventDispatcherWithO) {
         degrees: Math.random() * 360,
         power: 100
       };
-      Payload.assert("degrees" in options || "impulse" in options ? true : false);
+      Payload.assert("degrees" in options || "impulse" in options ? true : false); // console.log("Launching", this, "with options", options);
 
       if (options.impulse) {
         Payload.assert(options.impulse instanceof THREE.Vector2);
@@ -61043,8 +61054,9 @@ var Explosion = /*#__PURE__*/function (_Emitter) {
           y: delta.y / length
         };
         var vec = new Box2D.b2Vec2(normalized.x * force, normalized.y * force);
-        ship.b2Body.SetAwake(1);
-        ship.b2Body.ApplyLinearImpulse(vec); // NB: A damage falloff would be nice
+        ship.b2Body.SetAwake(1); // ship.b2Body.ApplyLinearImpulse(vec);
+
+        ship.b2Body.ApplyForceToCenter(vec); // NB: A damage falloff would be nice
 
         if (_this2.damage) {
           var damage = Math.round(_this2.damage * factor);
@@ -61189,7 +61201,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
       var minRadius = this.world.options.planet.radius.minimum;
       var maxRadius = this.world.options.planet.radius.maximum;
       var radius = this._radius = minRadius + game.random() * Math.round(maxRadius - minRadius);
-      var density = this._density = 0.5 + game.random() * 2;
+      var density = this._density = 0.5 + game.random() * 1;
       var area = this._area = Math.PI * Math.pow(radius, 2);
       var sides = this._sides = Math.round(Math.sqrt(radius) * Math.PI);
       var sites = []; // Outer sites
@@ -61458,7 +61470,7 @@ var Planet = /*#__PURE__*/function (_Entity) {
 
       delta.Set(-delta.get_x(), -delta.get_y());
       var sum = Math.abs(delta.get_x()) + Math.abs(delta.get_y());
-      var mult = 1 / sum * gravity / distance;
+      var mult = 1 / sum * gravity * this._density / distance;
       delta.op_mul(mult);
       entity.b2Body.ApplyForceToCenter(delta);
       Box2D.destroy(center);
@@ -62564,7 +62576,7 @@ var Projectile = /*#__PURE__*/function (_Entity) {
       var circleShape = new Box2D.b2CircleShape();
       circleShape.set_m_radius(radius);
       var fixtureDef = new Box2D.b2FixtureDef();
-      fixtureDef.set_density(2.5);
+      fixtureDef.set_density(1.25);
       fixtureDef.set_friction(0.6);
       fixtureDef.set_shape(circleShape);
       fixtureDef.set_isSensor(true); // NB: Prevent projectiles colliding with one another
@@ -62677,9 +62689,11 @@ var Tracer = /*#__PURE__*/function (_Projectile) {
   _createClass(Tracer, [{
     key: "initGraphics",
     value: function initGraphics(options) {
+      var color = 0xff0000;
+      if (options.color) color = options.color;
       this.object3d = new THREE.Object3D();
       this.material = new THREE.LineDashedMaterial({
-        color: 0xff0000,
+        color: color,
         linewidth: 1,
         scale: 1,
         dashSize: 100,
@@ -62707,6 +62721,7 @@ var Tracer = /*#__PURE__*/function (_Projectile) {
   }, {
     key: "updateLine",
     value: function updateLine() {
+      // return;
       if (this.line && this.geometry) {
         this.object3d.remove(this.line);
         this.geometry.dispose();
