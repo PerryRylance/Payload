@@ -33,9 +33,14 @@ export default class Tracer extends Projectile
 	
 	initGraphics(options)
 	{
+		let color = 0xff0000;
+		
+		if(options.color)
+			color = options.color;
+		
 		this.object3d	= new THREE.Object3D();
 		this.material	= new THREE.LineDashedMaterial({
-			color: 0xff0000,
+			color: color,
 			linewidth: 1,
 			scale: 1,
 			dashSize: 100,
@@ -74,6 +79,8 @@ export default class Tracer extends Projectile
 	
 	updateLine()
 	{
+		// return;
+		
 		if(this.line && this.geometry)
 		{
 			this.object3d.remove(this.line);

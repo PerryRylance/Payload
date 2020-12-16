@@ -331,6 +331,8 @@ export default class Entity extends EventDispatcherWithOptions
 		
 		Payload.assert(("degrees" in options || "impulse" in options ? true : false));
 		
+		// console.log("Launching", this, "with options", options);
+		
 		if(options.impulse)
 		{
 			Payload.assert(options.impulse instanceof THREE.Vector2);

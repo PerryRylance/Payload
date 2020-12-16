@@ -127,7 +127,8 @@ export default class Explosion extends Emitter
 			);
 			
 			ship.b2Body.SetAwake(1);
-			ship.b2Body.ApplyLinearImpulse(vec);
+			// ship.b2Body.ApplyLinearImpulse(vec);
+			ship.b2Body.ApplyForceToCenter(vec);
 			
 			// NB: A damage falloff would be nice
 			if(this.damage)

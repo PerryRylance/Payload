@@ -71,7 +71,7 @@ export default class Projectile extends Entity
 		circleShape.set_m_radius( radius );
 		
 		var fixtureDef = new Box2D.b2FixtureDef();
-		fixtureDef.set_density( 2.5 );
+		fixtureDef.set_density( 1.25 );
 		fixtureDef.set_friction( 0.6 );
 		fixtureDef.set_shape( circleShape );
 		fixtureDef.set_isSensor( true );
